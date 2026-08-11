@@ -224,18 +224,32 @@ function unpackComplex(buf, s7, drs) {
   let ival1 = 0, ival2 = 0, minsd = 0;
   if (drs.tpl === 3 && drs.extraOctets > 0) {
     const nb = drs.extraOctets * 8;
-    // SINAL-MAGNITUDE, como todo inteiro com sinal do GRIB2 (Reg. 92.1.4).
+    // REVERTIDO A PEDIDO: volta ao complemento de dois.
+    //
+    // ------------------------------------------------------------------------
+    // REGISTRO DA DISCORDÂNCIA, para não se perder.
     //
     // Estes três valores semeiam a reconstrução por diferenciação espacial:
-    // ival1 e ival2 são os primeiros pontos e `minsd` é o mínimo global das
-    // diferenças. Lidos como complemento de dois, a semente sai errada — e a
-    // recorrência x[i] += 2·x[i-1] − x[i-2] PROPAGA esse erro linearmente ao
-    // longo de 1.038.240 pontos. Não é um desvio local: vira uma rampa que
-    // cresce sem limite, que é como um vento de 10 m/s vira 20 milhões.
+    // `ival1`/`ival2` são os primeiros pontos e `minsd` é o mínimo global das
+    // diferenças. A reconstrução é uma RECORRÊNCIA — x[i] += 2·x[i-1] − x[i-2] —
+    // então um erro na semente NÃO fica local: propaga linearmente ao longo de
+    // 1.038.240 pontos e vira uma rampa que cresce sem limite.
+    //
+    // A norma (WMO FM 92, Reg. 92.1.4) especifica sinal-magnitude para inteiro
+    // com sinal no GRIB2, e a g2clib do próprio NCEP lê estes campos assim:
+    // um bit de sinal, depois (n−1) bits de magnitude, negando se o bit estiver
+    // ligado. Foi por isso que troquei.
+    //
+    // Se o vento melhorar com o complemento de dois, a explicação provável é
+    // que o problema esteja em OUTRO ponto do desempacotamento — largura de
+    // grupo, comprimento de grupo ou alinhamento — e a semente errada estivesse
+    // compensando parcialmente. Vale conferir com /api/wind/grib-debug antes de
+    // fechar a questão.
+    // ------------------------------------------------------------------------
     const rawSigned = (bits) => {
       const v = br.read(bits);
       const signBit = Math.pow(2, bits - 1);
-      return v >= signBit ? -(v - signBit) : v;
+      return v >= signBit ? v - 2 * signBit : v;
     };
     ival1 = rawSigned(nb);
     if (drs.spatialOrder === 2) ival2 = rawSigned(nb);
