@@ -14,6 +14,9 @@ import { startPrecompute, registerPrecomputeRoutes } from "./precompute.js";
 import { forecastTimeline } from "./forecast.js";
 import { buildField, fieldCatalog } from "./fields.js";
 import { buildIsobars } from "./isobars.js";
+import { buscarSerie } from "./timeseries.js";
+import { buscarSondagem } from "./sounding.js";
+import { compararModelos } from "./compare.js";
 import { registerGeoRoutes, placeAt } from "./geo.js";
 import { describeModelLayer, sortModelLayers } from "./modelNames.js";
 import { parseCapabilities, snapTime, coverageOf } from "./gibsTime.js";
@@ -560,79 +563,58 @@ app.get("/api/quakes", async (req, res) => {
 // ======================================================================
 app.get("/api/analysis/timeseries", async (req, res) => {
   const lat = Number(req.query.lat), lng = Number(req.query.lng);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return res.status(400).json({ error: "lat e lng obrigatórios" });
-  const days = Math.max(1, Math.min(14, Number(req.query.days) || 7));
-  const date = String(req.query.date ?? new Date().toISOString().slice(0, 10));
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ error: "lat e lng obrigatórios" });
+  }
+  const range = String(req.query.range ?? "1y");
   try {
-    const key = `ts:${lat.toFixed(2)}:${lng.toFixed(2)}:${date}:${days}`;
-    const result = await cached(key, HOUR, async () => {
-      const isPast = new Date(`${date}T00:00:00Z`).getTime() < Date.now() - 5 * 86400e3;
-      const base = isPast ? "https://archive-api.open-meteo.com/v1/archive" : "https://api.open-meteo.com/v1/forecast";
-      const params = { latitude: String(lat), longitude: String(lng), hourly: "temperature_2m,relative_humidity_2m,surface_pressure,precipitation,wind_speed_10m,wind_direction_10m", timezone: "UTC" };
-      if (isPast) { params.start_date = date; params.end_date = new Date(new Date(`${date}T00:00:00Z`).getTime() + (days - 1) * 86400e3).toISOString().slice(0, 10); }
-      else { params.forecast_days = String(days); }
-      const qs = new URLSearchParams(params);
-      let data = null;
-      try { const r = await metered("open-meteo", 1, () => fetch(`${base}?${qs}`)); if (r.ok) data = await r.json(); } catch { /* fallback */ }
-      const h = data?.hourly || {};
-      const times = h.time || Array.from({ length: days * 24 }, (_, i) => new Date(Date.now() + i * 3600e3).toISOString().slice(0, 16));
-      const series = times.map((t, i) => {
-        const baseTemp = 25 - Math.abs(lat) * 0.35 + Math.sin(i / 4) * 3;
-        return { time: t, temperature: h.temperature_2m?.[i] ?? +baseTemp.toFixed(1), humidity: h.relative_humidity_2m?.[i] ?? Math.round(60 + Math.cos(i / 3) * 20), pressure: h.surface_pressure?.[i] ?? Math.round(1013 - Math.abs(lat) * 0.1), precipitation: h.precipitation?.[i] ?? +(Math.max(0, Math.sin(i / 2) * 2)).toFixed(1), windSpeed: h.wind_speed_10m?.[i] ?? +(10 + Math.sin(i / 5) * 5).toFixed(1), windDirection: h.wind_direction_10m?.[i] ?? Math.round((i * 15) % 360) };
-      });
-      const validTemps = series.map((s) => s.temperature).filter(Number.isFinite);
-      const avgTemp = validTemps.reduce((a, b) => a + b, 0) / (validTemps.length || 1);
-      const stats = { minTemp: Math.min(...validTemps), maxTemp: Math.max(...validTemps), avgTemp, stdTemp: Math.sqrt(validTemps.reduce((sq, n) => sq + Math.pow(n - avgTemp, 2), 0) / (validTemps.length || 1)) };
-      const place = await placeAt(lat, lng);
-      return { lat, lng, place: place ?? "Oceano", startDate: date, days, stats, series };
-    });
-    res.json(result);
-  } catch (e) { res.status(200).json({ lat, lng, place: "Ponto Consultado", stats: null, series: [] }); }
+    // Uma requisição cobre a janela inteira: a API devolve a série diária
+    // completa. Dez anos custam o mesmo que um mês.
+    const out = await cached(`serie:${lat.toFixed(2)}:${lng.toFixed(2)}:${range}`, 6 * HOUR,
+      () => buscarSerie((u) => metered("open-meteo", 1, () => fetch(u)), { lat, lng, range }));
+    let place = null;
+    try { place = await placeAt(lat, lng); } catch { /* ponto sem topônimo */ }
+    res.json({ ok: true, ...out, place: typeof place === "string" ? place : place?.name ?? null });
+  } catch (e) {
+    // Erro é ERRO. A versão anterior respondia 200 com série inventada.
+    res.status(e.status ?? 502).json({ ok: false, error: e.message, code: e.code });
+  }
 });
 
 app.get("/api/analysis/sounding", async (req, res) => {
   const lat = Number(req.query.lat), lng = Number(req.query.lng);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return res.status(400).json({ error: "lat e lng obrigatórios" });
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ error: "lat e lng obrigatórios" });
+  }
+  const hora = req.query.hora ? String(req.query.hora) : null;
   try {
-    const key = `snd:${lat.toFixed(2)}:${lng.toFixed(2)}`;
-    const sounding = await cached(key, 2 * HOUR, async () => {
-      const levels = ["1000hpa", "925hpa", "850hpa", "700hpa", "500hpa", "300hpa", "200hpa"];
-      const vars = levels.flatMap((lvl) => [`temperature_${lvl}`, `relative_humidity_${lvl}`, `wind_speed_${lvl}`]).join(",");
-      const qs = new URLSearchParams({ latitude: String(lat), longitude: String(lng), hourly: vars, forecast_days: "1", timezone: "UTC" });
-      let data = null;
-      try { const r = await fetch(`https://api.open-meteo.com/v1/forecast?${qs}`); if (r.ok) data = await r.json(); } catch { /* fallback */ }
-      const h = data?.hourly || {};
-      const idx = 12;
-      const profile = levels.map((lvl) => {
-        const hpa = parseInt(lvl);
-        const lapseTemp = 25.0 - (1000 - hpa) * 0.08;
-        return { pressure_hpa: hpa, temperature: h[`temperature_${lvl}`]?.[idx] ?? +lapseTemp.toFixed(1), humidity: h[`relative_humidity_${lvl}`]?.[idx] ?? Math.round(75 - (1000 - hpa) * 0.05), windSpeed: h[`wind_speed_${lvl}`]?.[idx] ?? +(15 + (1000 - hpa) * 0.04).toFixed(1) };
-      });
-      const place = await placeAt(lat, lng);
-      return { lat, lng, place: place ?? "Oceano", profile };
-    });
-    res.json(sounding);
-  } catch (e) { res.status(200).json({ lat, lng, place: "Ponto Consultado", profile: [] }); }
+    const out = await cached(`snd:${lat.toFixed(2)}:${lng.toFixed(2)}:${hora ?? "agora"}`, 2 * HOUR,
+      () => buscarSondagem((u) => metered("open-meteo", 1, () => fetch(u)), { lat, lng, hora }));
+    let place = null;
+    try { place = await placeAt(lat, lng); } catch { /* ponto sem topônimo */ }
+    res.json({ ok: true, ...out, place });
+  } catch (e) {
+    // A versão anterior devolvia 200 com `place: "Ponto Consultado"` e um
+    // perfil montado por lapse rate. Sondagem inventada erra CAPE, não pixel.
+    res.status(e.status ?? 502).json({ ok: false, error: e.message, code: e.code });
+  }
 });
 
 app.get("/api/analysis/compare", async (req, res) => {
   const lat = Number(req.query.lat), lng = Number(req.query.lng);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return res.status(400).json({ error: "lat e lng obrigatórios" });
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ error: "lat e lng obrigatórios" });
+  }
+  const horas = Math.min(72, Math.max(6, Number(req.query.horas) || 48));
   try {
-    const key = `cmp:${lat.toFixed(2)}:${lng.toFixed(2)}`;
-    const comparison = await cached(key, 2 * HOUR, async () => {
-      const qsGfs = new URLSearchParams({ latitude: String(lat), longitude: String(lng), hourly: "temperature_2m,wind_speed_10m,surface_pressure", timezone: "UTC", forecast_days: "1" });
-      let data = null;
-      try { const r = await fetch(`https://api.open-meteo.com/v1/forecast?${qsGfs}`); if (r.ok) data = await r.json(); } catch { /* fallback */ }
-      const h = data?.hourly || {};
-      const idx = 12;
-      const baseTemp = h.temperature_2m?.[idx] ?? (25 - Math.abs(lat) * 0.3);
-      const baseWind = h.wind_speed_10m?.[idx] ?? 14;
-      const basePress = h.surface_pressure?.[idx] ?? 1013;
-      return { lat, lng, time: h.time?.[idx] ?? new Date().toISOString(), models: { gfs: { temperature: +(baseTemp).toFixed(1), windSpeed: +(baseWind).toFixed(1), pressure: Math.round(basePress) }, icon: { temperature: +(baseTemp + 0.4).toFixed(1), windSpeed: +(baseWind - 0.8).toFixed(1), pressure: Math.round(basePress - 1) }, ecmwf: { temperature: +(baseTemp - 0.2).toFixed(1), windSpeed: +(baseWind + 0.5).toFixed(1), pressure: Math.round(basePress + 1) } } };
-    });
-    res.json(comparison);
-  } catch (e) { res.status(200).json({ lat, lng, time: new Date().toISOString(), models: {} }); }
+    const out = await cached(`cmp:${lat.toFixed(2)}:${lng.toFixed(2)}:${horas}`, 2 * HOUR,
+      () => compararModelos((u) => metered("open-meteo", 1, () => fetch(u)), { lat, lng, horas }));
+    let place = null;
+    try { place = await placeAt(lat, lng); } catch { /* ponto sem topônimo */ }
+    res.json({ ok: true, ...out, place });
+  } catch (e) {
+    res.status(e.status ?? 502).json({ ok: false, error: e.message, code: e.code });
+  }
 });
 
 app.get("/api/custom-model/predict", async (req, res) => {

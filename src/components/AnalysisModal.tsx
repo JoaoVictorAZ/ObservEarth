@@ -1,323 +1,247 @@
 // src/components/AnalysisModal.tsx
 // -----------------------------------------------------------------------------
-// ANÁLISE HISTÓRICA E CLIMATOLÓGICA REAL (MINIMALIST ICONS)
+// ANÁLISE DO PONTO — série histórica, perfil vertical e dispersão entre modelos.
+//
+// ESTA TELA ESTAVA INTEIRAMENTE QUEBRADA, DE TRÊS MANEIRAS DIFERENTES.
+//
+//   1. A ABA DE SÉRIE NUNCA FUNCIONOU. O componente exigia `{ ok, data }` e a
+//      rota devolvia `{ stats, series }`. Não havia interseção: caía sempre em
+//      "Formato de dados inválido". O seletor de 1 mês a 10 anos mandava
+//      `?range=`, e a rota lia `?days=`, com teto de 14.
+//
+//   2. O QUE SOBRAVA ERA INVENTADO. Sem resposta da fonte, a rota fabricava a
+//      série toda — temperatura por `25 − |lat|·0,35 + sen(i/4)·3`, umidade por
+//      cosseno, e os próprios carimbos de tempo — e devolvia com status 200. A
+//      sondagem vinha de uma reta em pressão. A "comparação GFS vs ECMWF vs
+//      ICON" era um modelo só, com +0,4 e −0,2 somados.
+//
+//   3. O GRÁFICO MENTIA SOBRE O PRÓPRIO EIXO. Filtrava os nulos e espaçava o
+//      resto por índice; a legenda colava o valor mínimo na data do primeiro
+//      ponto. Detalhado em `src/analysis/series.ts`.
+//
+// E o botão de exportar CSV levava tudo isso para dentro de uma planilha.
+//
+// ---------------------------------------------------------------------------
+// A ABA DE IA FOI REMOVIDA
+// Ela dizia "ONNX Runtime · Inferência Neural Realizada com Sucesso" e exibia
+// `confidence_score ?? 0.94` — uma confiança de 94% inventada quando o modelo
+// não reportava nenhuma. O microserviço que ela chamava
+// (`pipeline/model_server_template.py`, em localhost:8000) é um template que
+// não existe treinado. Uma aba que anuncia inferência neural bem-sucedida sobre
+// um servidor ausente é a afirmação mais forte da tela inteira, e era a única
+// sem nenhum dado atrás. Quando houver modelo, ela volta — com a métrica que o
+// modelo realmente reportar.
 // -----------------------------------------------------------------------------
 
 import { useEffect, useState } from "react";
-import { Calendar, Download, RefreshCw, Layers, Cpu, Sparkles } from "lucide-react";
+import { Calendar, Download, Layers, GitCompare, AlertTriangle } from "lucide-react";
 import { useDialog } from "../hooks/useDialog";
+import { SeriesChart } from "./analysis/SeriesChart";
+import { ProfileChart, type Nivel } from "./analysis/ProfileChart";
+import { SpreadChart, type Modelo, type Disp } from "./analysis/SpreadChart";
+import { paraCSV, baixar, type SerieDiaria } from "../analysis/csv";
 
-interface AnalysisProps {
-  lat: number;
-  lng: number;
-  place: string;
-  onClose: () => void;
-}
+interface AnalysisProps { lat: number; lng: number; place: string; onClose: () => void; }
 
-type RangeOption = "1m" | "2m" | "3m" | "6m" | "1y" | "5y" | "10y";
+type Aba = "serie" | "perfil" | "modelos";
+type Janela = "1m" | "2m" | "3m" | "6m" | "1y" | "5y" | "10y";
 
-interface DailyData {
-  time: string[];
-  temperature_2m_mean: (number | null)[];
-  temperature_2m_max: (number | null)[];
-  temperature_2m_min: (number | null)[];
-  precipitation_sum: (number | null)[];
-  wind_speed_10m_max: (number | null)[];
-  surface_pressure_mean: (number | null)[];
-}
-
-const RANGES: { id: RangeOption; label: string }[] = [
-  { id: "1m", label: "1 Mês" },
-  { id: "2m", label: "2 Meses" },
-  { id: "3m", label: "3 Meses" },
-  { id: "6m", label: "6 Meses" },
-  { id: "1y", label: "1 Ano" },
-  { id: "5y", label: "5 Anos" },
-  { id: "10y", label: "10 Anos" },
+const JANELAS: { id: Janela; rotulo: string }[] = [
+  { id: "1m", rotulo: "1 mês" }, { id: "3m", rotulo: "3 meses" }, { id: "6m", rotulo: "6 meses" },
+  { id: "1y", rotulo: "1 ano" }, { id: "5y", rotulo: "5 anos" }, { id: "10y", rotulo: "10 anos" },
 ];
 
-export default function AnalysisModal({ lat, lng, place, onClose }: AnalysisProps) {
-  // Modal cobre a tela: aqui o foco é PRESO de propósito. Deixar o Tab
-  // escapar para o mapa por baixo faria a pessoa navegar num conteúdo que ela
-  // não consegue ver.
-  const [range, setRange] = useState<RangeOption>("1y");
-  // Modal cobre a tela: aqui o foco é PRESO de propósito. Deixar o Tab escapar
-  // para o mapa por baixo faria a pessoa navegar num conteúdo que não vê.
-  const modalRef = useDialog<HTMLDivElement>({ aberto: true, aoFechar: onClose, prender: true });
-  const [tab, setTab] = useState<"series" | "sounding" | "models" | "ai">("series");
-  const [loading, setLoading] = useState(true);
-  const [daily, setDaily] = useState<DailyData | null>(null);
-  const [error, setError] = useState<string | null>(null);
+interface Resumo { n: number; ausentes: number; min: number | null; max: number | null; media: number | null; desvio: number | null; soma: number | null; unidade: string; rotulo: string; }
+interface Serie extends SerieDiaria { resumos: Record<string, Resumo>; nota: string; place?: string | null; }
+interface Sondagem { instante: string; perfil: Nivel[]; camadas: { de: number; ate: number; gradiente: number | null; classe: string | null }[]; ausentes: number; fonte: string; nota: string; derivados: Record<string, string>; }
+interface Comparacao { tempo: string[]; modelos: Modelo[]; variaveis: { id: string; rotulo: string; unidade: string; casas: number }[]; serie: Record<string, Record<string, (number | null)[] | null>>; espalhamento: Record<string, { porHora: Disp[]; maiorAmplitude: number | null; quando: string | null; amplitudeMedia: number | null; modelos: string[] }>; avisos: string[]; fonte: string; nota: string; }
 
-  const [aiData, setAiData] = useState<any>(null);
-  const [aiError, setAiError] = useState<string | null>(null);
+/** Uma falha explicada vale mais que um gráfico plausível. */
+function Falha({ msg, codigo, aoTentar }: { msg: string; codigo?: string; aoTentar: () => void }) {
+  return (
+    <div className="an-falha" role="alert">
+      <AlertTriangle size={16} strokeWidth={1.5} aria-hidden="true" />
+      <div>
+        <strong>Não foi possível obter estes dados.</strong>
+        <p>{msg}</p>
+        {codigo && <code>{codigo}</code>}
+        <p className="an-falha-nota">Nada foi estimado para preencher o lugar deles.</p>
+      </div>
+      <button className="h-btn" onClick={aoTentar}>Tentar de novo</button>
+    </div>
+  );
+}
+
+function useRota<T>(url: string | null, dep: unknown[]) {
+  const [dado, setDado] = useState<T | null>(null);
+  const [erro, setErro] = useState<{ msg: string; codigo?: string } | null>(null);
+  const [carregando, setCarregando] = useState(false);
+  const [tentativa, setTentativa] = useState(0);
 
   useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    setError(null);
-
-    fetch(`/api/analysis/timeseries?lat=${lat}&lng=${lng}&range=${range}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`)))
-      .then((res) => {
-        if (!alive) return;
-        if (res.ok && res.data) {
-          setDaily(res.data);
-        } else {
-          throw new Error("Formato de dados inválido");
+    if (!url) return;
+    let vivo = true;
+    setCarregando(true); setErro(null);
+    fetch(url)
+      .then(async (r) => {
+        // A mensagem do servidor é a informação útil. Reduzir tudo a
+        // "HTTP 502" jogava fora o motivo — e o motivo é o que diz se vale
+        // tentar outro ponto, outra janela, ou esperar.
+        const j = await r.json().catch(() => null);
+        if (!r.ok || j?.ok === false) {
+          throw Object.assign(new Error(j?.error ?? `HTTP ${r.status}`), { codigo: j?.code });
         }
+        return j as T;
       })
-      .catch((err) => {
-        if (!alive) return;
-        setError(`Falha ao obter histórico climático: ${String(err)}`);
+      .then((j) => { if (vivo) setDado(j); })
+      .catch((e: Error & { codigo?: string }) => {
+        if (vivo) { setDado(null); setErro({ msg: e.message, codigo: e.codigo }); }
       })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
+      .finally(() => { if (vivo) setCarregando(false); });
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [...dep, tentativa]);
 
-    return () => { alive = false; };
-  }, [lat, lng, range]);
+  return { dado, erro, carregando, repetir: () => setTentativa((t) => t + 1) };
+}
 
-  const fetchAiPrediction = async () => {
-    setAiError(null);
-    try {
-      const r = await fetch(`/api/custom-model/predict?lat=${lat.toFixed(3)}&lng=${lng.toFixed(3)}`);
-      const d = await r.json();
-      setAiData(d);
-      if (d.online === false) {
-        setAiError(d.hint || "Servidor de IA offline");
-      }
-    } catch {
-      setAiError("Não foi possível conectar ao microserviço de IA local (pipeline/model_server_template.py).");
-    }
+const grau = (v: number, pos: string, neg: string) =>
+  `${Math.abs(v).toFixed(2)}° ${v >= 0 ? pos : neg}`;
+
+export default function AnalysisModal({ lat, lng, place, onClose }: AnalysisProps) {
+  const [aba, setAba] = useState<Aba>("serie");
+  const [janela, setJanela] = useState<Janela>("1y");
+
+  // Foco preso: o modal cobre a tela. Deixar o Tab escapar para o globo faria
+  // a pessoa navegar por um conteúdo que ela não consegue ver.
+  const ref = useDialog<HTMLDivElement>({ aberto: true, aoFechar: onClose, prender: true });
+
+  const q = `lat=${lat.toFixed(4)}&lng=${lng.toFixed(4)}`;
+  const serie = useRota<Serie>(
+    aba === "serie" ? `/api/analysis/timeseries?${q}&range=${janela}` : null, [q, janela, aba]);
+  const sond = useRota<Sondagem>(
+    aba === "perfil" ? `/api/analysis/sounding?${q}` : null, [q, aba]);
+  const comp = useRota<Comparacao>(
+    aba === "modelos" ? `/api/analysis/compare?${q}&horas=48` : null, [q, aba]);
+
+  const exportar = () => {
+    if (!serie.dado) return;
+    baixar(
+      paraCSV(serie.dado, { place, lat, lng }),
+      `observatorio_${janela}_${lat.toFixed(2)}_${lng.toFixed(2)}.csv`
+    );
   };
 
-  const temps = daily?.temperature_2m_mean?.filter((v): v is number => v != null) || [];
-  const minTemp = temps.length ? Math.min(...temps) : 0;
-  const maxTemp = temps.length ? Math.max(...temps) : 0;
-  const avgTemp = temps.length ? temps.reduce((a, b) => a + b, 0) / temps.length : 0;
-  const stdTemp = temps.length
-    ? Math.sqrt(temps.reduce((a, b) => a + Math.pow(b - avgTemp, 2), 0) / temps.length)
-    : 0;
-
-  const precips = daily?.precipitation_sum?.filter((v): v is number => v != null) || [];
-  const totalPrecip = precips.reduce((a, b) => a + b, 0);
-
-  const winds = daily?.wind_speed_10m_max?.filter((v): v is number => v != null) || [];
-  const maxWind = winds.length ? Math.max(...winds) : 0;
-
-  const exportCSV = () => {
-    if (!daily || !daily.time) return;
-    const headers = "Data,TempMédia(C),TempMín(C),TempMáx(C),Precipitação(mm),VentoMáx(km/h),Pressão(hPa)\n";
-    const rows = daily.time.map((t, i) =>
-      `${t},${daily.temperature_2m_mean[i] ?? ""},${daily.temperature_2m_min[i] ?? ""},${daily.temperature_2m_max[i] ?? ""},${daily.precipitation_sum[i] ?? ""},${daily.wind_speed_10m_max[i] ?? ""},${daily.surface_pressure_mean[i] ?? ""}`
-    ).join("\n");
-
-    const blob = new Blob([headers + rows], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `observatorio_historico_${range}_${lat.toFixed(2)}_${lng.toFixed(2)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const abas: { id: Aba; rotulo: string; icone: React.ReactNode }[] = [
+    { id: "serie", rotulo: "Série histórica", icone: <Calendar size={13} strokeWidth={1.5} /> },
+    { id: "perfil", rotulo: "Perfil vertical", icone: <Layers size={13} strokeWidth={1.5} /> },
+    { id: "modelos", rotulo: "Dispersão entre modelos", icone: <GitCompare size={13} strokeWidth={1.5} /> },
+  ];
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div
-        ref={modalRef}
-        className="modal-content"
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Análise completa de ${place}`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="modal-header">
+      <div ref={ref} className="modal-content" role="dialog" aria-modal="true"
+        aria-label={`Análise de ${place}`} onClick={(e) => e.stopPropagation()}>
+
+        <header className="modal-header">
           <div>
-            <h2>Análise Climatológica & Séries Históricas</h2>
-            <div className="subtext">
-              {place} ({Math.abs(lat).toFixed(2)}°{lat >= 0 ? "N" : "S"}, {Math.abs(lng).toFixed(2)}°{lng >= 0 ? "L" : "O"})
-            </div>
+            <h2>Análise do ponto</h2>
+            <p className="subtext">{place} · {grau(lat, "N", "S")}  {grau(lng, "L", "O")}</p>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <button className="h-btn" onClick={exportCSV} title="Exportar CSV">
-              <Download size={13} strokeWidth={1.5} style={{ marginRight: 4 }} /> Exportar CSV
+          <div className="an-acoes">
+            <button className="h-btn" onClick={exportar} disabled={!serie.dado}
+              title={serie.dado ? "Baixar a série diária em CSV" : "Disponível quando a série carregar"}>
+              <Download size={13} strokeWidth={1.5} aria-hidden="true" /> Exportar CSV
             </button>
             <button className="close-btn" onClick={onClose} aria-label="Fechar análise">×</button>
           </div>
+        </header>
+
+        <div className="tabs" role="tablist">
+          {abas.map((a) => (
+            <button key={a.id} role="tab" aria-selected={aba === a.id}
+              className={aba === a.id ? "active" : ""} onClick={() => setAba(a.id)}>
+              {a.icone} {a.rotulo}
+            </button>
+          ))}
         </div>
 
-        <div className="tabs">
-          <button className={tab === "series" ? "active" : ""} onClick={() => setTab("series")}>
-            <Calendar size={13} strokeWidth={1.5} style={{ marginRight: 5 }} /> Série Temporal Histórica
-          </button>
-          <button className={tab === "sounding" ? "active" : ""} onClick={() => setTab("sounding")}>
-            <Layers size={13} strokeWidth={1.5} style={{ marginRight: 5 }} /> Perfil Vertical (Sounding)
-          </button>
-          <button className={tab === "models" ? "active" : ""} onClick={() => setTab("models")}>
-            <Cpu size={13} strokeWidth={1.5} style={{ marginRight: 5 }} /> Comparação de Modelos
-          </button>
-          <button className={tab === "ai" ? "active" : ""} onClick={() => { setTab("ai"); if (!aiData) fetchAiPrediction(); }}>
-            <Sparkles size={13} strokeWidth={1.5} style={{ marginRight: 5 }} /> Modelo Neural (IA)
-          </button>
-        </div>
-
-        {tab === "series" && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 20px", background: "#080b11", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: "var(--ink-3)", fontFamily: "var(--mono)", marginRight: 8 }}>
-              HORIZONTE TEMPORAL:
-            </span>
-            {RANGES.map((r) => (
-              <button
-                key={r.id}
-                className={`h-btn ${range === r.id ? "primary-h-btn" : ""}`}
-                onClick={() => setRange(r.id)}
-                style={{ padding: "4px 10px", fontSize: 11 }}
-              >
-                {r.label}
-              </button>
+        {aba === "serie" && (
+          <div className="an-janela" role="radiogroup" aria-label="Janela temporal">
+            <span className="an-janela-rot">janela</span>
+            {JANELAS.map((j) => (
+              <button key={j.id} role="radio" aria-checked={janela === j.id}
+                className={`h-btn ${janela === j.id ? "primary-h-btn" : ""}`}
+                onClick={() => setJanela(j.id)}>{j.rotulo}</button>
             ))}
           </div>
         )}
 
         <div className="modal-body">
-          {loading ? (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 60, gap: 12 }}>
-              <RefreshCw size={24} strokeWidth={1.5} className="spin" color="var(--signal)" />
-              <span style={{ fontSize: 12, color: "var(--ink-2)", fontFamily: "var(--mono)" }}>
-                Processando dados de reanálise ERA5 Copernicus para {RANGES.find((r) => r.id === range)?.label}…
-              </span>
-            </div>
-          ) : error ? (
-            <div style={{ padding: 30, textAlign: "center", color: "#f87171" }}>{error}</div>
-          ) : (
-            <>
-              {tab === "series" && daily && (
-                <div className="tab-pane">
-                  <div className="stats-cards">
-                    <div className="stat-card">
-                      <small>TEMP. MÍNIMA</small>
-                      <strong style={{ color: "#60a5fa" }}>{minTemp.toFixed(1)} °C</strong>
-                    </div>
-                    <div className="stat-card">
-                      <small>TEMP. MÉDIA</small>
-                      <strong style={{ color: "var(--signal)" }}>{avgTemp.toFixed(1)} °C</strong>
-                    </div>
-                    <div className="stat-card">
-                      <small>TEMP. MÁXIMA</small>
-                      <strong style={{ color: "#f87171" }}>{maxTemp.toFixed(1)} °C</strong>
-                    </div>
-                    <div className="stat-card">
-                      <small>DESVIO PADRÃO (Σ)</small>
-                      <strong style={{ color: "#c084fc" }}>{stdTemp.toFixed(2)}</strong>
-                    </div>
-                    <div className="stat-card">
-                      <small>PRECIP. TOTAL</small>
-                      <strong style={{ color: "#38bdf8" }}>{totalPrecip.toFixed(1)} mm</strong>
-                    </div>
-                    <div className="stat-card">
-                      <small>RAJADA MÁX VENTO</small>
-                      <strong style={{ color: "#facc15" }}>{maxWind.toFixed(1)} km/h</strong>
-                    </div>
-                  </div>
-
-                  <div style={{ marginBottom: 20 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "#fff", marginBottom: 8, display: "flex", justifyContent: "space-between" }}>
-                      <span>Evolução da Temperatura 2m (°C) — ERA5</span>
-                      <span style={{ fontSize: 10, color: "var(--ink-3)", fontFamily: "var(--mono)" }}>{daily.time.length} observações diárias</span>
-                    </div>
-                    <SmoothSVGChart
-                      data={daily.time.map((t, i) => ({ x: t, y: daily.temperature_2m_mean[i] }))}
-                      color="#32d6a5"
-                      unit="°C"
+          {/* ---------------------------------------------------- série ---- */}
+          {aba === "serie" && (
+            serie.carregando ? <Carregando o="a série diária" /> :
+            serie.erro ? <Falha {...serie.erro} aoTentar={serie.repetir} /> :
+            serie.dado ? (
+              <section className="tab-pane">
+                <Resumos d={serie.dado} />
+                {serie.dado.variaveis
+                  .filter((v) => v !== "wind_direction_10m_dominant")
+                  .map((v) => (
+                    <SeriesChart key={v}
+                      tempo={serie.dado!.serie.time}
+                      valores={(serie.dado!.serie[v] as (number | null)[]) ?? []}
+                      rotulo={serie.dado!.rotulos[v]}
+                      unidade={serie.dado!.unidades[v]}
+                      casas={serie.dado!.unidades[v] === "mm" ? 1 : 1}
                     />
-                  </div>
+                  ))}
+                <Procedencia fonte={serie.dado.fonte} nota={serie.dado.nota}
+                  extra={serie.dado.lacunas} />
+              </section>
+            ) : null
+          )}
 
-                  <div style={{ marginBottom: 20 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "#fff", marginBottom: 8 }}>
-                      Precipitação Diária Acumulada (mm)
-                    </div>
-                    <SmoothSVGChart
-                      data={daily.time.map((t, i) => ({ x: t, y: daily.precipitation_sum[i] }))}
-                      color="#38bdf8"
-                      unit="mm"
-                    />
-                  </div>
+          {/* ---------------------------------------------------- perfil --- */}
+          {aba === "perfil" && (
+            sond.carregando ? <Carregando o="o perfil vertical" /> :
+            sond.erro ? <Falha {...sond.erro} aoTentar={sond.repetir} /> :
+            sond.dado ? (
+              <section className="tab-pane">
+                <p className="an-quando">
+                  Sondagem de <strong>{new Date(sond.dado.instante).toISOString().slice(0, 16).replace("T", " ")} UTC</strong>
+                  {sond.dado.ausentes > 0 && ` · ${sond.dado.ausentes} nível(is) sem dado`}
+                </p>
+                <ProfileChart perfil={sond.dado.perfil} />
+                <Camadas camadas={sond.dado.camadas} />
+                <Procedencia fonte={sond.dado.fonte} nota={sond.dado.nota}
+                  extra={Object.values(sond.dado.derivados)} />
+              </section>
+            ) : null
+          )}
 
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "#fff", marginBottom: 8 }}>
-                      Pressão Superfície Média (hPa)
-                    </div>
-                    <SmoothSVGChart
-                      data={daily.time.map((t, i) => ({ x: t, y: daily.surface_pressure_mean[i] }))}
-                      color="#fbbf24"
-                      unit="hPa"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {tab === "sounding" && (
-                <div style={{ padding: 20, textAlign: "center", color: "var(--ink-2)" }}>
-                  <h3>Perfil Vertical da Atmosfera (Sondagem Radiossonda)</h3>
-                  <p style={{ fontSize: 12, color: "var(--ink-3)" }}>
-                    Exibe temperatura, ponto de orvalho e vetores de vento nos níveis de pressão de 1000 hPa a 100 hPa.
-                  </p>
-                </div>
-              )}
-
-              {tab === "models" && (
-                <div style={{ padding: 20, textAlign: "center", color: "var(--ink-2)" }}>
-                  <h3>Comparação de Modelos Numéricos (GFS vs ECMWF vs ICON)</h3>
-                  <p style={{ fontSize: 12, color: "var(--ink-3)" }}>
-                    Convergência de previsão entre os três principais centros globais de meteorologia.
-                  </p>
-                </div>
-              )}
-
-              {tab === "ai" && (
-                <div style={{ padding: 20 }}>
-                  <h3 style={{ margin: "0 0 10px", color: "#fff" }}>Modelo Neural Próprio (Caminho de Doutorado)</h3>
-                  <p style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 16 }}>
-                    Conecta-se ao microserviço FastAPI local (<code style={{ color: "var(--signal)" }}>pipeline/model_server_template.py</code>) para executar inferência de redes neurais (GraphCast/FourCastNet/FNO) treinadas em ERA5.
-                  </p>
-
-                  {aiError ? (
-                    <div style={{ padding: 16, background: "rgba(248, 113, 113, 0.1)", border: "1px solid rgba(248, 113, 113, 0.3)", borderRadius: 6 }}>
-                      <strong style={{ color: "#f87171" }}>Servidor de IA Indisponível</strong>
-                      <p style={{ fontSize: 12, color: "var(--ink-2)", margin: "6px 0 12px" }}>{aiError}</p>
-                      <button className="h-btn primary-h-btn" onClick={fetchAiPrediction}>Refazer Conexão</button>
-                    </div>
-                  ) : aiData ? (
-                    <div>
-                      <div style={{ display: "inline-block", padding: "4px 10px", background: "rgba(93, 224, 176, 0.16)", border: "1px solid var(--signal)", color: "var(--signal)", borderRadius: 4, fontSize: 11, fontFamily: "var(--mono)" }}>
-                        ONNX Runtime · Inferência Neural Realizada com Sucesso
-                      </div>
-                      <div className="stats-cards" style={{ marginTop: 14 }}>
-                        <div className="stat-card">
-                          <small>Arquitetura</small>
-                          <strong>{aiData.model_architecture || "GraphNet / FNO"}</strong>
-                        </div>
-                        <div className="stat-card">
-                          <small>Previsão Temp 2m</small>
-                          <strong style={{ color: "var(--signal)" }}>{aiData.predictions?.temperature_2m_celsius} °C</strong>
-                        </div>
-                        <div className="stat-card">
-                          <small>Pressão Superfície</small>
-                          <strong style={{ color: "#fbbf24" }}>{aiData.predictions?.surface_pressure_hpa} hPa</strong>
-                        </div>
-                        <div className="stat-card">
-                          <small>Confiança do Modelo</small>
-                          <strong style={{ color: "#c084fc" }}>{((aiData.predictions?.confidence_score ?? 0.94) * 100).toFixed(0)}%</strong>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <button className="h-btn primary-h-btn" onClick={fetchAiPrediction}>Testar Inferência de IA Local</button>
-                  )}
-                </div>
-              )}
-            </>
+          {/* --------------------------------------------------- modelos --- */}
+          {aba === "modelos" && (
+            comp.carregando ? <Carregando o="as três previsões" /> :
+            comp.erro ? <Falha {...comp.erro} aoTentar={comp.repetir} /> :
+            comp.dado ? (
+              <section className="tab-pane">
+                <p className="an-quando">
+                  Próximas {comp.dado.tempo.length} horas. A leitura é a <strong>largura da faixa</strong>:
+                  onde os três centros divergem, a previsão é menos confiável.
+                </p>
+                {comp.dado.variaveis.map((v) => (
+                  <SpreadChart key={v.id}
+                    tempo={comp.dado!.tempo}
+                    modelos={comp.dado!.modelos}
+                    serie={comp.dado!.serie[v.id]}
+                    porHora={comp.dado!.espalhamento[v.id].porHora}
+                    rotulo={v.rotulo} unidade={v.unidade} casas={v.casas}
+                  />
+                ))}
+                <Procedencia fonte={comp.dado.fonte} nota={comp.dado.nota} extra={comp.dado.avisos} />
+              </section>
+            ) : null
           )}
         </div>
       </div>
@@ -325,50 +249,81 @@ export default function AnalysisModal({ lat, lng, place, onClose }: AnalysisProp
   );
 }
 
-function SmoothSVGChart({ data, color, unit }: { data: { x: string; y: number | null }[]; color: string; unit: string }) {
-  const valid = data.filter((d) => d.y != null && Number.isFinite(d.y));
-  if (!valid.length) return <div style={{ fontSize: 11, color: "var(--ink-3)", padding: 20, textAlign: "center" }}>Sem dados suficientes para plotagem</div>;
+// ---------------------------------------------------------------------------
 
-  const vals = valid.map((d) => d.y as number);
-  const min = Math.min(...vals);
-  const max = Math.max(...vals);
-  const range = max - min || 1;
+const Carregando = ({ o }: { o: string }) => (
+  <p className="an-carregando" aria-live="polite">Buscando {o}…</p>
+);
 
-  const W = 760;
-  const H = 160;
-  const pad = 24;
-
-  const points = valid.map((d, i) => {
-    const x = pad + (i / (valid.length - 1)) * (W - 2 * pad);
-    const y = H - pad - (((d.y as number) - min) / range) * (H - 2 * pad);
-    return { x, y };
-  });
-
-  const pathD = points.reduce((acc, p, i, a) => {
-    if (i === 0) return `M ${p.x},${p.y}`;
-    const prev = a[i - 1];
-    const cx = (prev.x + p.x) / 2;
-    return `${acc} C ${cx},${prev.y} ${cx},${p.y} ${p.x},${p.y}`;
-  }, "");
-
-  const areaD = `${pathD} L ${points[points.length - 1].x},${H - pad} L ${points[0].x},${H - pad} Z`;
-
+/**
+ * Resumo com N SEMPRE À VISTA.
+ *
+ * Uma média de 12 dias e uma média de 3.652 não significam a mesma coisa, e o
+ * número sozinho não conta a diferença. A versão anterior mostrava seis
+ * números grandes, cada um numa cor do Tailwind, sem nenhuma contagem.
+ */
+function Resumos({ d }: { d: Serie }) {
+  const destaque = ["temperature_2m_mean", "temperature_2m_min", "temperature_2m_max",
+    "precipitation_sum", "wind_speed_10m_max"];
   return (
-    <div className="svg-chart-container">
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
-        <defs>
-          <linearGradient id={`grad-${color}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity="0.28" />
-            <stop offset="100%" stopColor={color} stopOpacity="0.0" />
-          </linearGradient>
-        </defs>
-        <path d={areaD} fill={`url(#grad-${color})`} />
-        <path d={pathD} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" />
-      </svg>
-      <div className="chart-legend">
-        <span>Mín: <strong>{min.toFixed(1)}{unit}</strong> ({valid[0].x})</span>
-        <span>Máx: <strong>{max.toFixed(1)}{unit}</strong> ({valid[valid.length - 1].x})</span>
-      </div>
+    <div className="stats-cards">
+      {destaque.filter((v) => d.resumos[v]).map((v) => {
+        const r = d.resumos[v];
+        const principal = v === "precipitation_sum" ? r.soma : r.media;
+        const legenda = v === "precipitation_sum" ? "acumulado" : "média";
+        return (
+          <div key={v} className="stat-card">
+            <small>{r.rotulo}</small>
+            {principal == null ? (
+              <strong className="an-sem">sem dado</strong>
+            ) : (
+              <strong>{principal.toFixed(1)} <span className="an-un">{r.unidade}</span></strong>
+            )}
+            <p className="an-meta">
+              {legenda}
+              {r.desvio != null && v !== "precipitation_sum" && ` · σ ${r.desvio.toFixed(2)}`}
+              {" · "}n={r.n.toLocaleString("pt-BR")}
+              {r.ausentes > 0 && ` (+${r.ausentes} sem dado)`}
+            </p>
+          </div>
+        );
+      })}
     </div>
+  );
+}
+
+/** Estabilidade medida, com o limiar físico dito por extenso. */
+function Camadas({ camadas }: { camadas: Sondagem["camadas"] }) {
+  const notaveis = camadas.filter((c) => c.classe === "inversão" || c.classe === "superadiabática" || c.classe === "isotérmica");
+  if (!notaveis.length) return null;
+  return (
+    <div className="an-camadas">
+      <h3>Camadas notáveis</h3>
+      <ul>
+        {notaveis.map((c) => (
+          <li key={`${c.de}-${c.ate}`}>
+            <strong>{c.de}→{c.ate} hPa</strong>
+            <span className={`an-classe an-classe-${c.classe === "inversão" ? "inv" : c.classe === "superadiabática" ? "sup" : "iso"}`}>
+              {c.classe}
+            </span>
+            <small>{c.gradiente?.toFixed(2)} °C/km</small>
+          </li>
+        ))}
+      </ul>
+      <p className="an-meta">
+        Referências: 9,8 °C/km é o gradiente adiabático seco (g/c<sub>p</sub>); gradiente
+        negativo é inversão, que tampa a convecção.
+      </p>
+    </div>
+  );
+}
+
+function Procedencia({ fonte, nota, extra }: { fonte: string; nota: string; extra?: string[] }) {
+  return (
+    <footer className="an-proc">
+      <p><strong>Fonte:</strong> {fonte}</p>
+      <p>{nota}</p>
+      {extra?.filter(Boolean).map((e, i) => <p key={i} className="an-proc-extra">{e}</p>)}
+    </footer>
   );
 }

@@ -84,6 +84,28 @@ lat<34 e lng>-16 e lng<55, soma 13 graus` para o Saara). Isso reintroduzia os
 setores retangulares e apresentava números fabricados como observação. Removido:
 o botão agora seleciona o produto real de temperatura do GIBS.
 
+**3. A tela de Análise era inventada por inteiro — as três abas.** Esta foi a
+pior, porque é a tela de onde sai arquivo.
+
+| Aba | O que fazia | O que faz |
+|---|---|---|
+| Série histórica | Nunca funcionou: o componente exigia `{ok, data}` e a rota devolvia `{stats, series}`. O seletor de 1 mês a 10 anos mandava `?range=`; a rota lia `?days=`, teto de 14. Sem resposta da fonte, fabricava a série toda — temperatura por `25 − \|lat\|·0,35 + sen(i/4)·3`, umidade por cosseno, e os próprios carimbos de tempo — com status 200. | `server/timeseries.js`: agregados diários reais do arquivo ERA5, uma requisição por janela (10 anos custam o mesmo que 1 mês). Falha é 502 com código. |
+| Perfil vertical | Montava a atmosfera com a reta `25 − (1000−hPa)·0,08`. Sem tropopausa, sem inversão, sem camada limite. E pedia `temperature_1000hpa` onde a API publica `temperature_1000hPa` — uma letra: se o parâmetro era rejeitado, **todo** valor caía no fallback. | `server/sounding.js`: níveis de pressão reais, altura geopotencial medida, orvalho derivado por Magnus-Tetens e **rotulado como derivado**. Nível sem dado fica vazio. |
+| Comparação de modelos | Uma chamada só, com `icon = gfs + 0,4` e `ecmwf = gfs − 0,2`. A tela afirmava que os centros do mundo concordam a menos de 0,6 °C em todo ponto do planeta, sempre. | `server/compare.js`: os três modelos numa requisição via `&models=`. A dispersão é medida hora a hora, e a faixa de desacordo é o primeiro plano do gráfico. |
+
+E o gráfico mentia sobre o próprio eixo: filtrava os nulos e espaçava o resto
+por **índice**, de modo que 200 dias ausentes viravam uma linha contínua e
+uniforme. A legenda imprimia o mínimo da série ao lado da data do *primeiro*
+ponto. Corrigido em `src/analysis/series.ts`, com teste; a redução para dez anos
+usa envelope min–max, que preserva os extremos em vez de descartá-los.
+
+**A aba "Modelo Neural (IA)" foi removida.** Ela exibia "ONNX Runtime ·
+Inferência Neural Realizada com Sucesso" e `confidence_score ?? 0.94` sobre um
+microserviço (`pipeline/model_server_template.py`) que é um template sem modelo
+treinado. A rota `/api/custom-model/predict` continua no servidor, honesta
+(`online: false`), e a aba volta quando houver modelo — com a métrica que o
+modelo reportar.
+
 ### O que ainda falta conectar
 
 | Prioridade | Fonte | Ganho | Atrito |
