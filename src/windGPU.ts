@@ -191,10 +191,31 @@ const UPDATE_FRAG = /* glsl */ `
         }
       }
       pos = cand;
-      age = found > 0.5 ? (0.60 + hash(vUv + uTime * 2.3) * 0.40) : -1.0;
+      // VIDA ESPALHADA. A faixa era 0,60 a 1,00 — uma variação de só 40%, o
+      // que faz as partículas nascerem e morrerem quase juntas. O efeito é uma
+      // pulsação: o campo inteiro clareia e apaga em ondas, e as trajetórias
+      // saem em pentes paralelos porque toda a leva começou no mesmo instante.
+      // De 0,15 a 1,00 a leva se dispersa e o escoamento fica contínuo.
+      age = found > 0.5 ? (0.15 + hash(vUv + uTime * 2.3) * 0.85) : -1.0;
     }
 
-    gl_FragColor = vec4(pos, clamp(spd / ${SPEED_MAX}.0, 0.0, 1.0), age);
+    // ---- ESCALA PERCEPTUAL DE VELOCIDADE ---------------------------------
+    //
+    // A normalização era linear sobre SPEED_MAX = 40 m/s. Mas 40 m/s é rajada
+    // de ciclone: o vento de superfície do planeta vive entre 3 e 12 m/s, o
+    // que caía em t = 0,08 a 0,30 — o terço inferior da rampa, todo azul
+    // escuro. Praticamente o mapa inteiro ficava na mesma cor, e só os
+    // quarentões rugidores acendiam. É o que se vê na tela: um globo quase
+    // apagado com duas manchas.
+    //
+    // O expoente 0,6 é uma escala perceptual, não um enfeite: espalha a faixa
+    // comum pelo meio da rampa mantendo a ordem intacta (5 m/s -> 0,31;
+    // 10 -> 0,47; 20 -> 0,71; 40 -> 1,0). É o mesmo raciocínio de um eixo
+    // logarítmico — a monotonicidade se preserva, então nenhuma comparação
+    // muda de sinal, e a legenda diz qual velocidade é qual.
+    float t = pow(clamp(spd / ${SPEED_MAX}.0, 0.0, 1.0), 0.6);
+
+    gl_FragColor = vec4(pos, t, age);
   }
 `;
 
@@ -268,12 +289,49 @@ ${rampaGLSL(RAMPA_VENTO)}
     // a velocidade está codificada.
     vec3 col = ramp(vSpeed);
 
-    // Opacidade também cresce com a velocidade. Codificar a mesma grandeza em
-    // dois canais (brilho e presença) é o que faz a leitura sobreviver a tela
-    // ruim, luz ambiente e daltonismo — não é redundância à toa.
-    float alfa = core * fade * (0.24 + vSpeed * 0.50);
+    // ---- TINTA PROPORCIONAL À DISTÂNCIA PERCORRIDA ------------------------
+    //
+    // ESTE É O CONSERTO DA "CALMARIA QUE PARECE FURACÃO".
+    //
+    // O rastro é um acúmulo: cada quadro a textura inteira é multiplicada por
+    // uFade (0,985) e as partículas pintam por cima. Uma partícula PARADA
+    // pinta o MESMO texel todo quadro, e o acúmulo converge para
+    //
+    //     alfa / (1 - uFade)  =  alfa / 0,015  =  67 x alfa
+    //
+    // ou seja, satura em branco quase imediatamente. Uma partícula RÁPIDA
+    // atravessa dez texels por quadro, pinta cada um UMA vez, e cada um já
+    // começa a apagar.
+    //
+    // O resultado era o inverso do que o mapa precisa dizer: a região calma
+    // ficava sólida e brilhante, e como campo calmo é laminar, o lento
+    // arrastar traçava um risco reto, longo e cheio — o "furacão de outro
+    // mundo" onde não venta quase nada. O vento forte, que se espalha, ficava
+    // mais apagado que ele.
+    //
+    // O NÚMERO QUE FECHA O CASO: com o piso de 0,24 que estava aqui, o rastro a
+    // 2 m/s e o rastro a 25 m/s tinham AMBOS brilho 1,000 e levavam AMBOS 259
+    // quadros (4,3 s) para apagar. Calmaria e vendaval eram, pixel a pixel, a
+    // mesma marca — e a calma, sendo laminar, desenhava a versão reta e longa
+    // dela.
+    //
+    // A correção é a de uma caneta: para traçar uma linha de densidade
+    // constante, a tinta sai proporcional à velocidade da mão; parada, a caneta
+    // não pode borrar.
+    //
+    // E aí a medição mostrou algo que eu tinha errado: com tinta proporcional à
+    // distância, o brilho NÃO PODE codificar velocidade — os dois efeitos se
+    // cancelam exatamente. Quem carrega a velocidade é a COR (a rampa) e o
+    // COMPRIMENTO do traço. O brilho fica uniforme, que é o que faz parecer um
+    // campo de escoamento em vez de borrões. Ver src/windInk.ts.
+    //
+    // vSpeed chega perceptual (elevado a 0,6) para a cor; a tinta desfaz a
+    // curva, porque distância percorrida é grandeza física e não herda a curva
+    // que existe só para a leitura.
+    float vLinear = pow(vSpeed, 1.6667);
+    float tinta = 0.01 + vLinear * 0.30;
 
-    gl_FragColor = vec4(col, alfa);
+    gl_FragColor = vec4(col, core * fade * tinta);
   }
 `;
 
@@ -314,8 +372,18 @@ export class WindGPU {
 
   /** graus por segundo por m/s — movimento fluido natural */
   speed = 0.12;
-  /** Decaimento suave de rastro nítido curvilíneo */
-  fade = 0.985;
+  /**
+   * Decaimento do rastro por quadro.
+   *
+   * Era 0,985, que dá um teto de acúmulo de 1/(1−0,985) = 67 repinturas: um
+   * texel saturava e depois levava 259 quadros (4,3 s) para apagar. Rastro de
+   * quatro segundos é o que fazia tudo virar cabelo comprido, e o que fazia a
+   * calmaria — que repinta o mesmo lugar — encorpar num risco sólido.
+   *
+   * 0,975 dá teto 40 e rastro de ~2,3 s. Curto o bastante para o traço seguir
+   * a curvatura do escoamento em vez de acumular vários minutos de história.
+   */
+  fade = 0.975;
 
   constructor(renderer: THREE.WebGLRenderer, particles = 131072) {
     if (!renderer) throw new Error("[windGPU] renderer é obrigatório");
