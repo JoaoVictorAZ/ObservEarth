@@ -101,7 +101,7 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
     }
 
     let alive = true;
-    setWindInfo("Baixando Vento GFS 0.25°...");
+    setWindInfo("Baixando campo de vento…");
     fetch(`/api/wind?date=${day}&hour=${hour}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`)))
       .then((data: WindGrid) => {
@@ -109,7 +109,42 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
         if (!isValidWindGrid(data)) throw new Error("objeto de vento malformado");
         eng.setWindVisible(true);
         eng.setWind(data, `${day}:${hour}`);
-        setWindInfo("NOAA GFS 0.25° · 100% medido");
+
+        // -------------------------------------------------------------------
+        // A PROCEDÊNCIA VEM DA RESPOSTA, NÃO DE UM LITERAL.
+        //
+        // Esta linha era `setWindInfo("NOAA GFS 0.25° · 100% medido")` — fixa,
+        // sempre, independente do que o servidor tivesse devolvido. E o
+        // servidor tem DOIS caminhos:
+        //
+        //   GFS GRIB2 nativo  ->  0,25°  (1440x721, célula de ~28 km)
+        //   Open-Meteo        ->  3,0°   (120x60,  célula de ~333 km)
+        //
+        // O segundo é 144x mais grosso em área, e entra sozinho em dois casos:
+        // data anterior ao que o NOMADS ainda guarda (~10 dias de ciclos), e
+        // disjuntor aberto depois de três falhas seguidas do GFS — que derruba
+        // TODA data, inclusive hoje, até o período de espera passar.
+        //
+        // Numa grade de 3° o núcleo de um ciclone tropical (200 a 400 km) cabe
+        // em UMA célula: ele é suavizado até sumir. E a rajada local de uma
+        // baía vira a média de 333 km de oceano em volta.
+        //
+        // Com o rótulo cravado, essa troca era invisível. A tela afirmava a
+        // procedência de um dado que não estava ali — que é a mesma coisa que
+        // um número inventado, só que com nome de agência.
+        const passo = typeof data.stepDeg === "number" ? data.stepDeg : null;
+        const grosso = passo != null && passo > 0.5;
+        const medido = typeof data.measuredPct === "number" ? data.measuredPct : null;
+
+        setWindInfo(
+          [
+            data.provider ?? "procedência não declarada",
+            passo != null ? `${passo.toString().replace(".", ",")}°` : null,
+            data.dataset ?? null,
+            medido != null ? `${medido}% medido` : null,
+            grosso ? "⚠ campo grosso: ciclones e rajadas locais não aparecem nesta grade" : null,
+          ].filter(Boolean).join(" · ")
+        );
       })
       .catch((err) => {
         if (!alive) return;

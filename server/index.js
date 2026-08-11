@@ -9,7 +9,7 @@ import { metered, registerBudgetRoutes, report as budgetReport } from "./budget.
 import { reportKeys, keysStatus } from "./keys.js";
 import { fetchFires } from "./fires.js";
 import { openStore, cacheGet, cacheSet, cachePrune, cacheDropStale, archive, archiveStats } from "./store.js";
-import { buildWindGrid, windKey, WIND_KEY_PREFIX, WIND_KEY_CURRENT, WIND_SCHEMA } from "./wind.js";
+import { buildWindGrid, gfsStatus, windKey, WIND_KEY_PREFIX, WIND_KEY_CURRENT, WIND_SCHEMA } from "./wind.js";
 import { startPrecompute, registerPrecomputeRoutes } from "./precompute.js";
 import { forecastTimeline } from "./forecast.js";
 import { buildField, fieldCatalog } from "./fields.js";
@@ -222,6 +222,57 @@ app.get("/api/wind", async (req, res) => {
 // escala da seção 5 e a faixa de valores obtida.
 // Vento de 10 m no mundo real: −120 a +120 m/s. Fora disso é desempacotamento.
 // ----------------------------------------------------------------------
+// ----------------------------------------------------------------------
+// QUAL CAMINHO ESTÁ SERVINDO O VENTO.
+//
+// Existe porque a pergunta "o vento está errado?" tem uma resposta anterior à
+// meteorologia: DE ONDE ele veio. Os dois caminhos diferem por 144x em área de
+// célula, e o recuo entra sozinho, em silêncio, em dois casos — data fora da
+// janela que o NOMADS guarda, e disjuntor aberto depois de três falhas do GFS.
+//
+// Com o disjuntor aberto, TODA data cai para 3°, inclusive hoje.
+// ----------------------------------------------------------------------
+app.get("/api/wind/status", async (req, res) => {
+  const dateStr = String(req.query.date ?? new Date().toISOString().slice(0, 10));
+  const hour = Math.max(0, Math.min(23, Number(req.query.hour) || 12));
+  const st = gfsStatus();
+  let campo = null, erro = null;
+  try {
+    const g = await cached(windKey(dateStr, hour), 9 * HOUR, () => buildWindGrid(fetch, dateStr, hour));
+    const n = g.nx * g.ny;
+    let mx = 0, soma = 0;
+    for (let i = 0; i < n; i++) {
+      const m = Math.hypot(g.u[i] ?? 0, g.v[i] ?? 0);
+      if (Number.isFinite(m)) { mx = Math.max(mx, m); soma += m; }
+    }
+    campo = {
+      provider: g.provider, dataset: g.dataset,
+      grade: `${g.nx}x${g.ny}`, passoGraus: g.stepDeg,
+      celulaKm: g.stepDeg ? +(g.stepDeg * 111).toFixed(0) : null,
+      medidoPct: g.measuredPct,
+      ventoMaxMs: +mx.toFixed(1), ventoMedioMs: +(soma / n).toFixed(2),
+      // Num campo global de 0,25° há sempre algum lugar acima de 25 m/s (jatos,
+      // frentes, ciclones). Um máximo baixo é sinal de campo suavizado demais.
+      temExtremos: mx > 25,
+      construidoEm: g.builtAt,
+    };
+  } catch (e) { erro = { mensagem: e.message, code: e.code }; }
+
+  res.json({
+    pedido: { data: dateStr, hora: hour },
+    disjuntorGfs: {
+      falhasSeguidas: st.fails,
+      desligadoAte: st.disabledUntil,
+      aberto: !!st.disabledUntil && new Date(st.disabledUntil) > new Date(),
+    },
+    campo, erro,
+    leitura: campo?.passoGraus > 0.5
+      ? "RECUO ATIVO: grade de 3°. Ciclone tropical (núcleo de 200-400 km) cabe "
+        + "em uma célula e desaparece; rajada local vira média de ~333 km."
+      : campo ? "GFS nativo 0,25°." : "Nenhum campo disponível.",
+  });
+});
+
 app.get("/api/wind/grib-debug", async (req, res) => {
   const dateStr = String(req.query.date ?? new Date().toISOString().slice(0, 10));
   const hour = Math.max(0, Math.min(23, Number(req.query.hour) || 12));

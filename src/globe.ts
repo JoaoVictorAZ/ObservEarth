@@ -45,6 +45,16 @@ export interface WindGrid {
   u: number[] | Float32Array;
   v: number[] | Float32Array;
   valid?: number[] | Uint8Array;
+
+  /** Procedência declarada pelo servidor. A tela tem que LER isto, não supor.
+   *  Havia um literal "NOAA GFS 0.25° · 100% medido" fixo na view, que
+   *  continuava afirmando GFS quando o campo vinha do recuo de 3°. */
+  provider?: string;
+  dataset?: string;
+  /** passo da grade em graus: 0,25 no GFS, 3 no recuo — 144x mais grosso */
+  stepDeg?: number;
+  measuredPct?: number;
+  builtAt?: string;
 }
 
 interface PolyFeature {
