@@ -362,6 +362,62 @@ function getCardinal(deg) {
 // ======================================================================
 // 5. SONDA ATMOSFÉRICA
 // ======================================================================
+// ======================================================================
+// DOSSIÊ DO PONTO — contrato de dados para o chat
+// ======================================================================
+// UMA requisição à Open-Meteo cobre a janela inteira, porque a API devolve
+// séries horárias. Pedir hora a hora multiplicaria o custo por N sem ganhar
+// nada, e o orçamento deste projeto é 25% do plano gratuito.
+app.get("/api/dossier", async (req, res) => {
+  const lat = Number(req.query.lat);
+  const lng = Number(req.query.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ error: "lat e lng são obrigatórios" });
+  }
+  const dateStr = String(req.query.date ?? new Date().toISOString().slice(0, 10));
+  const hour = Math.max(0, Math.min(23, Number(req.query.hour) || 12));
+  const spanH = Math.max(3, Math.min(72, Number(req.query.span) || 24));
+  const stepH = Math.max(1, Math.min(6, Number(req.query.step) || 3));
+
+  try {
+    const { montarDossie, promptSistema } = await import("./dossier.js");
+    const hoje = new Date().toISOString().slice(0, 10);
+    const futuro = dateStr >= hoje;
+    const campos = "temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m," +
+                   "wind_direction_10m,surface_pressure,cloud_cover,dew_point_2m";
+    const url = futuro
+      ? `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&hourly=${campos}&wind_speed_unit=ms&forecast_days=3&timezone=UTC`
+      : `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lng}&hourly=${campos}&wind_speed_unit=ms&start_date=${dateStr}&end_date=${dateStr}&timezone=UTC`;
+
+    const wx = await cached(`dossie:${lat.toFixed(2)}:${lng.toFixed(2)}:${dateStr}`, 3 * HOUR,
+      () => metered("open-meteo", 1, () => fetch(url)).then((r) => (r.ok ? r.json() : null)));
+
+    // amostra o MESMO campo que anima as partículas, para poder ser confrontado
+    let fieldWind = null, fieldSrc = null;
+    try {
+      const { sampleField } = await import("./windVerify.js");
+      const grid = await cached(windKey(dateStr, hour), 9 * HOUR,
+        () => buildWindGrid(fetch, dateStr, hour));
+      const s = sampleField(grid, lat, lng);
+      if (s) { fieldWind = { speed: s.speed, direction: s.direction }; fieldSrc = grid.dataset; }
+    } catch { /* sem campo, o dossiê sai só com a sonda e diz isso */ }
+
+    let place = null;
+    try { place = await placeAt(lat, lng); } catch { /* ponto sem topônimo */ }
+
+    const dossie = montarDossie({
+      lat, lng, date: dateStr, hour, spanH, stepH,
+      hourly: wx?.hourly ?? {},
+      place: typeof place === "string" ? place : place?.name ?? null,
+      fieldWind, fieldSrc,
+    });
+
+    res.json({ ...dossie, promptSistema: promptSistema() });
+  } catch (e) {
+    res.status(e.status ?? 502).json({ error: e.message, code: e.code });
+  }
+});
+
 app.get("/api/probe", async (req, res) => {
   const lat = Number(req.query.lat), lng = Number(req.query.lng);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return res.status(400).json({ error: "lat e lng obrigatórios" });
