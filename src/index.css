@@ -1244,3 +1244,30 @@ input[type="range"]::-moz-range-thumb {
   .ptchat-msg { font-size: var(--t-body); }
   .ptchat-json { font-size: 10.5px; }
 }
+
+/* ---- alvos de toque -----------------------------------------------------
+   WCAG 2.1 critério 2.5.8 exige 24x24 CSS no mínimo. A auditoria encontrou
+   `.phead button` em 20x20 e um × de fechar sem dimensão declarada.
+   Botão pequeno demais não é só desconforto: numa tela sensível ao toque, ou
+   com tremor nas mãos, ele simplesmente não é acionável.                     */
+.phead button { width: 24px; height: 24px; }
+
+.probe-fechar {
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px;
+  color: var(--ink-3);
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  transition: all var(--m-fast) var(--ease);
+}
+.probe-fechar:hover { color: var(--ink); border-color: var(--rule); }
+
+/* ---- foco visível -------------------------------------------------------
+   Sem isto, quem navega por teclado não sabe onde está. O anel usa o acento
+   do sistema e fica FORA do elemento, para não alterar a métrica do layout.  */
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+  border-radius: var(--r);
+}

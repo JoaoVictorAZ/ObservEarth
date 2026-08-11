@@ -8,6 +8,7 @@ import { Command } from "cmdk";
 import { useUIStore } from "../../store/uiStore";
 import { useLayerStore } from "../../store/layerStore";
 import { useGlobeStore } from "../../store/globeStore";
+import { useDialog } from "../../hooks/useDialog";
 import { Search, Globe2, Layers, Wind, Flame, Eye, Activity } from "lucide-react";
 
 export const CommandPalette: React.FC<{ onFlyTo?: (lat: number, lng: number) => void }> = ({ onFlyTo }) => {
@@ -26,10 +27,23 @@ export const CommandPalette: React.FC<{ onFlyTo?: (lat: number, lng: number) => 
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [commandPaletteOpen, setCommandPaletteOpen]);
 
+  // Paleta de comandos é modal: prende o foco e fecha com Esc. Sem isso, a
+  // pessoa abria com Ctrl+K e não tinha como sair sem o mouse — o atalho
+  // levava a um beco.
+  const paletaRef = useDialog<HTMLDivElement>({
+    aberto: commandPaletteOpen,
+    aoFechar: () => setCommandPaletteOpen(false),
+    prender: true,
+  });
+
   if (!commandPaletteOpen) return null;
 
   return (
     <div
+      ref={paletaRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Paleta de comandos"
       style={{
         position: "fixed",
         inset: 0,

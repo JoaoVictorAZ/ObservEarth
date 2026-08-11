@@ -23,6 +23,7 @@ import {
   type Capacidade, type EstadoMotor,
 } from "../../llm/engine";
 import { useChatStore, LARGURA_MIN, LARGURA_MAX } from "../../store/chatStore";
+import { useDialog } from "../../hooks/useDialog";
 
 interface Props {
   lat: number;
@@ -50,6 +51,10 @@ export function PointChat({ lat, lng, date, hour, onFechar }: Props) {
   const [gerando, setGerando] = useState(false);
   const [verJson, setVerJson] = useState(false);
   const fimRef = useRef<HTMLDivElement>(null);
+  // Esc fecha, foco entra ao abrir e volta ao fechar. NÃO prende o foco: o
+  // terminal fica ao lado do mapa e a pessoa deve poder navegar entre os dois
+  // sem fechar — prender aqui seria transformar um painel em prisão.
+  const painelRef = useDialog<HTMLElement>({ aberto: true, aoFechar: onFechar });
   const abortRef = useRef<AbortController | null>(null);
 
   // ---- SINCRONIZA COM O MOTOR NA MONTAGEM --------------------------------
@@ -163,7 +168,13 @@ export function PointChat({ lat, lng, date, hour, onFechar }: Props) {
   const pronto = modeloCarregado != null;
 
   return (
-    <aside className="ptchat" style={{ width: largura }} role="dialog" aria-label="Terminal do ponto">
+    <aside
+      ref={painelRef}
+      className="ptchat"
+      style={{ width: largura }}
+      role="dialog"
+      aria-label="Terminal do ponto"
+    >
       {/* punho de redimensionamento na borda esquerda */}
       <div
         className="ptchat-punho"
@@ -268,7 +279,13 @@ export function PointChat({ lat, lng, date, hour, onFechar }: Props) {
       )}
 
       {/* ---- conversa ----------------------------------------------------- */}
-      <div className="ptchat-log">
+      <div
+        className="ptchat-log"
+        role="log"
+        aria-live="polite"
+        aria-atomic="false"
+        aria-busy={gerando}
+      >
         {msgs.length === 0 && pronto && (
           <div className="ptchat-msg ptchat-sistema">
             <span className="ptchat-prompt">·</span>

@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { Calendar, Download, RefreshCw, Layers, Cpu, Sparkles } from "lucide-react";
+import { useDialog } from "../hooks/useDialog";
 
 interface AnalysisProps {
   lat: number;
@@ -36,7 +37,13 @@ const RANGES: { id: RangeOption; label: string }[] = [
 ];
 
 export default function AnalysisModal({ lat, lng, place, onClose }: AnalysisProps) {
+  // Modal cobre a tela: aqui o foco é PRESO de propósito. Deixar o Tab
+  // escapar para o mapa por baixo faria a pessoa navegar num conteúdo que ela
+  // não consegue ver.
   const [range, setRange] = useState<RangeOption>("1y");
+  // Modal cobre a tela: aqui o foco é PRESO de propósito. Deixar o Tab escapar
+  // para o mapa por baixo faria a pessoa navegar num conteúdo que não vê.
+  const modalRef = useDialog<HTMLDivElement>({ aberto: true, aoFechar: onClose, prender: true });
   const [tab, setTab] = useState<"series" | "sounding" | "models" | "ai">("series");
   const [loading, setLoading] = useState(true);
   const [daily, setDaily] = useState<DailyData | null>(null);
@@ -117,7 +124,14 @@ export default function AnalysisModal({ lat, lng, place, onClose }: AnalysisProp
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={modalRef}
+        className="modal-content"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Análise completa de ${place}`}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-header">
           <div>
             <h2>Análise Climatológica & Séries Históricas</h2>
@@ -129,7 +143,7 @@ export default function AnalysisModal({ lat, lng, place, onClose }: AnalysisProp
             <button className="h-btn" onClick={exportCSV} title="Exportar CSV">
               <Download size={13} strokeWidth={1.5} style={{ marginRight: 4 }} /> Exportar CSV
             </button>
-            <button className="close-btn" onClick={onClose}>×</button>
+            <button className="close-btn" onClick={onClose} aria-label="Fechar análise">×</button>
           </div>
         </div>
 

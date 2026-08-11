@@ -41,7 +41,7 @@ export const ProbePanel: React.FC = () => {
             {probe.lat.toFixed(4)}°S {probe.lng.toFixed(4)}°O · Elevação: <strong>{probe.elevationM ?? 0}m</strong>
           </div>
         </div>
-        <button onClick={clearProbe} style={{ fontSize: 16, color: "var(--ink-3)", padding: 4 }}>×</button>
+        <button onClick={clearProbe} className="probe-fechar" aria-label="Limpar ponto selecionado">×</button>
       </div>
 
       <div className="prows" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
