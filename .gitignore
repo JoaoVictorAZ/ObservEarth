@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.lixo-redesign/
+data/*.db
+data/*.db-shm
+data/*.db-wal
+.env
+*.log
+tsconfig.tsbuildinfo
+.claude/
