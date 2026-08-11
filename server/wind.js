@@ -154,6 +154,17 @@ async function buildWindGridGfs(fetchImpl, dateStr, hour) {
   // Na alta troposfera um jato passa de 100 m/s, mas isto é vento de 10 m.
   // 150 m/s é folga generosa: nada real chega lá, e qualquer coisa acima é
   // defeito de desempacotamento, não meteorologia.
+  // REVERTIDO A PEDIDO: a guarda deixou de RECUSAR o campo.
+  //
+  // Ela continua MEDINDO e reportando, porque a medição é útil e não custa
+  // nada — mas não derruba mais o pedido. Recusar um campo inteiro por 0,1%
+  // de nós absurdos é uma política forte demais para uma tela de trabalho:
+  // se o desempacotamento estiver ruim numa faixa pequena, era melhor ver o
+  // resto do planeta do que não ver nada.
+  //
+  // O número segue disponível em `implausiblePct` e `maxAbsMs` na resposta,
+  // e no console. Quem quiser reativar a recusa: lançar quando
+  // `absurdos > nPoints * 0.001`.
   const LIMITE_FISICO = 150;
 
   const valid = new Uint8Array(nPoints);
@@ -167,20 +178,16 @@ async function buildWindGridGfs(fetchImpl, dateStr, hour) {
 
     const m = Math.max(Math.abs(a), Math.abs(b));
     if (m > maxAbs) maxAbs = m;
-    if (m > LIMITE_FISICO) { absurdos++; continue; }   // não conta como medido
+    if (m > LIMITE_FISICO) absurdos++;
 
     valid[i] = 1;
     measured++;
   }
 
-  if (absurdos > nPoints * 0.001) {
-    throw Object.assign(
-      new Error(
-        `campo GFS fisicamente impossível: ${((absurdos / nPoints) * 100).toFixed(1)}% dos nós ` +
-        `acima de ${LIMITE_FISICO} m/s (máximo observado ${maxAbs.toExponential(2)} m/s). ` +
-        `Isto é erro de desempacotamento GRIB2, não vento. Ver /api/wind/grib-debug.`
-      ),
-      { code: "GFS_IMPLAUSIBLE", status: 502 }
+  if (absurdos > 0) {
+    console.warn(
+      `[wind] ${((absurdos / nPoints) * 100).toFixed(2)}% dos nós acima de ` +
+      `${LIMITE_FISICO} m/s (máx ${maxAbs.toExponential(2)}). Campo servido mesmo assim.`
     );
   }
 
@@ -197,6 +204,9 @@ async function buildWindGridGfs(fetchImpl, dateStr, hour) {
     valid: Array.from(valid),
     measuredPct: +((measured / nPoints) * 100).toFixed(1),
     validPct: 100.0,
+    /** diagnóstico: quanto do campo é fisicamente impossível, sem recusá-lo */
+    implausiblePct: +((absurdos / nPoints) * 100).toFixed(3),
+    maxAbsMs: +maxAbs.toFixed(1),
     provider: "NOAA GFS 0.25°",
     dataset: "GFS Operacional · GRIB2 nativo",
     stepDeg: WIND_STEP,
