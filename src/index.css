@@ -1271,3 +1271,140 @@ input[type="range"]::-moz-range-thumb {
   outline-offset: 2px;
   border-radius: var(--r);
 }
+
+/* ======================================================== DOCK DE CAMADAS ===
+   Organizado por FAMÍLIA (natureza do dado), não por procedência.
+   A cor da família vive na variável --fam, injetada por seção — assim uma
+   única regra serve às cinco, e trocar uma cor é trocar um token.         */
+
+.dock-busca { padding: var(--s-5) var(--s-5) var(--s-4); }
+.dock-busca input {
+  width: 100%;
+  padding: var(--s-3) var(--s-4);
+  font-family: var(--sans);
+  font-size: var(--t-small);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+}
+.dock-busca input::placeholder { color: var(--ink-4); }
+
+.fam { border-top: 1px solid var(--rule-soft); }
+
+.fam-head {
+  display: flex; align-items: center; gap: var(--s-4);
+  width: 100%;
+  padding: var(--s-4) var(--s-5);
+  text-align: left;
+  color: var(--ink-2);
+  transition: background var(--m-fast) var(--ease);
+}
+.fam-head:hover { background: var(--surface); }
+
+/* O fio herda a cor da família. É a ÚNICA cor do grupo — o texto continua
+   neutro, porque cor no rótulo competiria com a cor que significa dado. */
+.fam-fio {
+  flex: none;
+  width: 2px; height: 22px;
+  background: var(--fam, var(--rule-hi));
+  border-radius: 1px;
+}
+.fam-nome {
+  flex: 1; min-width: 0;
+  font-size: var(--t-small);
+  font-weight: var(--w-bold);
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+/* A REGRA do grupo, escrita antes de o usuário descobrir clicando.
+   "um por vez" precisa ser dito, não deduzido de um erro. */
+.fam-nome small {
+  display: block;
+  margin-top: var(--s-1);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  font-weight: var(--w-normal);
+  letter-spacing: 0;
+  color: var(--ink-3);
+}
+.fam-cont {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  color: var(--ink-4);
+}
+
+.fam-itens { padding: 0 var(--s-4) var(--s-4); }
+
+/* ---- item de camada ------------------------------------------------------
+   Mesma forma para rádio e interruptor: o que muda é a MARCA à esquerda.
+   Disco = exclusivo. Barra = combinável. A forma carrega a regra.        */
+.cam {
+  display: flex; align-items: flex-start; gap: var(--s-4);
+  width: 100%;
+  padding: var(--s-3) var(--s-4);
+  text-align: left;
+  border-radius: var(--r);
+  border: 1px solid transparent;
+  transition: background var(--m-fast) var(--ease),
+              border-color var(--m-fast) var(--ease);
+  cursor: pointer;
+}
+.cam:hover { background: var(--surface); }
+.cam-on { background: var(--surface-hi); border-color: var(--rule); }
+
+.cam-marca {
+  flex: none;
+  width: 9px; height: 9px;
+  margin-top: 3px;
+  border: 1px solid var(--ink-4);
+  border-radius: 50%;                    /* disco: exclusivo */
+  transition: all var(--m-fast) var(--ease);
+}
+.cam-sw .cam-marca {
+  width: 16px; height: 9px;
+  border-radius: 5px;                    /* barra: combinável */
+}
+.cam-on .cam-marca {
+  background: var(--fam, var(--signal));
+  border-color: var(--fam, var(--signal));
+}
+
+.cam-txt { flex: 1; min-width: 0; }
+.cam-titulo {
+  display: block;
+  font-size: var(--t-small);
+  color: var(--ink-2);
+  line-height: 1.35;
+}
+.cam-on .cam-titulo { color: var(--ink); font-weight: var(--w-medium); }
+.cam-txt small {
+  display: block;
+  margin-top: var(--s-1);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  color: var(--ink-4);
+}
+
+.cam-sw input { position: absolute; opacity: 0; pointer-events: none; }
+.cam-linha { display: block; }
+
+/* Procedência só aparece com a camada LIGADA: metadado de coisa desligada
+   é ruído competindo com o que está em uso. */
+.cam-info {
+  margin: 0 0 var(--s-3) 30px;
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  line-height: 1.45;
+  color: var(--ink-3);
+}
+.cam-aviso { margin: var(--s-4) var(--s-5); color: var(--warn); }
+
+.dock-vazio, .dock-rodape {
+  padding: var(--s-5);
+  font-size: var(--t-micro);
+  line-height: 1.5;
+  color: var(--ink-4);
+}
+.dock-rodape { border-top: 1px solid var(--rule-soft); }
