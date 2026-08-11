@@ -1408,3 +1408,119 @@ input[type="range"]::-moz-range-thumb {
   color: var(--ink-4);
 }
 .dock-rodape { border-top: 1px solid var(--rule-soft); }
+
+/* ================================================================== SONDA ===
+   Leitura pontual. Regra "Censo": todo número em mono, alinhado à direita,
+   comparável em coluna. O rótulo é neutro — cor aqui competiria com o mapa,
+   onde cor significa grandeza medida.                                      */
+.probe {
+  position: absolute;
+  z-index: 20;
+  right: var(--s-5);
+  top: calc(var(--head-h) + var(--s-5));
+  width: 336px;
+  padding: var(--s-5);
+  background: var(--scrim);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-lg);
+  box-shadow: var(--e-panel);
+  backdrop-filter: blur(12px);
+}
+
+.phead {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--s-4);
+  padding-bottom: var(--s-4);
+  margin-bottom: var(--s-4);
+  border-bottom: 1px solid var(--rule);
+}
+.phead-txt { min-width: 0; }
+.phead-txt strong {
+  display: block;
+  font-size: var(--t-body);
+  font-weight: var(--w-bold);
+  color: var(--ink);
+  line-height: 1.3;
+}
+/* Coordenada em mono e tabular: dois pontos diferentes ficam comparáveis
+   dígito a dígito, que é como se lê posição. */
+.pcoord {
+  display: block;
+  margin-top: var(--s-2);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: var(--signal);
+}
+
+.prows { display: flex; flex-direction: column; }
+
+.prow {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--s-4);
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.prow:last-child { border-bottom: none; }
+
+.prow-rot {
+  display: flex; align-items: center; gap: var(--s-3);
+  font-size: var(--t-small);
+  color: var(--ink-3);
+  min-width: 0;
+}
+.prow-rot svg { flex: none; color: var(--ink-4); }
+
+.prow-val {
+  font-family: var(--mono);
+  font-size: var(--t-body);
+  font-weight: var(--w-medium);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  white-space: nowrap;
+  text-align: right;
+}
+.prow-val small {
+  margin-left: var(--s-3);
+  font-size: var(--t-micro);
+  font-weight: var(--w-normal);
+  color: var(--ink-4);
+}
+
+/* Ausência tem forma PRÓPRIA: nem número, nem branco. Um campo vazio seria
+   lido como "ainda carregando"; um zero seria lido como medição. */
+.prow-sem {
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  font-style: italic;
+  color: var(--ink-4);
+  white-space: nowrap;
+  cursor: help;
+  border-bottom: 1px dotted var(--ink-4);
+}
+.prow-vazio .prow-rot { color: var(--ink-4); }
+
+.probe-analise {
+  display: flex; align-items: center; justify-content: center;
+  gap: var(--s-3);
+  width: 100%;
+  margin-top: var(--s-5);
+  padding: var(--s-4);
+  font-family: var(--sans);
+  font-size: var(--t-small);
+  font-weight: var(--w-medium);
+  color: #04140f;
+  background: var(--signal);
+  border-radius: var(--r);
+  transition: opacity var(--m-fast) var(--ease);
+}
+.probe-analise:hover { opacity: 0.88; }
+
+.probe-fonte {
+  margin: var(--s-4) 0 0;
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  line-height: 1.4;
+  color: var(--ink-4);
+}
