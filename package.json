@@ -16,6 +16,7 @@
     "test": "node test/alignment.mjs && node test/wind-orientation.mjs && node test/grib2.mjs && node test/grib53.mjs && node test/forecast.mjs && node test/gibs-time.mjs && node test/model-names.mjs && node test/png.mjs && node test/fields.mjs && node test/isobars.mjs && node test/fires.mjs && node test/wind-verify.mjs && node test/assimilate.mjs && node test/dossier.mjs && node --experimental-strip-types test/player.mjs"
   },
   "dependencies": {
+    "@mlc-ai/web-llm": "^0.2.84",
     "@radix-ui/react-context-menu": "^2.3.7",
     "@radix-ui/react-dialog": "^1.1.23",
     "@radix-ui/react-dropdown-menu": "^2.1.24",

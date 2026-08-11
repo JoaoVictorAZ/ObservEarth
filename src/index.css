@@ -969,3 +969,235 @@ input[type="range"]::-moz-range-thumb {
 
 
 
+
+/* ============================================================ TERMINAL DO PONTO
+   Conversa sobre o dossiê, com modelo local. Estética de instrumento: mono,
+   fio, sem cápsula. O prompt é um glifo, não um avatar — isto é um terminal
+   de leitura de dados, não um assistente pessoal.                            */
+.ptchat {
+  position: absolute;
+  z-index: 30;
+  right: var(--s-5);
+  top: calc(var(--head-h) + var(--s-5));
+  bottom: var(--s-5);
+  width: 420px;
+  max-width: calc(100vw - 2 * var(--s-5));
+  display: flex;
+  flex-direction: column;
+  background: var(--scrim);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-lg);
+  box-shadow: var(--e-float);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+}
+
+.ptchat-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--s-4);
+  padding: var(--s-4) var(--s-5);
+  border-bottom: 1px solid var(--rule);
+}
+.ptchat-head strong {
+  display: block;
+  font-size: var(--t-body);
+  font-weight: var(--w-bold);
+  color: var(--ink);
+}
+.ptchat-coord {
+  display: block;
+  margin-top: var(--s-2);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  color: var(--ink-3);
+}
+.ptchat-head button {
+  flex: none;
+  width: 24px; height: 24px;
+  color: var(--ink-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  transition: all var(--m-fast) var(--ease);
+}
+.ptchat-head button:hover { color: var(--ink); border-color: var(--rule-hi); }
+
+/* ---- carga do modelo --------------------------------------------------- */
+.ptchat-setup {
+  padding: var(--s-5);
+  border-bottom: 1px solid var(--rule);
+  display: flex; flex-direction: column; gap: var(--s-3);
+}
+.ptchat-campo { display: flex; align-items: center; gap: var(--s-4); }
+.ptchat-campo span {
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  width: 52px; flex: none;
+}
+.ptchat-campo select {
+  flex: 1;
+  padding: var(--s-3) var(--s-4);
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+}
+.ptchat-nota, .ptchat-rodape {
+  font-size: var(--t-micro);
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+.ptchat-alerta {
+  font-size: var(--t-micro);
+  line-height: 1.5;
+  color: var(--warn);
+}
+.ptchat-go {
+  padding: var(--s-4);
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  color: #04140f;
+  background: var(--signal);
+  border-radius: var(--r);
+  transition: opacity var(--m-fast) var(--ease);
+}
+.ptchat-go:disabled { opacity: 0.4; }
+
+/* Barra de progresso: o download é de gigabytes, e silêncio durante minutos
+   faz o usuário achar que travou e recarregar a página — perdendo o cache. */
+.ptchat-bar {
+  height: 3px;
+  background: var(--rule);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.ptchat-bar i {
+  display: block; height: 100%;
+  background: var(--signal);
+  transition: width var(--m-base) var(--ease);
+}
+.ptchat-prog small {
+  display: block;
+  margin-top: var(--s-2);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  color: var(--ink-3);
+}
+
+/* ---- dossiê ------------------------------------------------------------ */
+.ptchat-dossie {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--s-4);
+  padding: var(--s-3) var(--s-5);
+  border-bottom: 1px solid var(--rule-soft);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  color: var(--ink-3);
+}
+.ptchat-dossie button {
+  color: var(--signal);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.ptchat-json {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: var(--s-4) var(--s-5);
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 1.45;
+  color: var(--ink-2);
+  background: rgba(0, 0, 0, 0.35);
+  border-bottom: 1px solid var(--rule);
+  white-space: pre;
+}
+
+/* ---- log --------------------------------------------------------------- */
+.ptchat-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--s-5);
+  display: flex; flex-direction: column; gap: var(--s-4);
+}
+.ptchat-msg {
+  display: flex; gap: var(--s-4);
+  font-size: var(--t-small);
+  line-height: 1.55;
+}
+.ptchat-prompt {
+  flex: none;
+  font-family: var(--mono);
+  color: var(--ink-4);
+  user-select: none;
+}
+.ptchat-voce > div { color: var(--ink); }
+.ptchat-modelo > div { color: var(--ink-2); white-space: pre-wrap; }
+.ptchat-sistema > div { color: var(--ink-3); font-style: italic; }
+.ptchat-voce .ptchat-prompt { color: var(--signal); }
+.ptchat-modelo .ptchat-prompt { color: var(--ink-3); }
+
+/* ---- entrada ----------------------------------------------------------- */
+.ptchat-entrada {
+  display: flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-4) var(--s-5);
+  border-top: 1px solid var(--rule);
+}
+.ptchat-entrada input {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  outline: none;
+}
+.ptchat-entrada input::placeholder { color: var(--ink-4); }
+.ptchat-entrada button {
+  padding: var(--s-2) var(--s-4);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  color: var(--ink-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+}
+.ptchat-entrada button:hover:not(:disabled) { color: var(--ink); border-color: var(--rule-hi); }
+.ptchat-entrada button:disabled { opacity: 0.35; }
+
+.ptchat > .ptchat-rodape {
+  padding: var(--s-3) var(--s-5);
+  border-top: 1px solid var(--rule-soft);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  color: var(--ink-4);
+}
+
+@media (max-width: 900px) {
+  .ptchat { left: var(--s-5); width: auto; }
+}
+
+/* Convite ao terminal. Discreto: fica sob o painel da sonda e só existe quando
+   há ponto selecionado. Um botão sempre visível para uma feature que baixa
+   gigabytes viraria armadilha. */
+.ptchat-abrir {
+  position: absolute;
+  z-index: 25;
+  right: var(--s-5);
+  bottom: var(--s-6);
+  padding: var(--s-3) var(--s-5);
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  color: var(--signal);
+  background: var(--scrim);
+  border: 1px solid var(--signal-line);
+  border-radius: var(--r);
+  backdrop-filter: blur(10px);
+  transition: all var(--m-fast) var(--ease);
+}
+.ptchat-abrir:hover { background: var(--signal-dim); }
