@@ -13,7 +13,7 @@
     "server": "node --env-file-if-exists=.env --no-warnings=ExperimentalWarning server/index.js",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "node test/alignment.mjs && node test/wind-orientation.mjs && node test/grib2.mjs && node test/forecast.mjs && node test/gibs-time.mjs && node test/model-names.mjs && node test/png.mjs && node test/fields.mjs && node test/isobars.mjs && node test/fires.mjs && node test/wind-verify.mjs && node test/assimilate.mjs && node --experimental-strip-types test/player.mjs"
+    "test": "node test/alignment.mjs && node test/wind-orientation.mjs && node test/grib2.mjs && node test/grib53.mjs && node test/forecast.mjs && node test/gibs-time.mjs && node test/model-names.mjs && node test/png.mjs && node test/fields.mjs && node test/isobars.mjs && node test/fires.mjs && node test/wind-verify.mjs && node test/assimilate.mjs && node --experimental-strip-types test/player.mjs"
   },
   "dependencies": {
     "@radix-ui/react-context-menu": "^2.3.7",

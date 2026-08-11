@@ -246,10 +246,20 @@ function unpackComplex(buf, s7, drs) {
     // compensando parcialmente. Vale conferir com /api/wind/grib-debug antes de
     // fechar a questão.
     // ------------------------------------------------------------------------
+    // SINAL-MAGNITUDE. Agora com prova, não com argumento de autoridade.
+    //
+    // `test/grib53.mjs` codifica um campo conhecido no gabarito 5.3 conforme a
+    // norma e manda decodificar. Com complemento de dois, um `minsd` de −3 é
+    // lido como −2.147.483.645, e a recorrência estoura o Int32Array em
+    // −2.147.483.648 — o mesmo valor que aparecia no campo inteiro.
+    //
+    // Foi por isto que os testes nunca pegaram: eles cobriam só o gabarito 5.0
+    // (empacotamento simples), que o GFS não usa. O caminho que roda em
+    // produção não tinha teste nenhum.
     const rawSigned = (bits) => {
       const v = br.read(bits);
       const signBit = Math.pow(2, bits - 1);
-      return v >= signBit ? v - 2 * signBit : v;
+      return v >= signBit ? -(v - signBit) : v;
     };
     ival1 = rawSigned(nb);
     if (drs.spatialOrder === 2) ival2 = rawSigned(nb);
