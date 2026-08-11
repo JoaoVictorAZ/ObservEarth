@@ -6,25 +6,23 @@
 //
 //   1. O MODELO EM USO FICA VISÍVEL O TEMPO TODO.
 //      Um 8B e um 1,5B respondem com a mesma fluência e qualidades muito
-//      diferentes. Quem lê precisa saber qual está falando, sempre — não só na
-//      hora de escolher.
+//      diferentes. Quem lê precisa saber qual está falando.
 //
 //   2. O DOSSIÊ É INSPECIONÁVEL.
-//      Há um botão que mostra o JSON exato que foi entregue ao modelo. Se a
-//      resposta parecer estranha, dá para conferir a fonte em dois cliques em
-//      vez de acreditar. Num instrumento científico, a caixa não pode ser preta.
+//      Há um botão que mostra o JSON exato entregue ao modelo. Se a resposta
+//      parecer estranha, dá para conferir a fonte em vez de acreditar.
 //
-// O download de ~4,6 GB só acontece com confirmação explícita. Baixar isso
-// porque alguém clicou num ponto do mapa seria abusivo.
+// O estado do modelo NÃO vive aqui: vive no chatStore e é sincronizado com o
+// singleton do motor na montagem. Ver o comentário no store para o defeito que
+// isso corrige.
 // -----------------------------------------------------------------------------
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import {
   motor, MODELOS, detectarCapacidade,
-  type ModeloLLM, type Capacidade, type EstadoMotor,
+  type Capacidade, type EstadoMotor,
 } from "../../llm/engine";
-
-interface Msg { autor: "voce" | "modelo" | "sistema"; texto: string }
+import { useChatStore, LARGURA_MIN, LARGURA_MAX } from "../../store/chatStore";
 
 interface Props {
   lat: number;
@@ -37,27 +35,50 @@ interface Props {
 const GB = (n: number) => `${n.toFixed(1)} GB`;
 
 export function PointChat({ lat, lng, date, hour, onFechar }: Props) {
+  const {
+    largura, setLargura,
+    modeloCarregado, setModeloCarregado,
+    modeloEscolhido, setModeloEscolhido,
+    msgs, addMsg, patchUltima, trocarPonto,
+  } = useChatStore();
+
   const [cap, setCap] = useState<Capacidade | null>(null);
-  const [modelo, setModelo] = useState<ModeloLLM | null>(null);
-  const [estado, setEstado] = useState<EstadoMotor>({ fase: "ocioso" });
+  const [progresso, setProgresso] = useState<EstadoMotor>({ fase: "ocioso" });
   const [dossie, setDossie] = useState<Record<string, unknown> | null>(null);
   const [erroDossie, setErroDossie] = useState<string | null>(null);
-  const [msgs, setMsgs] = useState<Msg[]>([]);
   const [entrada, setEntrada] = useState("");
   const [gerando, setGerando] = useState(false);
   const [verJson, setVerJson] = useState(false);
   const fimRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // ---- capacidade do dispositivo, antes de qualquer download --------------
+  // ---- SINCRONIZA COM O MOTOR NA MONTAGEM --------------------------------
+  // Esta é a correção do "pede para instalar de novo". O motor é um singleton:
+  // se ele já tem pesos na VRAM, o painel precisa saber disso ao reabrir, em
+  // vez de assumir que nada foi carregado.
   useEffect(() => {
-    detectarCapacidade().then((c) => { setCap(c); setModelo(c.recomendado); });
-  }, []);
+    if (motor.pronto && motor.modelo) {
+      setModeloCarregado(motor.modelo);
+      setProgresso({ fase: "pronto", modelo: motor.modelo });
+    }
+  }, [setModeloCarregado]);
 
-  // ---- dossiê do ponto ----------------------------------------------------
+  useEffect(() => {
+    detectarCapacidade().then((c) => {
+      setCap(c);
+      if (!useChatStore.getState().modeloEscolhido) setModeloEscolhido(c.recomendado);
+    });
+  }, [setModeloEscolhido]);
+
+  // troca de ponto limpa a conversa, mas nunca o modelo
+  useEffect(() => {
+    trocarPonto(`${lat.toFixed(3)}:${lng.toFixed(3)}:${date}:${hour}`);
+  }, [lat, lng, date, hour, trocarPonto]);
+
   useEffect(() => {
     let vivo = true;
     setErroDossie(null);
+    setDossie(null);
     fetch(`/api/dossier?lat=${lat}&lng=${lng}&date=${date}&hour=${hour}&span=24&step=3`)
       .then(async (r) => {
         const j = await r.json();
@@ -71,31 +92,52 @@ export function PointChat({ lat, lng, date, hour, onFechar }: Props) {
 
   useEffect(() => { fimRef.current?.scrollIntoView({ block: "end" }); }, [msgs]);
 
+  // ---- REDIMENSIONAR ------------------------------------------------------
+  // O painel nasce em 560px mas cresce até 1100px. Terminal estreito obriga a
+  // rolar para ler uma resposta de dez linhas, e a comparação entre instantes —
+  // que é o propósito da coisa — exige ver a série inteira de uma vez.
+  const arrastando = useRef(false);
+  useEffect(() => {
+    const mover = (e: PointerEvent) => {
+      if (!arrastando.current) return;
+      setLargura(window.innerWidth - e.clientX - 14);
+    };
+    const soltar = () => {
+      arrastando.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("pointermove", mover);
+    window.addEventListener("pointerup", soltar);
+    return () => {
+      window.removeEventListener("pointermove", mover);
+      window.removeEventListener("pointerup", soltar);
+    };
+  }, [setLargura]);
+
   const carregar = useCallback(async () => {
-    if (!modelo) return;
+    if (!modeloEscolhido) return;
     try {
-      await motor.carregar(modelo, setEstado);
-      setMsgs((m) => [...m, {
+      await motor.carregar(modeloEscolhido, setProgresso);
+      setModeloCarregado(modeloEscolhido);
+      addMsg({
         autor: "sistema",
-        texto: `${modelo.rotulo} carregado. O dossiê deste ponto está na memória — pergunte.`,
-      }]);
+        texto: `${modeloEscolhido.rotulo} pronto. O dossiê deste ponto está na memória — pergunte.`,
+      });
     } catch { /* o estado de erro já foi publicado pelo motor */ }
-  }, [modelo]);
+  }, [modeloEscolhido, setModeloCarregado, addMsg]);
 
   const enviar = useCallback(async () => {
     const pergunta = entrada.trim();
     if (!pergunta || gerando || !dossie || !motor.pronto) return;
 
     setEntrada("");
-    setMsgs((m) => [...m, { autor: "voce", texto: pergunta }]);
+    addMsg({ autor: "voce", texto: pergunta });
     setGerando(true);
     abortRef.current = new AbortController();
 
-    // O dossiê inteiro vai em TODA pergunta. É o que impede o modelo de
-    // responder de memória sobre um ponto que já saiu de contexto — e o que
-    // garante que todo número citado esteja diante dele.
     const sistema = String(dossie.promptSistema ?? "");
-    const { promptSistema: _omitir, ...dados } = dossie;
+    const { promptSistema: _o, ...dados } = dossie;
     const contexto = [
       { role: "system" as const, content: sistema },
       { role: "user" as const, content:
@@ -103,28 +145,45 @@ export function PointChat({ lat, lng, date, hour, onFechar }: Props) {
     ];
 
     let acc = "";
-    setMsgs((m) => [...m, { autor: "modelo", texto: "" }]);
+    addMsg({ autor: "modelo", texto: "" });
     try {
       for await (const t of motor.responder(contexto, abortRef.current.signal)) {
         acc += t;
-        setMsgs((m) => {
-          const c = [...m];
-          c[c.length - 1] = { autor: "modelo", texto: acc };
-          return c;
-        });
+        patchUltima(acc);
       }
     } catch (e) {
-      setMsgs((m) => [...m, { autor: "sistema", texto: `erro: ${e instanceof Error ? e.message : String(e)}` }]);
+      addMsg({ autor: "sistema", texto: `erro: ${e instanceof Error ? e.message : String(e)}` });
     } finally {
       setGerando(false);
       abortRef.current = null;
     }
-  }, [entrada, gerando, dossie]);
+  }, [entrada, gerando, dossie, addMsg, patchUltima]);
 
   const lugar = (dossie?.ponto as { lugar?: string } | undefined)?.lugar;
+  const pronto = modeloCarregado != null;
 
   return (
-    <aside className="ptchat" role="dialog" aria-label="Terminal do ponto">
+    <aside className="ptchat" style={{ width: largura }} role="dialog" aria-label="Terminal do ponto">
+      {/* punho de redimensionamento na borda esquerda */}
+      <div
+        className="ptchat-punho"
+        role="separator"
+        aria-label="Redimensionar terminal"
+        aria-valuenow={largura}
+        aria-valuemin={LARGURA_MIN}
+        aria-valuemax={LARGURA_MAX}
+        tabIndex={0}
+        onPointerDown={() => {
+          arrastando.current = true;
+          document.body.style.cursor = "col-resize";
+          document.body.style.userSelect = "none";
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft") setLargura(largura + 40);
+          if (e.key === "ArrowRight") setLargura(largura - 40);
+        }}
+      />
+
       <header className="ptchat-head">
         <div>
           <strong>{lugar ?? "Ponto selecionado"}</strong>
@@ -132,25 +191,30 @@ export function PointChat({ lat, lng, date, hour, onFechar }: Props) {
             {lat.toFixed(3)}°, {lng.toFixed(3)}° · {date} {String(hour).padStart(2, "0")}h UTC
           </span>
         </div>
-        <button onClick={onFechar} aria-label="Fechar terminal">✕</button>
+        <div className="ptchat-acoes">
+          <button
+            onClick={() => setLargura(largura >= LARGURA_MAX - 20 ? 560 : LARGURA_MAX)}
+            title="Alternar largura"
+            aria-label="Alternar largura"
+          >⇔</button>
+          <button onClick={onFechar} aria-label="Fechar terminal">✕</button>
+        </div>
       </header>
 
-      {/* ---- escolha e carga do modelo ------------------------------------ */}
-      {estado.fase !== "pronto" && (
+      {/* ---- carga do modelo: só quando NÃO há modelo na VRAM ------------- */}
+      {!pronto && (
         <div className="ptchat-setup">
-          {cap && !cap.webgpu && (
-            <p className="ptchat-alerta">{cap.motivo}</p>
-          )}
-          {cap?.webgpu && (
-            <p className="ptchat-nota">{cap.motivo}</p>
+          {cap && (
+            <p className={cap.webgpu ? "ptchat-nota" : "ptchat-alerta"}>{cap.motivo}</p>
           )}
 
           <label className="ptchat-campo">
             <span>modelo</span>
             <select
-              value={modelo?.id ?? ""}
-              disabled={estado.fase === "baixando"}
-              onChange={(e) => setModelo(MODELOS.find((m) => m.id === e.target.value) ?? null)}
+              value={modeloEscolhido?.id ?? ""}
+              disabled={progresso.fase === "baixando"}
+              onChange={(e) =>
+                setModeloEscolhido(MODELOS.find((m) => m.id === e.target.value) ?? null)}
             >
               {MODELOS.map((m) => (
                 <option key={m.id} value={m.id}>
@@ -159,22 +223,23 @@ export function PointChat({ lat, lng, date, hour, onFechar }: Props) {
               ))}
             </select>
           </label>
-          {modelo && <p className="ptchat-nota">{modelo.nota}</p>}
+          {modeloEscolhido && <p className="ptchat-nota">{modeloEscolhido.nota}</p>}
 
-          {estado.fase === "baixando" ? (
+          {progresso.fase === "baixando" ? (
             <div className="ptchat-prog">
-              <div className="ptchat-bar"><i style={{ width: `${estado.pct}%` }} /></div>
-              <small>{estado.pct}% · {estado.texto}</small>
+              <div className="ptchat-bar"><i style={{ width: `${progresso.pct}%` }} /></div>
+              <small>{progresso.pct}% · {progresso.texto}</small>
             </div>
           ) : (
-            <button className="ptchat-go" onClick={carregar} disabled={!modelo}>
-              Carregar {modelo?.rotulo} ({GB(modelo?.downloadGB ?? 0)})
+            <button className="ptchat-go" onClick={carregar} disabled={!modeloEscolhido}>
+              Carregar {modeloEscolhido?.rotulo} ({GB(modeloEscolhido?.downloadGB ?? 0)})
             </button>
           )}
 
-          {estado.fase === "erro" && <p className="ptchat-alerta">{estado.mensagem}</p>}
+          {progresso.fase === "erro" && <p className="ptchat-alerta">{progresso.mensagem}</p>}
           <small className="ptchat-rodape">
-            Baixa uma vez e fica em cache. Depois disso funciona sem internet.
+            Baixa uma vez e fica em cache do navegador. Depois disso funciona sem internet,
+            e fechar o terminal não descarrega o modelo.
           </small>
         </div>
       )}
@@ -186,8 +251,7 @@ export function PointChat({ lat, lng, date, hour, onFechar }: Props) {
         ) : dossie ? (
           <>
             <span>
-              dossiê pronto ·{" "}
-              {(dossie.serie as unknown[] | undefined)?.length ?? 0} instantes
+              dossiê pronto · {(dossie.serie as unknown[] | undefined)?.length ?? 0} instantes
               {Array.isArray(dossie.lacunas) && dossie.lacunas.length > 0 &&
                 ` · ${dossie.lacunas.length} lacuna(s)`}
             </span>
@@ -205,6 +269,16 @@ export function PointChat({ lat, lng, date, hour, onFechar }: Props) {
 
       {/* ---- conversa ----------------------------------------------------- */}
       <div className="ptchat-log">
+        {msgs.length === 0 && pronto && (
+          <div className="ptchat-msg ptchat-sistema">
+            <span className="ptchat-prompt">·</span>
+            <div>
+              {modeloCarregado?.rotulo} já carregado. Exemplos: “como a pressão variou
+              na janela?”, “compare o vento do primeiro e do último instante”,
+              “que dados faltam?”
+            </div>
+          </div>
+        )}
         {msgs.map((m, i) => (
           <div key={i} className={`ptchat-msg ptchat-${m.autor}`}>
             <span className="ptchat-prompt">
@@ -216,32 +290,24 @@ export function PointChat({ lat, lng, date, hour, onFechar }: Props) {
         <div ref={fimRef} />
       </div>
 
-      <form
-        className="ptchat-entrada"
-        onSubmit={(e) => { e.preventDefault(); void enviar(); }}
-      >
+      <form className="ptchat-entrada" onSubmit={(e) => { e.preventDefault(); void enviar(); }}>
         <span className="ptchat-prompt">›</span>
         <input
           value={entrada}
           onChange={(e) => setEntrada(e.target.value)}
-          placeholder={
-            estado.fase === "pronto"
-              ? "compare a pressão do começo ao fim da janela…"
-              : "carregue um modelo para começar"
-          }
-          disabled={estado.fase !== "pronto" || !dossie || gerando}
+          placeholder={pronto ? "pergunte sobre este ponto…" : "carregue um modelo para começar"}
+          disabled={!pronto || !dossie || gerando}
         />
         {gerando ? (
           <button type="button" onClick={() => abortRef.current?.abort()}>parar</button>
         ) : (
-          <button type="submit" disabled={estado.fase !== "pronto" || !dossie}>enviar</button>
+          <button type="submit" disabled={!pronto || !dossie}>enviar</button>
         )}
       </form>
 
-      {/* O modelo em uso fica visível SEMPRE, não só na escolha. */}
       <footer className="ptchat-rodape">
-        {estado.fase === "pronto"
-          ? `${estado.modelo.rotulo} · ${estado.modelo.params} · local, sem rede`
+        {modeloCarregado
+          ? `${modeloCarregado.rotulo} · ${modeloCarregado.params} · local, sem rede`
           : "nenhum modelo carregado"}
         {" · descreve e compara o dossiê; não interpreta meteorologia"}
       </footer>

@@ -166,7 +166,16 @@ export class MotorLocal {
     modelo: ModeloLLM,
     onProgresso: (e: EstadoMotor) => void
   ): Promise<MLCEngine> {
-    if (this.engine && this.modelo?.id === modelo.id) return this.engine;
+    // JÁ CARREGADO: avisa mesmo assim.
+    //
+    // Antes este ramo devolvia o motor em silêncio. Quem chamasse `carregar`
+    // com o modelo já na VRAM não recebia `{ fase: "pronto" }` — então a
+    // interface continuava mostrando a tela de instalação, para um modelo que
+    // já estava rodando. O atalho de desempenho estava escondendo o sucesso.
+    if (this.engine && this.modelo?.id === modelo.id) {
+      onProgresso({ fase: "pronto", modelo });
+      return this.engine;
+    }
     if (this.carregando) return this.carregando;
 
     this.carregando = (async () => {

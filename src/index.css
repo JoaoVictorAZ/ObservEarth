@@ -980,7 +980,8 @@ input[type="range"]::-moz-range-thumb {
   right: var(--s-5);
   top: calc(var(--head-h) + var(--s-5));
   bottom: var(--s-5);
-  width: 420px;
+  /* largura vem do chatStore e é arrastável pelo punho esquerdo */
+  min-width: 380px;
   max-width: calc(100vw - 2 * var(--s-5));
   display: flex;
   flex-direction: column;
@@ -1201,3 +1202,45 @@ input[type="range"]::-moz-range-thumb {
   transition: all var(--m-fast) var(--ease);
 }
 .ptchat-abrir:hover { background: var(--signal-dim); }
+
+/* ---- punho de redimensionamento -----------------------------------------
+   Alvo estreito na tela, generoso no ponteiro: 4px de fio visível, 12px de
+   área clicável. Punho fino demais faz o usuário errar e arrastar o mapa. */
+.ptchat-punho {
+  position: absolute;
+  left: -6px; top: 0; bottom: 0;
+  width: 12px;
+  cursor: col-resize;
+  z-index: 2;
+}
+.ptchat-punho::after {
+  content: "";
+  position: absolute;
+  left: 4px; top: 0; bottom: 0;
+  width: 1px;
+  background: transparent;
+  transition: background var(--m-fast) var(--ease);
+}
+.ptchat-punho:hover::after,
+.ptchat-punho:focus-visible::after { background: var(--signal-line); }
+.ptchat-punho:focus-visible { outline: none; }
+
+.ptchat-acoes { display: flex; gap: var(--s-3); flex: none; }
+.ptchat-acoes button {
+  width: 24px; height: 24px;
+  font-size: 12px;
+  color: var(--ink-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  transition: all var(--m-fast) var(--ease);
+}
+.ptchat-acoes button:hover { color: var(--ink); border-color: var(--rule-hi); }
+
+/* Painel largo ganha texto maior: um terminal de 1000px com fonte de 11px
+   desperdiça a largura que o usuário acabou de pedir. */
+.ptchat-log { font-size: var(--t-small); }
+.ptchat { container-type: inline-size; }
+@container (min-width: 700px) {
+  .ptchat-msg { font-size: var(--t-body); }
+  .ptchat-json { font-size: 10.5px; }
+}
