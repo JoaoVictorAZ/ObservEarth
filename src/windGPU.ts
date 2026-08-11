@@ -1,12 +1,24 @@
 // src/windGPU.ts
 // -----------------------------------------------------------------------------
-// SISTEMA DE VENTO EM GPU — ALINHAMENTO GEOGRÁFICO DE ALTA PRECISÃO (RK2)
+// SISTEMA DE VENTO EM GPU — advecção RK2 sobre campo GRIB2.
 //
-// CORREÇÃO CRÍTICA:
-//   O amostrador de textura `getWindVector` agora inverte o eixo Y (`1.0 - p.y`)
-//   para alinhar a conveniente convenção WebGL (UV (0,0) na base) com a grade
-//   GRIB2 (row 0 = 90°N no topo). Sem isto, ventos da latitude sul (-28°S) mostravam
-//   dados da latitude norte (+28°N).
+// SOBRE A LATITUDE (o comentário que estava aqui descrevia código inexistente)
+//
+// A versão anterior deste cabeçalho afirmava que `getWindVector` invertia o
+// eixo Y com `1.0 - p.y`. Ele não inverte — não há inversão nenhuma no
+// amostrador, e nunca houve nesta versão do arquivo.
+//
+// O sentido está correto por outro caminho: `buildTexture` escreve a linha 0 do
+// campo (90°N, porque o GFS varre de norte para sul) na linha 0 da textura, que
+// em WebGL é v = 0; e o shader lê `lat = (0.5 - p.y) * 180`, que em p.y = 0
+// também dá +90. Os dois concordam.
+//
+// Mas isso é sorte documentada, não garantia. Um comentário descrevendo uma
+// correção que não existe é pior que nenhum comentário: ele faz a próxima
+// pessoa procurar o defeito no lugar errado. As três convenções agora vivem em
+// `src/windGrid.ts` e são MEDIDAS em `test/wind-grid.mjs`, que reprova qualquer
+// espelhamento de hemisfério e mantém a discordância conhecida (meia célula,
+// 0,125° no GFS 0,25°) dentro de um limite fixo.
 // -----------------------------------------------------------------------------
 
 import * as THREE from "three";
@@ -25,6 +37,65 @@ export interface WindFrame {
 
 const SPEED_MAX = 40;
 const FRAME_CACHE = 3;
+
+// -----------------------------------------------------------------------------
+// RAMPA DE VELOCIDADE
+//
+// A rampa anterior tinha dois defeitos, e o segundo é o grave.
+//
+// 1. UM ERRO DE ÍNDICE PINTAVA FORA DO GAMUT.
+//    A terceira faixa era `mix(c2, c3, s - 1.0)` onde devia ser `s - 2.0`.
+//    Para s entre 2 e 3 o fator ia de 1 a 2, e `mix` do GLSL NÃO satura: a cor
+//    extrapolava para R = 1,047 e B = −0,187. O driver corta na escrita, então
+//    aparecia um estouro branco-amarelado que voltava de repente ao verde —
+//    uma emenda dura numa velocidade específica do vento, em todo o planeta.
+//
+// 2. O VENTO MAIS FORTE ERA O MAIS ESCURO.
+//    Luminância medida ao longo da rampa: subia até 0,93 perto de t = 0,46 e
+//    despencava para 0,213 em t = 1,0. Doze quedas de luminância no percurso.
+//    Ou seja: a corrente de jato — o dado mais importante do mapa — RECUAVA
+//    visualmente, enquanto o vento médio brilhava. Exatamente o contrário do
+//    que a tela precisa dizer. É o mesmo defeito que a paleta de focos de calor
+//    tinha, e a correção é a mesma: monotonicidade em luminância.
+//
+// Aqui a velocidade lê como BRILHO. Some a cor e a leitura sobrevive — que é o
+// teste de que a codificação é a grandeza, e não enfeite.
+//
+// Os valores vivem aqui, em TypeScript, e são INJETADOS no shader. O teste lê
+// esta mesma constante. Uma paleta transcrita à mão para dentro de uma string
+// GLSL é uma paleta que vai divergir do que se acredita estar pintando.
+// -----------------------------------------------------------------------------
+export const RAMPA_VENTO: readonly [number, number, number][] = [
+  [0.043, 0.114, 0.302],   // #0b1a4d  calmaria: quase o fundo do espaço
+  [0.098, 0.294, 0.541],   // #194b8a  brisa
+  [0.165, 0.561, 0.659],   // #2a8fa8  vento moderado
+  [0.373, 0.788, 0.561],   // #5fc98f  vento forte
+  [0.812, 0.890, 0.420],   // #cfe36b  vendaval
+  [1.000, 0.984, 0.910],   // #fffbe8  jato: branco quente
+];
+
+const glsl3 = (c: readonly number[]) => `vec3(${c.map((x) => x.toFixed(4)).join(", ")})`;
+
+/**
+ * Gradiente por mistura sucessiva.
+ *
+ * Cada termo é `clamp(s - k, 0, 1)` com k igual ao próprio índice: 0 antes do
+ * seu trecho, 0→1 dentro dele, 1 depois. Isso dá exatamente a interpolação
+ * linear por partes, mas de um jeito em que o erro de índice de cima é
+ * IMPOSSÍVEL de escrever — e o `clamp` remove a extrapolação fora do gamut na
+ * raiz, em vez de depender de o driver cortar.
+ */
+function rampaGLSL(stops: readonly (readonly number[])[]): string {
+  const n = stops.length - 1;
+  const linhas = stops.slice(1).map((c, k) =>
+    `    c = mix(c, ${glsl3(c)}, clamp(s - ${k.toFixed(1)}, 0.0, 1.0));`).join("\n");
+  return `  vec3 ramp(float t) {
+    float s = clamp(t, 0.0, 1.0) * ${n.toFixed(1)};
+    vec3 c = ${glsl3(stops[0])};
+${linhas}
+    return c;
+  }`;
+}
 
 // Resolução da textura de rastro
 const TRAIL_W = 2048;
@@ -84,18 +155,26 @@ const UPDATE_FRAG = /* glsl */ `
     vec2 pos = st.xy;
     float age = st.w;
 
-    vec2 wind = getWindVector(pos);
-    float spd = length(wind);
+    // Velocidade da posição ANTERIOR, guardada só para o teste de calmaria:
+    // um ponto que já estava parado deve morrer, mesmo que o passo o tenha
+    // jogado para dentro de um jato.
+    float spdAntes = length(getWindVector(pos));
 
     // Atualização curvilínea RK2
     pos = moveRK2(pos, uDt);
+
+    // A cor é amostrada DEPOIS do passo. Antes ela vinha da posição velha, e a
+    // partícula chegava ao jato ainda pintada com a cor da calmaria de onde
+    // saiu — um quadro inteiro de atraso, visível como um rastro que troca de
+    // cor atrás da própria ponta.
+    float spd = length(getWindVector(pos));
 
     age -= uDt * 0.22;
 
     float r = hash(vUv * 51.7 + uTime);
     bool dead = age <= 0.0
              || pos.y < 0.015 || pos.y > 0.985
-             || spd < 0.05
+             || spdAntes < 0.05
              || r < uDrop;
 
     if (dead) {
@@ -143,50 +222,58 @@ const DRAW_VERT = /* glsl */ `
     vAge = st.w;
     vec2 clip = vec2(st.x * 2.0 - 1.0, st.y * 2.0 - 1.0);
     gl_Position = vec4(clip, 0.0, 1.0);
-    // Linhas finas e elegantes (0.8px a 1.6px)
-    gl_PointSize = (0.8 + vSpeed * 0.8) * uScale;
+
+    // COMPENSAÇÃO DE LATITUDE.
+    //
+    // O rastro é pintado numa textura equirretangular que depois se enrola na
+    // esfera. Nessa projeção, um ponto de N pixels de largura na latitude φ
+    // vira, na esfera, um arco proporcional a cos(φ). Perto dos polos isso
+    // tende a zero: a partícula existe, anda e é pintada — e some.
+    //
+    // O resultado era que a circulação polar, que é justamente onde o vento é
+    // mais organizado e mais rápido, ficava invisível. Não era escolha
+    // estética; era dado sumindo por causa da projeção.
+    //
+    // O teto de 2,8 existe porque gl_PointSize é isotrópico: sem limite, a
+    // compensação certa em longitude vira um borrão alto demais em latitude.
+    // Mesma convenção do UPDATE_FRAG: p.y = 0 é o norte. (Para cos() o sinal
+    // não muda nada, mas um rótulo trocado engana quem ler depois.)
+    float lat = (0.5 - st.y) * 180.0;
+    float compensa = min(1.0 / max(cos(radians(lat)), 0.12), 2.8);
+
+    gl_PointSize = (0.8 + vSpeed * 0.9) * uScale * compensa;
   }
 `;
 
-// RAMPA DE CORES VIBRANTE ESTILO WINDY
 const DRAW_FRAG = /* glsl */ `
   precision highp float;
   varying float vSpeed;
   varying float vAge;
 
-  vec3 ramp(float t) {
-    vec3 c0 = vec3(0.04, 0.12, 0.45);  // azul escuro profundo
-    vec3 c1 = vec3(0.10, 0.55, 0.90);  // elétrico ciano
-    vec3 c2 = vec3(0.12, 0.88, 0.60);  // verde esmeralda
-    vec3 c3 = vec3(0.65, 0.95, 0.15);  // verde limão neon
-    vec3 c4 = vec3(0.98, 0.82, 0.10);  // âmbar brilhante
-    vec3 c5 = vec3(0.98, 0.32, 0.12);  // fogo alaranjado
-    vec3 c6 = vec3(0.92, 0.12, 0.65);  // magenta/púrpura intenso
-
-    float s = t * 6.0;
-    if (s < 1.0) return mix(c0, c1, s);
-    if (s < 2.0) return mix(c1, c2, s - 1.0);
-    if (s < 3.0) return mix(c2, c3, s - 1.0);
-    if (s < 4.0) return mix(c3, c4, s - 3.0);
-    if (s < 5.0) return mix(c4, c5, s - 4.0);
-    return mix(c5, c6, s - 5.0);
-  }
+${rampaGLSL(RAMPA_VENTO)}
 
   void main() {
     vec2 d = gl_PointCoord - 0.5;
     float r2 = dot(d, d) * 4.0;
     if (r2 > 1.0) discard;
+    if (vAge <= 0.0) discard;
 
     float core = exp(-r2 * 4.5);
-    float a = clamp(core, 0.0, 1.0);
-
-    if (vAge <= 0.0) discard;
     float fade = smoothstep(0.0, 0.08, vAge) * smoothstep(1.0, 0.55, vAge);
 
+    // O clarão branco somado à cor foi removido. Ele adicionava até +0,45 de
+    // cada canal no centro de TODA partícula, o que achatava a rampa
+    // justamente onde ela precisa discriminar: uma brisa com miolo claro
+    // ficava parecida com um vendaval. O brilho agora vem da rampa, que é onde
+    // a velocidade está codificada.
     vec3 col = ramp(vSpeed);
-    col += vec3(0.6, 0.7, 0.85) * core * 0.45;
 
-    gl_FragColor = vec4(col, a * fade * 0.45);
+    // Opacidade também cresce com a velocidade. Codificar a mesma grandeza em
+    // dois canais (brilho e presença) é o que faz a leitura sobreviver a tela
+    // ruim, luz ambiente e daltonismo — não é redundância à toa.
+    float alfa = core * fade * (0.24 + vSpeed * 0.50);
+
+    gl_FragColor = vec4(col, alfa);
   }
 `;
 
