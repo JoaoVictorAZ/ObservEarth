@@ -45,7 +45,12 @@
      insuficiente é perder informação, não economizar atenção.               */
   --ink: #f4f7fa;
   --ink-2: #a8b4c2;
-  --ink-3: #6c7888;   /* +1 por canal sobre #6b7787: 4,455 -> 4,519 */
+  /* --ink-3 medido contra o VÁCUO dava 4,52:1 e eu parei ali. Mas o painel de
+     camadas tem um degradê que clareia o fundo para ~#070a10, e sobre ELE o
+     mesmo tom cai para 4,42:1 — reprova. É a linha de metadado de cada camada
+     ("°C · GFS 0,25°"), que é procedência, não enfeite.
+     #717d8d passa nos dois: 4,85:1 no vácuo, 4,74:1 no painel. */
+  --ink-3: #717d8d;
   --ink-4: #55606e;
 
   /* ---- sinal: um único acento ---------------------------------------- */
@@ -405,16 +410,164 @@ button { border: none; background: none; cursor: pointer; }
 }
 
 /* ============================================================== PAINEL === */
+/* ======================================================= PAINEL DE CAMADAS ===
+   ISTO NÃO ESTAVA MAL DESENHADO — ESTAVA SEM FOLHA DE ESTILO.
+
+   Numa das minhas substituições em bloco do index.css eu apaguei TODAS as dez
+   classes que o painel usa: .fam, .fam-head, .fam-itens, .cam, .cam-marca,
+   .cam-txt, .cam-titulo, .cam-info, .dock-busca, .dock-rodape. Zero regras
+   para cada uma.
+
+   O resultado na tela é exatamente o que se vê sem CSS: o título e o metadado
+   fluindo na MESMA linha ("Temperatura do Ar (2m)°C · GFS 0,25°"), tudo
+   centralizado pelo pai, e nenhum controle visível — porque a marca de rádio e
+   de caixa eram desenhadas inteiramente por CSS.
+
+   Não havia botão para clicar. Havia texto solto.
+   ========================================================================= */
 .panel {
   position: absolute; z-index: 5;
   top: var(--head-h); left: 0; bottom: 0;
   width: var(--panel-w);
-  padding: 0 0 20px;
-  overflow-y: auto;
-  background: linear-gradient(90deg, rgba(4, 6, 10, 0.93) 82%, rgba(4, 6, 10, 0.70));
+  /* Coluna com cabeçalho fixo: a busca não pode rolar para fora junto com as
+     39 camadas, senão filtrar exige rolar de volta ao topo. */
+  display: flex; flex-direction: column;
+  background: linear-gradient(90deg, rgba(4, 6, 10, 0.94) 84%, rgba(4, 6, 10, 0.72));
   border-right: 1px solid var(--rule);
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(8px);
 }
+
+/* ---- busca: fixa no topo ------------------------------------------------ */
+.dock-busca {
+  flex: none;
+  padding: var(--s-4) var(--s-5);
+  border-bottom: 1px solid var(--rule);
+}
+.dock-busca input {
+  width: 100%; height: 32px;
+  padding: 0 var(--s-4);
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--rule); border-radius: var(--r-lg);
+  font-family: var(--sans); font-size: var(--t-small);
+  outline: none;
+  transition: border-color var(--m-base) var(--ease), background var(--m-base) var(--ease);
+}
+.dock-busca input::placeholder { color: var(--ink-4); }
+.dock-busca input:focus { border-color: var(--signal-line); background: var(--surface-hi); }
+
+/* ---- o corpo rola; o cabeçalho não -------------------------------------- */
+.dock-corpo { flex: 1; overflow-y: auto; padding-bottom: var(--s-6); }
+.dock-corpo::-webkit-scrollbar { width: 9px; }
+.dock-corpo::-webkit-scrollbar-thumb {
+  background: var(--rule-hi); border-radius: 5px;
+  border: 3px solid transparent; background-clip: content-box;
+}
+
+/* ---- família ------------------------------------------------------------ */
+.fam { border-bottom: 1px solid var(--rule-soft); }
+.fam:last-of-type { border-bottom: none; }
+
+.fam-head {
+  display: flex; align-items: center; gap: var(--s-4);
+  width: 100%; text-align: left;
+  padding: var(--s-4) var(--s-5);
+  background: transparent; border: none;
+  color: var(--ink-2);
+  transition: background var(--m-fast) var(--ease);
+}
+.fam-head:hover { background: var(--surface); color: var(--ink); }
+
+/* O fio herda a cor da família por variável inline (--fam). É a única cor do
+   painel, e ela codifica a NATUREZA do dado, não a camada. */
+.fam-fio {
+  flex: none; width: 2px; height: 24px; border-radius: 1px;
+  background: var(--fam, var(--rule-hi));
+}
+.fam-nome {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 1px;
+  font-size: var(--t-body); font-weight: var(--w-medium); color: inherit;
+}
+.fam-nome small {
+  font-size: var(--t-micro); font-weight: var(--w-normal);
+  color: var(--ink-3); line-height: 1.4;
+}
+.fam-cont {
+  flex: none; font-family: var(--mono); font-size: var(--t-micro);
+  color: var(--ink-3); padding: 1px var(--s-3);
+  border: 1px solid var(--rule-soft); border-radius: 2px;
+}
+
+/* Um grupo com 39 itens não pode empurrar os outros para fora da tela: ele
+   rola dentro de si. Sem isto, abrir "Campo contínuo" esconde todo o resto. */
+.fam-itens {
+  max-height: 42vh; overflow-y: auto;
+  padding: 0 var(--s-4) var(--s-3);
+}
+
+/* ---- item de camada ----------------------------------------------------- */
+.cam {
+  display: flex; align-items: flex-start; gap: var(--s-4);
+  width: 100%; text-align: left;
+  padding: var(--s-3) var(--s-4);
+  background: transparent; border: 1px solid transparent;
+  border-radius: var(--r-lg);
+  color: var(--ink-2);
+  transition: background var(--m-fast) var(--ease), color var(--m-fast) var(--ease);
+}
+.cam:hover { background: var(--surface); color: var(--ink); }
+.cam-on { background: var(--surface-hi); color: var(--ink); border-color: var(--rule); }
+
+/* A caixa de verdade fica escondida, mas continua sendo ela que recebe foco e
+   teclado — a marca desenhada é só a aparência. */
+.cam input { position: absolute; opacity: 0; width: 0; height: 0; }
+.cam:focus-visible, .cam:has(input:focus-visible) {
+  outline: 1px solid var(--signal); outline-offset: 1px;
+}
+
+/* A FORMA carrega a regra: círculo = exclusivo (um por vez, dividem o plano de
+   imagem), quadrado = combina livremente. É a restrição visível antes do erro,
+   que é o princípio da taxonomia. */
+.cam-marca {
+  flex: none; width: 13px; height: 13px; margin-top: 2px;
+  border: 1px solid var(--rule-hi); border-radius: 50%;
+  transition: background var(--m-fast) var(--ease), border-color var(--m-fast) var(--ease);
+}
+.cam-sw .cam-marca { border-radius: 3px; }
+.cam-on .cam-marca {
+  background: var(--fam, var(--signal));
+  border-color: var(--fam, var(--signal));
+  box-shadow: inset 0 0 0 2px var(--void);
+}
+.cam-sw.cam-on .cam-marca { box-shadow: inset 0 0 0 2px var(--void); }
+
+.cam-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.cam-titulo {
+  font-size: var(--t-small); font-weight: var(--w-medium); color: inherit;
+  line-height: 1.35;
+  /* Título longo trunca em vez de empurrar o painel. */
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cam-txt small {
+  font-family: var(--mono); font-size: var(--t-micro);
+  color: var(--ink-3); line-height: 1.4;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.cam-linha { display: flex; flex-direction: column; }
+.cam-info {
+  margin: 0 0 var(--s-3);
+  padding: var(--s-2) var(--s-4) var(--s-2) calc(var(--s-4) + 13px + var(--s-4));
+  font-family: var(--mono); font-size: var(--t-micro);
+  color: var(--ink-3); line-height: 1.5;
+}
+.cam-aviso { color: var(--warn); padding: var(--s-3) var(--s-5); }
+
+.dock-vazio, .dock-rodape {
+  padding: var(--s-5); margin: 0;
+  font-size: var(--t-micro); color: var(--ink-3); line-height: 1.6;
+}
+.dock-rodape { border-top: 1px solid var(--rule-soft); }
 
 .section {
   padding: 15px var(--gut);

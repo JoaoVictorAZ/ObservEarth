@@ -96,6 +96,24 @@ export const LeftDock: React.FC = () => {
     })),
   ];
 
+  // -------------------------------------------------------------------------
+  // TÍTULOS DUPLICADOS.
+  //
+  // O catálogo da MERRA-2 traz três camadas chamadas exatamente "Poeira" e
+  // duas "Evaporação". Três linhas idênticas numa lista de 39 não são uma
+  // escolha: são um impasse. A pessoa clica em uma, não é o que queria, e não
+  // tem como saber qual das outras é.
+  //
+  // Quando o título se repete, o detalhe entra no rótulo para desempatar.
+  const contagem = new Map<string, number>();
+  for (const r of rasters) contagem.set(r.titulo, (contagem.get(r.titulo) ?? 0) + 1);
+  for (const r of rasters) {
+    if ((contagem.get(r.titulo) ?? 0) > 1) {
+      const marca = r.detalhe?.split("·")[0]?.trim() || r.id;
+      r.titulo = `${r.titulo} — ${marca}`;
+    }
+  }
+
   const q = busca.trim().toLowerCase();
   const filtra = (r: ItemRaster) =>
     !q || (r.titulo + " " + (r.detalhe ?? "") + " " + r.id).toLowerCase().includes(q);
@@ -144,6 +162,7 @@ export const LeftDock: React.FC = () => {
         />
       </div>
 
+      <div className="dock-corpo">
       {/* ---- famílias de RASTER: rádio, porque só cabe uma ----------------- */}
       {FAMILIES.filter((f) => f.slot === "raster").map((fam) => {
         const itens = rasters.filter((r) => r.familia === fam.id).filter(filtra);
@@ -232,6 +251,8 @@ export const LeftDock: React.FC = () => {
       {q && rasters.filter(filtra).length === 0 && (
         <p className="dock-vazio">Nenhuma camada casa com “{busca}”.</p>
       )}
+
+      </div>
 
       <p className="dock-rodape">
         Clique em qualquer ponto do globo para abrir a sonda e o terminal.
