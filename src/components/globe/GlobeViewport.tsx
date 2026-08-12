@@ -289,9 +289,19 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
       return;
     }
     let alive = true;
-    setHycomInfo("Baixando correntes HYCOM...");
+    setHycomInfo("Buscando correntes…");
     fetch("/api/hycom")
-      .then((r) => (r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`)))
+      .then(async (r) => {
+        const j = await r.json().catch(() => null);
+        // A rota devolve 503 com motivo enquanto não há fonte ligada. Reduzir
+        // isso a "HTTP 503" jogaria fora exatamente a explicação — e foi assim
+        // que um campo inteiramente gerado por fórmula ficou anos no ar sem
+        // ninguém perguntar de onde vinha.
+        if (!r.ok || j?.ok === false) {
+          throw new Error(j?.error ?? `HTTP ${r.status}`);
+        }
+        return j;
+      })
       .then((data) => {
         if (!alive) return;
         if (!isValidWindGrid(data)) throw new Error("grade de correntes malformada");
@@ -299,12 +309,16 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
         // atmosférico e fazia corrente e vento saírem com o mesmo desenho.
         eng.setCurrents(data);
         eng.setCurrentsVisible(true);
-        setHycomInfo(`Correntes oceânicas · ${(data as any).source ?? "HYCOM"}`);
+        setHycomInfo([
+          (data as { provider?: string }).provider ?? "procedência não declarada",
+          (data as { stepDeg?: number }).stepDeg != null
+            ? `${(data as { stepDeg?: number }).stepDeg}°` : null,
+        ].filter(Boolean).join(" · "));
       })
-      .catch((err) => {
+      .catch((err: Error) => {
         if (!alive) return;
         eng.setCurrentsVisible(false);
-        setHycomInfo(`erro: ${String(err)}`);
+        setHycomInfo(err.message);
       });
     return () => { alive = false; };
   }, [hycomOn, setHycomInfo]);

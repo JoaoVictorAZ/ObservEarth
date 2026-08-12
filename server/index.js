@@ -794,175 +794,41 @@ app.get("/api/hospitals", async (req, res) => {
 // CORRENTES OCEÂNICAS — physics-based synthetic + turbulence
 // ======================================================================
 app.get("/api/hycom", async (_req, res) => {
-  try {
-    const grid = await cached("hycom:v3", 6 * HOUR, () => {
-      // ── Hash-based noise for natural variation ──
-      // (deterministic, no external dependency, multi-octave)
-      function hash(x, y) {
-        let h = (Math.sin(x * 127.1 + y * 311.7) * 43758.5453);
-        return h - Math.floor(h);
-      }
-      function smoothNoise(x, y) {
-        const ix = Math.floor(x), iy = Math.floor(y);
-        const fx = x - ix, fy = y - iy;
-        const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
-        const a = hash(ix, iy), b = hash(ix + 1, iy);
-        const c = hash(ix, iy + 1), d = hash(ix + 1, iy + 1);
-        return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
-      }
-      function fbm(x, y, octaves = 4) {
-        let val = 0, amp = 0.5, freq = 1;
-        for (let i = 0; i < octaves; i++) {
-          val += amp * (smoothNoise(x * freq, y * freq) - 0.5);
-          amp *= 0.5; freq *= 2.1;
-        }
-        return val;
-      }
-
-      const nx = 360, ny = 181;
-      const u = new Float32Array(nx * ny);
-      const v = new Float32Array(nx * ny);
-
-      for (let j = 0; j < ny; j++) {
-        const lat = 90 - j;
-        const latR = lat * Math.PI / 180;
-        const cosLat = Math.cos(latR);
-
-        for (let i = 0; i < nx; i++) {
-          const lng = i - 180;
-          const lngR = lng * Math.PI / 180;
-          const idx = j * nx + i;
-
-          // ── 1. Subtropical Gyres (clockwise N, counter-clockwise S) ──
-          // North Atlantic Gyre
-          let gu = 0, gv = 0;
-          const naLat = (lat - 30) / 20, naLng = (lng + 45) / 40;
-          if (naLat * naLat + naLng * naLng < 1.2) {
-            const r = Math.sqrt(naLat * naLat + naLng * naLng);
-            const strength = 0.35 * Math.exp(-r * r * 1.5);
-            gu += -naLat * strength * 3;
-            gv += naLng * strength * 2;
-          }
-          // North Pacific Gyre
-          const npLat = (lat - 28) / 18, npLng = (lng + 165 > 180 ? lng + 165 - 360 : lng + 165) / 45;
-          if (npLat * npLat + npLng * npLng < 1.5) {
-            const r = Math.sqrt(npLat * npLat + npLng * npLng);
-            const strength = 0.30 * Math.exp(-r * r * 1.2);
-            gu += -npLat * strength * 3;
-            gv += npLng * strength * 2;
-          }
-          // South Atlantic Gyre (counter-clockwise)
-          const saLat = (lat + 25) / 20, saLng = (lng + 20) / 30;
-          if (saLat * saLat + saLng * saLng < 1.3) {
-            const r = Math.sqrt(saLat * saLat + saLng * saLng);
-            const strength = 0.28 * Math.exp(-r * r * 1.3);
-            gu += saLat * strength * 3;
-            gv += -saLng * strength * 2;
-          }
-          // South Pacific Gyre (counter-clockwise)
-          const spLat = (lat + 30) / 22, spLng = (lng + 120) / 50;
-          if (spLat * spLat + spLng * spLng < 1.4) {
-            const r = Math.sqrt(spLat * spLat + spLng * spLng);
-            const strength = 0.25 * Math.exp(-r * r * 1.1);
-            gu += spLat * strength * 3;
-            gv += -spLng * strength * 2;
-          }
-          // Indian Ocean Gyre
-          const ioLat = (lat + 20) / 18, ioLng = (lng - 70) / 30;
-          if (ioLat * ioLat + ioLng * ioLng < 1.2) {
-            const r = Math.sqrt(ioLat * ioLat + ioLng * ioLng);
-            const strength = 0.22 * Math.exp(-r * r * 1.4);
-            gu += ioLat * strength * 3;
-            gv += -ioLng * strength * 2;
-          }
-
-          // ── 2. Western Boundary Current intensification ──
-          // Gulf Stream
-          if (lat > 25 && lat < 50 && lng > -82 && lng < -30) {
-            const dist = Math.abs(lat - (30 + (lng + 80) * 0.25));
-            const gs = 0.8 * Math.exp(-dist * dist / 15);
-            const angle = Math.atan2(0.6, 1) + 0.15 * Math.sin(lngR * 4);
-            gu += gs * Math.cos(angle);
-            gv += gs * Math.sin(angle);
-          }
-          // Kuroshio Current
-          if (lat > 18 && lat < 42 && lng > 120 && lng < 175) {
-            const dist = Math.abs(lat - (22 + (lng - 120) * 0.35));
-            const ks = 0.65 * Math.exp(-dist * dist / 12);
-            const angle = Math.atan2(0.7, 0.8) + 0.12 * Math.sin(lngR * 5);
-            gu += ks * Math.cos(angle);
-            gv += ks * Math.sin(angle);
-          }
-          // Agulhas Current
-          if (lat > -42 && lat < -25 && lng > 25 && lng < 45) {
-            const ag = 0.5 * Math.exp(-((lat + 33) ** 2) / 20);
-            gu += ag * 0.3;
-            gv += -ag * 0.8;
-          }
-
-          // ── 3. Equatorial currents ──
-          if (Math.abs(lat) < 12) {
-            const eqBand = Math.cos(latR * 7.5);
-            gu += -0.35 * eqBand;                             // SEC westward
-            if (Math.abs(lat) < 3) gu += 0.25;                // EUC eastward
-            gv += 0.08 * Math.sin(lngR * 3) * eqBand;         // meander
-          }
-
-          // ── 4. Antarctic Circumpolar Current ──
-          if (lat < -42 && lat > -68) {
-            const accStr = 0.55 * Math.cos((lat + 55) * Math.PI / 26);
-            const wobble = 0.12 * Math.sin(lngR * 3 + latR * 2);
-            gu += accStr * (1 + wobble);
-            gv += accStr * 0.15 * Math.sin(lngR * 5 + 1.3);
-          }
-
-          // ── 5. Multi-scale turbulence (noise) ──
-          const nx1 = fbm(lng * 0.03, lat * 0.04, 4);        // large eddies
-          const ny1 = fbm(lng * 0.03 + 100, lat * 0.04 + 100, 4);
-          const nx2 = fbm(lng * 0.12, lat * 0.15, 3);        // small eddies
-          const ny2 = fbm(lng * 0.12 + 50, lat * 0.15 + 50, 3);
-          const turbU = nx1 * 0.18 + nx2 * 0.08;
-          const turbV = ny1 * 0.18 + ny2 * 0.08;
-
-          // ── 6. Mesoscale eddies (rotating blobs) ──
-          let eddyU = 0, eddyV = 0;
-          const seeds = [[35, -60], [30, 150], [-30, -30], [-25, 80], [40, -150], [-35, 170], [10, -90]];
-          for (const [elat, elng] of seeds) {
-            const dx = (lng - elng) * cosLat * 0.1;
-            const dy = (lat - elat) * 0.1;
-            const r2 = dx * dx + dy * dy;
-            if (r2 < 4) {
-              const str = 0.15 * Math.exp(-r2 * 0.8);
-              eddyU += -dy * str;
-              eddyV += dx * str;
-            }
-          }
-
-          // ── Combine all components ──
-          const baseU = gu + turbU + eddyU;
-          const baseV = gv + turbV + eddyV;
-
-          // Zero out over land (crude mask: where |lat| > 85 or known land masses)
-          const isLand =
-            (Math.abs(lat) > 85) ||
-            (lat > 60 && lng > -170 && lng < -50) ||    // North Canada/Alaska
-            (lat > 55 && lng > 20 && lng < 180);         // Siberia
-          
-          u[idx] = isLand ? 0 : baseU;
-          v[idx] = isLand ? 0 : baseV;
-        }
-      }
-      return { nx, ny, u: Array.from(u), v: Array.from(v), source: "HYCOM synthetic + noise" };
-    });
-    res.json(grid);
-  } catch (e) {
-    console.warn("[hycom]", e.message);
-    res.status(502).json({ error: e.message });
-  }
+  // ---------------------------------------------------------------------
+  // CORRENTES MARÍTIMAS — DESLIGADAS ATÉ HAVER DADO.
+  //
+  // O que havia aqui eram 195 linhas gerando o oceano INTEIRO por fórmula:
+  //
+  //   - giros subtropicais como gaussianas em caixas de lat/lng escritas à mão
+  //   - Corrente do Golfo como `0.8 * Math.exp(-dist*dist / 15)`
+  //   - Kuroshio como `0.65 * Math.exp(-dist*dist / 12)`
+  //   - Circumpolar Antártica como um cosseno de latitude
+  //   - "turbulência" por movimento browniano fracionário
+  //   - sete vórtices de mesoescala com posição cravada numa lista
+  //
+  // Nenhuma requisição. Nenhum dado. Um campo físico inteiro, ~65 mil vetores,
+  // servido de uma rota chamada `/api/hycom` — o nome de um modelo oceânico
+  // real da Marinha americana que a função não tocava em lugar nenhum.
+  //
+  // Era a maior fabricação do projeto, e explicava a reclamação de que "as
+  // correntes estão em chunks retas": blobs gaussianos e caixas de coordenada
+  // produzem exatamente isso.
+  //
+  // A substituição em curso é o RTOFS Global do NCEP — que É o HYCOM da
+  // Marinha rodado operacionalmente, em 1/12°, GRIB2, no mesmo NOMADS do GFS e
+  // sem chave. Até ele estar ligado e conferido, esta rota diz que não tem
+  // dado, em vez de desenhar um oceano plausível.
+  // ---------------------------------------------------------------------
+  res.status(503).json({
+    ok: false,
+    code: "SEM_FONTE",
+    error: "Correntes marítimas ainda não estão ligadas a uma fonte de dados.",
+    detalhe: "O campo anterior era gerado por fórmula analítica, não medido. "
+           + "Foi removido em vez de continuar sendo exibido como observação.",
+    substituto: "NCEP RTOFS Global (HYCOM operacional) 1/12°, GRIB2 via NOMADS",
+  });
 });
 
-
-// Estações de Qualidade do Ar Globais ao Vivo (OpenAQ v2 + fallback curado)
 app.get("/api/openaq", async (_req, res) => {
   try {
     const stations = await cached("openaq:global:v2", 2 * HOUR, async () => {
