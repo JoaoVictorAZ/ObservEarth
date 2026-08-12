@@ -1,0 +1,16 @@
+import assert from "node:assert/strict";
+import { lerCoordenada } from "../src/coord.ts";
+let n=0, mal=0;
+const ok=(nome,fn)=>{try{fn();n++;console.log("  ok  "+nome);}catch(e){mal++;console.log("  X   "+nome+" :: "+e.message);}};
+console.log("\nleitura de coordenada");
+ok("decimal com virgula", () => { const c=lerCoordenada("-23.55, -46.63"); assert.ok(Math.abs(c.lat+23.55)<1e-9 && Math.abs(c.lng+46.63)<1e-9); });
+ok("decimal com espaco", () => { const c=lerCoordenada("-23.55 -46.63"); assert.ok(c && c.lat<0 && c.lng<0); });
+ok("hemisferio em portugues (O de oeste)", () => { const c=lerCoordenada("23.55 S 46.63 O"); assert.ok(Math.abs(c.lat+23.55)<1e-9, "lat "+c.lat); assert.ok(c.lng<0, "lng "+c.lng); });
+ok("hemisferio em ingles (W)", () => { const c=lerCoordenada("23.55S 46.63W"); assert.ok(c.lng<0); });
+ok("norte e leste positivos", () => { const c=lerCoordenada("51.5N 0.13L"); assert.ok(c.lat>0 && c.lng>0); });
+ok("graus minutos segundos", () => { const c=lerCoordenada("23°33'S 46°38'O"); assert.ok(Math.abs(c.lat-(-23.55))<0.01, "lat "+c.lat); assert.ok(Math.abs(c.lng-(-46.633))<0.01, "lng "+c.lng); });
+ok("latitude fora da faixa e RECUSADA", () => { assert.equal(lerCoordenada("91 0"), null, "aceitou lat 91"); assert.equal(lerCoordenada("0 181"), null, "aceitou lng 181"); });
+ok("texto livre nao vira coordenada", () => { for (const t of ["sao paulo","","abc",",",'12'] ) assert.equal(lerCoordenada(t), null, "aceitou: "+t); });
+ok("polos e antimeridiano nas bordas passam", () => { assert.ok(lerCoordenada("90 180")); assert.ok(lerCoordenada("-90 -180")); });
+console.log(mal? `\n  ${mal} FALHA(S)\n` : `\n  ${n} verificacoes\n`);
+process.exit(mal?1:0);

@@ -1,125 +1,148 @@
 // src/components/navigation/TopBar/ToolbarButtons.tsx
-import React, { useState } from "react";
+// -----------------------------------------------------------------------------
+// FERRAMENTAS, AGRUPADAS POR NATUREZA.
+//
+// TRÊS DEFEITOS CORRIGIDOS AQUI, E DOIS SÃO DE CONTEÚDO
+//
+//   1. UM BOTÃO MENTIA SOBRE O QUE FAZ.
+//      O ícone de bússola tinha `title="Travar Norte / Resetar Câmera"` e o
+//      manipulador `onSearchCoord?.(-23.5505, -46.6333)` — as coordenadas de
+//      São Paulo. Ele não trava norte nem reseta nada: ele voa para São Paulo.
+//
+//   2. O PAINEL DE DIAGNÓSTICO ERA CRAVADO.
+//        Resolução Pixel Ratio:   2x (Retina)
+//        Partículas GPU:          131.072 vetores
+//        Suavização Anisotrópica: 8x Max
+//      Nenhum dos três vinha do motor. O pixel ratio muda com o degrau
+//      (2,0/1,5/1,0), as partículas são 160.000/90.000/40.000, e "anisotrópica
+//      8x" não é configurada em lugar nenhum do código.
+//
+//      Um painel de diagnóstico é o único lugar da interface onde o número não
+//      pode ser decorativo: ele existe para responder "por que está lento?".
+//      Número fixo ali é a resposta errada para a única pergunta que ele serve.
+//
+//   3. SEIS BOTÕES IGUAIS, SEM AGRUPAMENTO.
+//      Interruptores (rotação, iluminação) e ações (início, captura) tinham a
+//      mesma forma, o mesmo tamanho e a mesma vizinhança. A distinção importa:
+//      interruptor tem ESTADO e fica aceso; ação acontece e acaba. Agora estão
+//      separados por um fio, e os interruptores usam `aria-pressed`.
+// -----------------------------------------------------------------------------
+
+import React, { useState, useRef, useEffect } from "react";
 import { useGlobeStore } from "../../../store/globeStore";
-import { RefreshCw, Compass, Home, Camera, Sliders, Sun } from "lucide-react";
+import { usePerfStore } from "../../../store/perfStore";
+import { TIERS } from "../../../perf";
+import { RefreshCw, Home, Camera, Activity, Sun } from "lucide-react";
 
 export const ToolbarButtons: React.FC<{ onSearchCoord?: (lat: number, lng: number) => void }> = ({ onSearchCoord }) => {
   const { rotate, toggleRotate, dayNight, toggleDayNight } = useGlobeStore();
-  const [showSettings, setShowSettings] = useState(false);
+  const { stats } = usePerfStore();
+  const [aberto, setAberto] = useState(false);
+  const cx = useRef<HTMLDivElement>(null);
 
-  const handleScreenshot = () => {
+  useEffect(() => {
+    if (!aberto) return;
+    const fora = (e: MouseEvent) => {
+      if (cx.current && !cx.current.contains(e.target as Node)) setAberto(false);
+    };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setAberto(false); };
+    document.addEventListener("mousedown", fora);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", fora);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [aberto]);
+
+  const capturar = () => {
     const canvas = document.querySelector("canvas");
-    if (!canvas) {
-      alert("Nenhum canvas WebGL detectado.");
-      return;
-    }
-    const link = document.createElement("a");
-    link.download = `observatorio-earth-platform-${new Date().toISOString().slice(0, 10)}.png`;
-    link.href = canvas.toDataURL("image/png");
-    link.click();
+    if (!canvas) return;
+    const a = document.createElement("a");
+    a.download = `observatorio-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "")}.png`;
+    a.href = canvas.toDataURL("image/png");
+    a.click();
   };
 
+  const t = stats?.tier ?? 0;
+  const degrau = TIERS[t as 0 | 1 | 2];
+
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, position: "relative" }}>
-      <button
-        className={`h-btn ${rotate ? "primary-h-btn" : ""}`}
-        onClick={toggleRotate}
-        title="Alternar Rotação Automática do Globo"
-        style={btnStyle}
-      >
-        <RefreshCw size={14} strokeWidth={1.5} />
-      </button>
-
-      <button
-        className={`h-btn ${dayNight ? "primary-h-btn" : ""}`}
-        onClick={toggleDayNight}
-        title="Alternar Iluminação Solar em Tempo Real"
-        style={btnStyle}
-      >
-        <Sun size={14} strokeWidth={1.5} />
-      </button>
-
-      <button
-        className="h-btn"
-        onClick={() => onSearchCoord?.(-23.5505, -46.6333)}
-        title="Travar Norte / Resetar Câmera"
-        style={btnStyle}
-      >
-        <Compass size={14} strokeWidth={1.5} />
-      </button>
-
-      <button
-        className="h-btn"
-        onClick={() => onSearchCoord?.(0, 0)}
-        title="Retornar à Posição Inicial"
-        style={btnStyle}
-      >
-        <Home size={14} strokeWidth={1.5} />
-      </button>
-
-      <button
-        className="h-btn"
-        onClick={handleScreenshot}
-        title="Capturar Captura de Tela PNG (Download Instantâneo)"
-        style={btnStyle}
-      >
-        <Camera size={14} strokeWidth={1.5} />
-      </button>
-
-      <button
-        className={`h-btn ${showSettings ? "primary-h-btn" : ""}`}
-        onClick={() => setShowSettings(!showSettings)}
-        title="Configurações de Renderização e Qualidade"
-        style={btnStyle}
-      >
-        <Sliders size={14} strokeWidth={1.5} />
-      </button>
-
-      {/* POPUP DE CONFIGURAÇÕES DE RENDERIZAÇÃO */}
-      {showSettings && (
-        <div
-          style={{
-            position: "absolute",
-            top: 42,
-            right: 0,
-            width: 260,
-            background: "#0c1017",
-            border: "1px solid rgba(255, 255, 255, 0.16)",
-            borderRadius: 6,
-            padding: 14,
-            boxShadow: "0 12px 30px rgba(0,0,0,0.8)",
-            zIndex: 100,
-          }}
+    <div className="ferramentas" ref={cx}>
+      {/* ---- interruptores: têm estado, ficam acesos --------------------- */}
+      <div className="ferramentas-grupo" role="group" aria-label="Modos de exibição">
+        <button
+          className={`icone-btn ${rotate ? "icone-btn-on" : ""}`}
+          onClick={toggleRotate}
+          aria-pressed={rotate}
+          title="Rotação automática do globo"
         >
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "var(--signal)", marginBottom: 8, fontFamily: "var(--mono)" }}>
-            CONFIGURAÇÕES DE ENGINE WEBGL
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 11, color: "var(--ink-2)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span>Resolução Pixel Ratio:</span>
-              <strong style={{ color: "#fff" }}>2x (Retina)</strong>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span>Partículas GPU:</span>
-              <strong style={{ color: "#fff" }}>131,072 vetores</strong>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span>Suavização Anisotrópica:</span>
-              <strong style={{ color: "#fff" }}>8x Max</strong>
-            </div>
-          </div>
+          <RefreshCw size={14} strokeWidth={1.5} />
+        </button>
+        <button
+          className={`icone-btn ${dayNight ? "icone-btn-on" : ""}`}
+          onClick={toggleDayNight}
+          aria-pressed={dayNight}
+          title="Terminador dia/noite na posição solar real"
+        >
+          <Sun size={14} strokeWidth={1.5} />
+        </button>
+      </div>
+
+      <span className="ferramentas-fio" aria-hidden="true" />
+
+      {/* ---- ações: acontecem e acabam ---------------------------------- */}
+      <div className="ferramentas-grupo" role="group" aria-label="Ações">
+        {/* O rótulo agora descreve o destino real. O anterior dizia "Travar
+            Norte / Resetar Câmera" e voava para São Paulo. */}
+        <button
+          className="icone-btn"
+          onClick={() => onSearchCoord?.(0, 0)}
+          title="Centralizar em 0°, 0° (golfo da Guiné)"
+        >
+          <Home size={14} strokeWidth={1.5} />
+        </button>
+        <button className="icone-btn" onClick={capturar} title="Salvar a vista atual em PNG">
+          <Camera size={14} strokeWidth={1.5} />
+        </button>
+      </div>
+
+      <span className="ferramentas-fio" aria-hidden="true" />
+
+      <button
+        className={`icone-btn ${aberto ? "icone-btn-on" : ""}`}
+        onClick={() => setAberto((v) => !v)}
+        aria-expanded={aberto}
+        title="Estado do motor de renderização"
+      >
+        <Activity size={14} strokeWidth={1.5} />
+      </button>
+
+      {aberto && (
+        <div className="motor" role="dialog" aria-label="Estado do motor">
+          <p className="motor-tit">Motor de renderização</p>
+
+          {stats ? (
+            <dl className="motor-lista">
+              <div><dt>Quadros</dt><dd>{stats.fps} /s <small>({stats.frameMs} ms)</small></dd></div>
+              <div><dt>Nosso tempo de CPU</dt><dd>{stats.cpuMs} ms</dd></div>
+              <div><dt>Degrau de qualidade</dt><dd>{degrau.label} <small>({t})</small></dd></div>
+              <div><dt>Densidade de pixel</dt><dd>{stats.dpr}×</dd></div>
+              <div><dt>Partículas de vento</dt><dd>{degrau.particles.toLocaleString("pt-BR")}</dd></div>
+              <div><dt>Textura de rastro</dt><dd>{degrau.trail} × {degrau.trail / 2}</dd></div>
+              <div><dt>Chamadas de desenho</dt><dd>{stats.calls}</dd></div>
+              <div><dt>Texturas / geometrias</dt><dd>{stats.textures} / {stats.geometries}</dd></div>
+            </dl>
+          ) : (
+            <p className="motor-vazio">Aguardando o primeiro quadro medido.</p>
+          )}
+
+          <p className="motor-nota">
+            O degrau cai sozinho acima de 20 ms por quadro e volta a subir depois de
+            folga sustentada. Estes números vêm do motor a cada quadro — antes eram
+            texto fixo.
+          </p>
         </div>
       )}
     </div>
   );
-};
-
-const btnStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: 34,
-  height: 34,
-  padding: 0,
-  borderRadius: 4,
 };

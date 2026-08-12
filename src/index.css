@@ -129,7 +129,7 @@
   /* ---- métrica ------------------------------------------------------- */
   --gut: var(--s-5);         /* mantido: usado em regras antigas */
   --panel-w: 296px;
-  --head-h: 110px;           /* 52px topbar + 58px forecast-toolbar */
+  --head-h: 110px;           /* 58px topbar + 52px forecast-toolbar */
   --r: 2px;                  /* raio quase reto: instrumento, não cápsula */
   --r-lg: 4px;               /* painel flutuante                          */
 }
@@ -190,110 +190,219 @@ button { border: none; background: none; cursor: pointer; }
 }
 
 /* ================================================= CABEÇALHO TIER 1 & 2 === */
+/* ================================================================ TOPO ===
+   Placa de instrumento, não barra de marca.
+
+   O QUE ESTAVA ERRADO, além do aperto: sete cores cravadas nesta seção
+   (#080b11, #1d2430, #121720, #2f3945, #0d1016, #2b3642, #0c1017) convivendo
+   com o sistema sem saber dele. E 52 px de altura para um nome que quebrava em
+   duas linhas.                                                             */
 .topbar {
   position: absolute; top: 0; left: 0; right: 0;
-  height: 52px;
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 18px;
-  background: #080b11;
-  border-bottom: 1px solid #1d2430;
+  height: 58px;
+  display: grid;
+  /* Três faixas com papéis diferentes: identidade encolhe, busca manda no
+     espaço livre, ferramentas nunca comprimem. O `minmax(0, …)` é o que
+     impede o nome de espremer o resto até quebrar linha. */
+  grid-template-columns: minmax(0, auto) minmax(220px, 1fr) minmax(0, auto);
+  align-items: center;
+  gap: var(--s-6);
+  padding: 0 var(--s-5);
+  background: var(--void);
+  border-bottom: 1px solid var(--rule);
   z-index: 10;
 }
 
+/* ---- placa de identificação -------------------------------------------- */
+.plaqueta { display: flex; align-items: center; gap: var(--s-4); min-width: 0; }
+.plaqueta-fio {
+  width: 1px; height: 20px; background: var(--rule); flex: none;
+  margin: 0 var(--s-1);
+}
+.plaqueta-marca { position: relative; display: flex; flex: none; }
+
+.marca { display: block; overflow: visible; }
+.marca-limbo { fill: none; stroke: var(--signal); stroke-width: 1.1; opacity: 0.9; }
+.marca-fio   { fill: none; stroke: var(--signal); stroke-width: 0.7; opacity: 0.5; }
+.marca-tique { stroke: var(--signal); stroke-width: 1.1; }
+
+/* O ponto de estado agora SIGNIFICA algo — antes pulsava verde igual com o
+   backend fora do ar. */
+.plaqueta-ponto {
+  position: absolute; right: -1px; bottom: 0;
+  width: 6px; height: 6px; border-radius: 50%;
+  border: 1.5px solid var(--void);
+}
+.plaqueta-ponto-ok        { background: var(--signal); }
+.plaqueta-ponto-degradado { background: var(--warn); }
+.plaqueta-ponto-falha     { background: var(--alert); }
+/* Só o estado ruim pisca. Animação é chamada de atenção; usá-la no estado
+   normal gasta a única ferramenta que sobra para o anormal. */
+.plaqueta-ponto-falha { animation: pulsa 2.4s var(--ease) infinite; }
+@keyframes pulsa { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+.plaqueta-nome {
+  margin: 0; display: flex; align-items: baseline; gap: var(--s-3);
+  white-space: nowrap; min-width: 0;
+}
+.plaqueta-nome-forte {
+  font-size: var(--t-lead); font-weight: var(--w-medium);
+  letter-spacing: 0.01em; color: var(--ink);
+}
+.plaqueta-nome-fraco {
+  font-size: var(--t-small); font-weight: var(--w-normal);
+  letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3);
+}
+.plaqueta-versao {
+  font-family: var(--mono); font-size: var(--t-micro);
+  color: var(--ink-4); letter-spacing: 0.06em;
+  padding: 1px var(--s-2); border: 1px solid var(--rule-soft); border-radius: 2px;
+  flex: none;
+}
+
+/* ---- busca -------------------------------------------------------------- */
+.busca-caixa { position: relative; min-width: 0; justify-self: center; width: 100%; max-width: 560px; }
+.busca {
+  display: flex; align-items: center; gap: var(--s-4);
+  height: 36px; padding: 0 var(--s-3) 0 var(--s-4);
+  border: 1px solid var(--rule); border-radius: var(--r-lg);
+  background: var(--surface);
+  transition: border-color var(--m-base) var(--ease), background var(--m-base) var(--ease);
+}
+.busca:focus-within { border-color: var(--signal-line); background: var(--surface-hi); }
+.busca > svg { color: var(--ink-3); flex: none; }
+.busca input {
+  flex: 1; min-width: 0;
+  background: transparent; border: none; outline: none;
+  font-size: var(--t-body); color: var(--ink);
+  font-family: var(--mono);
+}
+.busca input::placeholder { color: var(--ink-4); font-family: var(--sans); }
+.busca input::-webkit-search-cancel-button { filter: invert(0.5); }
+
+.busca-icone {
+  display: flex; flex: none; padding: var(--s-2);
+  color: var(--ink-3); border-radius: 2px;
+  transition: color var(--m-fast) var(--ease);
+}
+.busca-icone:hover { color: var(--signal); }
+
+.busca-atalho {
+  display: flex; align-items: center; gap: 2px; flex: none;
+  font-family: var(--mono); font-size: var(--t-micro); color: var(--ink-3);
+  padding: 3px var(--s-3);
+  border: 1px solid var(--rule); border-radius: 3px;
+  transition: color var(--m-fast) var(--ease), border-color var(--m-fast) var(--ease);
+}
+.busca-atalho:hover { color: var(--ink); border-color: var(--rule-hi); }
+
+/* A busca não achou: DIZ. A versão anterior engolia em silêncio. */
+.busca-aviso {
+  position: absolute; top: calc(100% + var(--s-2)); left: 0; right: 0;
+  margin: 0; padding: var(--s-3) var(--s-4);
+  font-size: var(--t-small); color: var(--ink-2);
+  background: var(--void); border: 1px solid var(--rule);
+  border-left: 2px solid var(--warn); border-radius: 0 var(--r-lg) var(--r-lg) 0;
+  box-shadow: var(--e-panel);
+}
+
+/* ---- ferramentas -------------------------------------------------------- */
+.ferramentas { display: flex; align-items: center; gap: var(--s-3); position: relative; }
+.ferramentas-grupo { display: flex; align-items: center; gap: var(--s-1); }
+.ferramentas-fio { width: 1px; height: 18px; background: var(--rule); flex: none; }
+
+/* Alvo de 32 px: o mínimo da WCAG 2.5.8 é 24, e abaixo de 32 um clique com
+   trackpad em tela grande erra com frequência. */
+.icone-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; flex: none;
+  color: var(--ink-2);
+  border: 1px solid transparent; border-radius: var(--r-lg);
+  background: transparent;
+  transition: color var(--m-fast) var(--ease), background var(--m-fast) var(--ease),
+              border-color var(--m-fast) var(--ease);
+}
+.icone-btn:hover { color: var(--ink); background: var(--surface); border-color: var(--rule); }
+/* Interruptor LIGADO é fio + tinta, não bloco de cor cheia: o verde sólido
+   competia com o sinal do mapa, onde a cor pertence à medida. */
+.icone-btn-on {
+  color: var(--signal); border-color: var(--signal-line); background: var(--signal-dim);
+}
+.icone-btn-on:hover { color: var(--signal); border-color: var(--signal); }
+
+/* ---- painel do motor ---------------------------------------------------- */
+.motor {
+  position: absolute; top: calc(100% + var(--s-3)); right: 0; width: 288px;
+  padding: var(--s-5);
+  background: var(--void); border: 1px solid var(--rule-hi);
+  border-radius: var(--r-lg); box-shadow: var(--e-float);
+  z-index: 100;
+}
+.motor-tit {
+  margin: 0 0 var(--s-4);
+  font-family: var(--mono); font-size: var(--t-micro);
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3);
+}
+.motor-lista { margin: 0; display: flex; flex-direction: column; gap: var(--s-2); }
+.motor-lista > div {
+  display: flex; justify-content: space-between; align-items: baseline; gap: var(--s-4);
+}
+.motor-lista dt { font-size: var(--t-small); color: var(--ink-3); }
+.motor-lista dd {
+  margin: 0; font-family: var(--mono); font-size: var(--t-small);
+  color: var(--ink); font-variant-numeric: tabular-nums;
+}
+.motor-lista dd small { color: var(--ink-4); }
+.motor-vazio, .motor-nota {
+  margin: var(--s-4) 0 0; font-size: var(--t-micro); color: var(--ink-3); line-height: 1.6;
+}
+.motor-nota { border-top: 1px solid var(--rule-soft); padding-top: var(--s-3); }
+
+/* ---- toolbar de previsão ------------------------------------------------ */
 .forecast-toolbar {
-  position: absolute; top: 52px; left: 0; right: 0;
-  height: 58px;
-  display: flex; align-items: center; gap: 14px;
-  padding: 0 18px;
-  background: #0d1118;
-  border-bottom: 1px solid #1f2733;
+  position: absolute; top: 58px; left: 0; right: 0;
+  height: 52px;
+  display: flex; align-items: center; gap: var(--s-5);
+  padding: 0 var(--s-5);
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
   z-index: 9;
 }
 
-.workspace {
-  font-size: 10px;
-  letter-spacing: 2px;
-  padding: 3px 7px;
-  border-radius: 4px;
-  background: #121720;
-  border: 1px solid #2f3945;
-  color: var(--signal);
-  font-family: var(--mono);
-}
-
-.search {
-  width: 420px;
-  height: 38px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 14px;
-  border-radius: 6px;
-  background: #0d1016;
-  border: 1px solid #2b3642;
-  transition: border-color 0.2s var(--ease);
-}
-.search:focus-within {
-  border-color: var(--signal);
-  box-shadow: 0 0 0 2px var(--signal-dim);
-}
-.search input {
-  background: transparent;
-  border: none;
-  font-size: 12px;
-  color: var(--ink);
-  width: 100%;
-  outline: none;
-}
-
-.timeline {
-  flex: 1;
-  margin: 0 10px;
-  accent-color: #32d6a5;
-  cursor: pointer;
-}
-
-.brand-title {
-  display: flex; align-items: center; gap: 10px;
-  font-size: 13px; font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--ink);
-}
-.brand-title strong { font-weight: 600; }
-
-.brand-title .dot {
-  width: 6px; height: 6px; border-radius: 50%;
-  background: var(--signal);
-  box-shadow: 0 0 0 3px var(--signal-dim);
-  animation: pulse 3.2s var(--ease) infinite;
-}
-@keyframes pulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 3px var(--signal-dim); }
-  50%      { opacity: 0.55; box-shadow: 0 0 0 5px transparent; }
-}
-
-.header-actions { display: flex; align-items: center; gap: 6px; }
+.timeline { flex: 1; margin: 0 var(--s-3); accent-color: var(--signal); cursor: pointer; }
 
 .h-btn {
-  font-size: 11.5px; font-weight: 500;
+  font-size: var(--t-small); font-weight: var(--w-medium);
   letter-spacing: 0.01em;
   color: var(--ink-2);
   padding: 7px 11px;
   border: 1px solid var(--rule);
   border-radius: var(--r);
   background: transparent;
-  transition: color 0.15s var(--ease), border-color 0.15s var(--ease), background 0.15s var(--ease);
+  display: inline-flex; align-items: center; gap: var(--s-3);
+  transition: color var(--m-fast) var(--ease), border-color var(--m-fast) var(--ease),
+              background var(--m-fast) var(--ease);
   white-space: nowrap;
 }
 .h-btn:hover { color: var(--ink); border-color: var(--rule-hi); background: var(--surface); }
+.h-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .primary-h-btn {
-  color: #04140f;
+  color: var(--void);
   background: var(--signal);
   border-color: var(--signal);
-  font-weight: 600;
+  font-weight: var(--w-bold);
 }
-.primary-h-btn:hover { color: #04140f; background: #74ecc0; border-color: #74ecc0; }
+.primary-h-btn:hover { color: var(--void); background: #74ecc0; border-color: #74ecc0; }
+
+@media (max-width: 900px) {
+  .topbar { grid-template-columns: minmax(0, auto) minmax(0, 1fr) minmax(0, auto); gap: var(--s-4); }
+  .plaqueta-nome-fraco, .plaqueta-versao { display: none; }
+}
+@media (max-width: 640px) {
+  .plaqueta-nome { display: none; }
+  .busca-atalho { display: none; }
+}
 
 /* ============================================================== PAINEL === */
 .panel {

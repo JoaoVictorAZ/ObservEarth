@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
 import { useGlobeStore } from "../../store/globeStore";
+import { usePerfStore } from "../../store/perfStore";
 import { useTimelineStore } from "../../store/timelineStore";
 import { useLayerStore } from "../../store/layerStore";
 import { useProbeStore, type Probe } from "../../store/probeStore";
@@ -66,6 +67,25 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
     // `catch {}` e o mapa ficava sem estados sem dizer por quê — indistinguível
     // de um mapa onde aquelas fronteiras simplesmente não existem.
     eng.onNotice((msg) => setGeoInfo(msg));
+
+    // Estado real do motor para o painel de diagnóstico, que exibia números
+    // cravados em texto — 2x, 131.072 partículas, "anisotrópica 8x" — vindos de
+    // lugar nenhum.
+    //
+    // Isto TEM que morar aqui dentro. Num efeito próprio, declarado antes do de
+    // montagem, `engRef.current` ainda é null quando ele roda: o React executa
+    // os efeitos na ordem de declaração. Ele retornaria cedo, em silêncio, e o
+    // painel ficaria eternamente em "aguardando o primeiro quadro".
+    //
+    // Amostrado a cada ~500 ms: é leitura de painel, não precisa de 60 Hz, e
+    // re-renderizar o cabeçalho a cada quadro custaria mais que o que ele mede.
+    let ultimoStat = 0;
+    eng.onStats((st) => {
+      const agora = performance.now();
+      if (agora - ultimoStat < 500) return;
+      ultimoStat = agora;
+      usePerfStore.getState().setStats(st);
+    });
 
     // NÃO ligar camada nenhuma aqui. Havia um `setWindVisible(true)` fixo, que
     // ignorava o estado da loja: o vento nascia ligado mesmo com o botão
