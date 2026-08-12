@@ -12,27 +12,35 @@
 // unidade: é DESLOCAMENTO ESPACIAL. Um campo deslocado desenha o vento de um
 // lugar sobre outro lugar, e onde a verdade é calmaria aparece jato.
 //
-// A CAUSA
-//   O GFS é pedido com `leftlon=0, rightlon=360` -> a coluna 0 é 0°E.
+// A ARITMÉTICA
+//   O GFS é pedido com `leftlon=0, rightlon=360` -> o arquivo vem em 0..360.
 //   O shader pinta com `uv.x = lng/(2π) + 0.5`   -> u = 0 é −180°.
 //
-// Meia volta de diferença. O vento do Pacífico central era desenhado sobre a
-// África. E como vento deslocado continua PARECENDO vento — escoamento suave,
-// jatos, redemoinhos — nada parecia quebrado.
+// Meia volta de diferença — e o vento do Pacífico é desenhado sobre a África.
+// Como vento deslocado continua PARECENDO vento, nada parece quebrado.
 //
-// POR QUE UMA VERSÃO ANTIGA ESTAVA CERTA
-// O recuo da Open-Meteo sempre montou a grade de −180 a +180, que É a
-// convenção do shader. Enquanto o GFS falhava, o mapa usava o campo GROSSO mas
-// no lugar CERTO. Consertar o acesso ao GFS (o download por índice .idx) fez o
-// mapa passar a usar o campo errado com mais resolução — e por isso "toda vez
-// que mexemos no vento fica pior".
+// ---------------------------------------------------------------------------
+// O QUE EU ERREI DEPOIS, QUE FOI PIOR QUE O DEFEITO ORIGINAL
 //
-// Meu teste de convenções (`wind-grid.mjs`) cobria LATITUDE — espelhamento de
-// hemisfério — e explicitamente não cobria longitude. Este arquivo fecha esse
-// buraco.
+// Diagnostiquei isso pelo sintoma e adicionei uma rotação de meia volta em
+// `server/wind.js`. Só que `reorient()` em `server/grib2.js` JÁ fazia essa
+// conversão, lendo `lo1` e `lo2` do próprio arquivo:
+//
+//     const needsShift = grid.lo1 >= 0 && grid.lo2 > 180;
+//     const dstCol = needsShift ? (col + half) % ni : col;
+//
+// Duas meias voltas devolvem o campo ao ponto de partida. O usuário viu um
+// tufão do Japão aparecer perto das Américas e apontou a causa exata:
+// "talvez seja aquela 0 para −180 que você alterou".
+//
+// A LIÇÃO: eu consertei sem verificar se já era tratado. A correção existia
+// dez arquivos adiante, com um comentário em cima dela. Este arquivo agora
+// guarda a INVARIANTE — a reorientação acontece uma vez, no decodificador,
+// porque é lá que `lo1` existe.
 // -----------------------------------------------------------------------------
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 let n = 0;
 const ok = (nome, fn) => { fn(); n++; console.log(`  ok  ${nome}`); };
@@ -121,6 +129,52 @@ ok("a rotação preserva todos os valores, sem perder nem duplicar coluna", () =
   assert.equal(new Set(rod).size, new Set(orig).size, "perdeu ou duplicou valor");
   const soma = (a) => a.reduce((s, x) => s + x, 0);
   assert.equal(soma(rod), soma(orig));
+});
+
+// ---------------------------------------------------------------------------
+// A REORIENTAÇÃO ACONTECE UMA VEZ SÓ
+//
+// Este é o teste que faltava, e a falta dele custou uma rodada inteira.
+//
+// `reorient()` em server/grib2.js JÁ converte grades 0..360 para −180..180:
+//
+//     const needsShift = grid.lo1 >= 0 && grid.lo2 > 180;
+//     const dstCol = needsShift ? (col + half) % ni : col;
+//
+// Eu não vi isso, diagnostiquei o deslocamento pelo sintoma, e adicionei uma
+// SEGUNDA meia volta em server/wind.js. Duas meias voltas devolvem o campo ao
+// ponto de partida errado — e um tufão do Japão foi parar perto das Américas.
+//
+// A reorientação pertence ao decodificador, porque é lá que `lo1` existe: ele
+// LÊ a origem do arquivo em vez de supor pelo parâmetro do pedido.
+// ---------------------------------------------------------------------------
+ok("o decodificador é quem reorienta, e ele lê lo1 do arquivo", () => {
+  const grib = readFileSync(new URL("../server/grib2.js", import.meta.url), "utf8");
+  assert.match(grib, /needsShift/, "reorient() perdeu a normalização de longitude");
+  assert.match(grib, /grid\.lo1/, "a decisão deixou de olhar lo1 e voltou a supor");
+  assert.match(grib, /\(col \+ half\) % ni/, "a rotação sumiu do decodificador");
+});
+
+ok("NENHUMA camada acima rola a longitude de novo", () => {
+  // Duas meias voltas = campo de volta ao lugar errado. O guarda tem que ser
+  // estrutural: procurar a operação, não confiar em lembrar.
+  const fonte = readFileSync(new URL("../server/wind.js", import.meta.url), "utf8");
+  const codigo = fonte.split("\n")
+    .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+    .join("\n");
+  assert.ok(!/\(i \+ meia\) % nx/.test(codigo), "wind.js voltou a rolar a longitude");
+  assert.ok(!/Math\.floor\(nx \/ 2\)/.test(codigo), "wind.js tem meia volta de novo");
+});
+
+ok("duas meias voltas devolvem ao ponto de partida — por isso uma só", () => {
+  // A aritmética do erro: se A rola e B rola de novo, o resultado é o campo
+  // original, que estava errado. Não há como "rolar mais um pouco".
+  const nx = 1440, meia = nx / 2;
+  const orig = Array.from({ length: nx }, (_, i) => i);
+  const uma = orig.map((_, i) => orig[(i + meia) % nx]);
+  const duas = uma.map((_, i) => uma[(i + meia) % nx]);
+  assert.notDeepEqual(uma, orig, "uma rotação tem que MUDAR o campo");
+  assert.deepEqual(duas, orig, "duas rotações têm que voltar ao original");
 });
 
 ok("os DOIS caminhos do servidor declaram a mesma origem", () => {

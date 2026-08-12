@@ -199,50 +199,37 @@ async function buildWindGridGfs(fetchImpl, dateStr, hour) {
   }
 
   // -------------------------------------------------------------------------
-  // ROTAÇÃO DE MEIA VOLTA — o campo estava 180° FORA DO LUGAR.
+  // NÃO ROLAR AQUI. O DECODIFICADOR JÁ FEZ ISSO.
   //
-  // O GFS é pedido com `leftlon=0, rightlon=360`: a coluna 0 é 0°E.
-  // O shader que pinta o vento na esfera faz `uv.x = lng/(2π) + 0.5`, ou seja,
-  // u = 0 é −180°.
+  // Eu coloquei uma rotação de meia volta neste ponto, convencido de que o
+  // campo estava 180° fora do lugar porque o GFS é pedido com `leftlon=0`.
+  // O raciocínio estava certo e a conclusão estava errada: `reorient()` em
+  // `server/grib2.js` JÁ converte 0..360 para −180..180, com
   //
-  // Resultado: o campo inteiro aparecia meia volta deslocado. O vento do
-  // Pacífico central era desenhado sobre a África, o do Atlântico sobre a
-  // Indonésia. E como vento deslocado continua PARECENDO vento — escoamento
-  // suave, jatos, redemoinhos —, nada parecia quebrado. Só estava no lugar
-  // errado.
+  //     const needsShift = grid.lo1 >= 0 && grid.lo2 > 180;
+  //     const dstCol = needsShift ? (col + half) % ni : col;
   //
-  // É exatamente o sintoma relatado: "partículas correndo em altíssima
-  // velocidade num lugar que marca 5 km/h, e partícula parada indicando
-  // 100 km/h". A animação vem do campo deslocado; o número da sonda vem da
-  // posição verdadeira. Os dois discordam porque um dos dois está a meio mundo
-  // de distância.
+  // e ele decide isso lendo `lo1` e `lo2` do próprio arquivo — não supondo.
   //
-  // E explica por que uma versão ANTIGA estava certa: quando o GFS falhava, o
-  // recuo da Open-Meteo montava a grade de −180 para +180 (ver
-  // buildWindGridOpenMeteo), que É a convenção do shader. O campo grosso estava
-  // no lugar certo; o campo fino estava deslocado. Consertar o acesso ao GFS
-  // fez o mapa passar a usar o campo errado com mais resolução.
+  // Minha rotação aplicou a MESMA meia volta uma segunda vez, e duas meias
+  // voltas devolvem o campo ao ponto de partida errado. O resultado foi um
+  // tufão do Japão aparecendo perto das Américas.
   //
-  // A mesma linha de shader é CORRETA para as imagens de satélite, que vêm com
-  // BBOX de −180 a 180. É assim que um erro destes sobrevive: o código é o
-  // mesmo, e só uma das camadas o alimenta com a convenção errada.
+  // A LIÇÃO, que é o padrão de erro desta sessão inteira: eu diagnostiquei um
+  // sintoma real, achei uma causa plausível, e consertei sem verificar se
+  // aquilo já era tratado em outro lugar. A correção existia dez arquivos
+  // adiante, com um comentário em cima dela.
+  //
+  // A REORIENTAÇÃO PERTENCE AO DECODIFICADOR, porque é lá que `lo1` existe.
+  // Qualquer camada acima deve tratar a grade como já estando em −180..180.
   // -------------------------------------------------------------------------
-  const meia = Math.floor(nx / 2);
-  const uR = new Float32Array(nPoints), vR = new Float32Array(nPoints);
-  const validR = new Uint8Array(nPoints);
-  for (let j = 0; j < ny; j++) {
-    for (let i = 0; i < nx; i++) {
-      const de = j * nx + ((i + meia) % nx);
-      const para = j * nx + i;
-      uR[para] = u[de]; vR[para] = v[de]; validR[para] = valid[de];
-    }
-  }
 
   return {
     nx, ny,
-    u: Array.from(uR), v: Array.from(vR),
-    valid: Array.from(validR),
-    /** longitude da coluna 0, para nenhum consumidor precisar adivinhar */
+    u, v,
+    valid: Array.from(valid),
+    /** longitude da coluna 0. É −180 porque `reorient()` no decodificador já
+     *  normalizou a grade; nenhuma camada acima deve rolar de novo. */
     lon0: -180,
     measuredPct: +((measured / nPoints) * 100).toFixed(1),
     validPct: 100.0,
