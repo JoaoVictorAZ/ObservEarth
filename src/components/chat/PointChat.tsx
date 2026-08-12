@@ -13,6 +13,7 @@ import {
 import { useChatStore } from "../../store/chatStore";
 import { useWindowStore } from "../../store/windowStore";
 import { useDialog } from "../../hooks/useDialog";
+import { arrastar, travar, MOVER } from "../../arrasto";
 
 interface Props {
   lat: number;
@@ -82,32 +83,15 @@ export function PointChat({ lat, lng, date, hour, onFechar, onOrganizarJanelas }
   const painelRef = useDialog<HTMLElement>({ aberto: true, aoFechar: onFechar });
   const abortRef = useRef<AbortController | null>(null);
 
-  const travar = useCallback((c: { x: number; y: number; w: number; h: number }) => {
-    const W = window.innerWidth, H = window.innerHeight;
-    const w = Math.max(MIN_W, Math.min(c.w, W));
-    const h = Math.max(MIN_H, Math.min(c.h, H));
-    return {
-      w, h,
-      // JANELA SOLTA, NÃO ENCAIXADA.
-      //
-      // Antes era `x: max(10, min(c.x, W - w - 10))`, que obriga a janela a
-      // caber INTEIRA entre as margens. O efeito é que ela nunca encosta nem
-      // passa da borda: arrastar para a direita empurra até o limite e ela
-      // "gruda" ali, e uma janela mais larga que a tela sequer se move.
-      //
-      // Agora o único compromisso é a barra de título continuar alcançável —
-      // é por ela que se traz a janela de volta. Fora isso, vai onde quiser,
-      // inclusive metade para fora.
-      x: Math.min(W - 80, Math.max(80 - w, c.x)),
-      y: Math.min(H - 40, Math.max(0, c.y)),
-    };
-  }, []);
+  const limites = useCallback(() => ({
+    minW: MIN_W, minH: MIN_H, telaW: window.innerWidth, telaH: window.innerHeight,
+  }), []);
 
   useEffect(() => {
-    const aoRedimensionar = () => setCaixa((c) => travar(c));
+    const aoRedimensionar = () => setCaixa((c) => travar(c, limites()));
     window.addEventListener("resize", aoRedimensionar);
     return () => window.removeEventListener("resize", aoRedimensionar);
-  }, [travar]);
+  }, [limites]);
 
   useEffect(() => {
     try { localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(caixa)); } catch { /* segue */ }
@@ -130,28 +114,7 @@ export function PointChat({ lat, lng, date, hour, onFechar, onOrganizarJanelas }
     setMovendo(true);
 
     const aoMover = (ev: PointerEvent) => {
-      const dx = ev.clientX - startX;
-      const dy = ev.clientY - startY;
-      const c = { ...startCaixa };
-
-      if (modo === "mover") {
-        c.x += dx;
-        c.y += dy;
-      }
-      if (modo.includes("d")) c.w = startCaixa.w + dx;
-      if (modo.includes("b")) c.h = startCaixa.h + dy;
-      if (modo.includes("e")) {
-        const w = Math.max(MIN_W, startCaixa.w - dx);
-        c.x = startCaixa.x + (startCaixa.w - w);
-        c.w = w;
-      }
-      if (modo.includes("c")) {
-        const h = Math.max(MIN_H, startCaixa.h - dy);
-        c.y = startCaixa.y + (startCaixa.h - h);
-        c.h = h;
-      }
-
-      setCaixa(travar(c));
+      setCaixa(arrastar(modo, ev.clientX - startX, ev.clientY - startY, startCaixa, limites()));
     };
 
     const aoSoltar = () => {
@@ -265,7 +228,7 @@ export function PointChat({ lat, lng, date, hour, onFechar, onOrganizarJanelas }
     >
       <header
         className="ptchat-head"
-        onPointerDown={iniciarArrasto("mover")}
+        onPointerDown={iniciarArrasto(MOVER)}
         onDoubleClick={() => toggleMinimize("chat")}
         title="Clique duplo para minimizar/expandir"
       >

@@ -6,7 +6,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { GripVertical, X } from "lucide-react";
 
-export interface Caixa { x: number; y: number; w: number; h: number; }
+import { arrastar, travar, MOVER, type Caixa } from "../../arrasto";
+
+export type { Caixa };
 
 interface Props {
   id: string;
@@ -40,24 +42,15 @@ export const Janela: React.FC<Props> = ({
   const ref = useRef<HTMLDivElement>(null);
   const inicio = useRef<{ px: number; py: number; c: Caixa; modo: string } | null>(null);
 
-  /** mantém a janela alcançável sem impedir de encostar na borda */
-  const travar = useCallback((c: Caixa): Caixa => {
-    const W = window.innerWidth, H = window.innerHeight;
-    const w = Math.max(minW, Math.min(c.w, W));
-    const h = Math.max(minH, Math.min(c.h, H));
-    return {
-      w, h,
-      // Pelo menos 120 px da barra de título têm que continuar na tela.
-      x: Math.max(120 - w, Math.min(c.x, W - 120)),
-      y: Math.max(0, Math.min(c.y, H - 40)),
-    };
-  }, [minW, minH]);
+  const limites = useCallback(() => ({
+    minW, minH, telaW: window.innerWidth, telaH: window.innerHeight,
+  }), [minW, minH]);
 
   useEffect(() => {
-    const aoRedimensionar = () => setCaixa((c) => travar(c));
+    const aoRedimensionar = () => setCaixa((c) => travar(c, limites()));
     window.addEventListener("resize", aoRedimensionar);
     return () => window.removeEventListener("resize", aoRedimensionar);
-  }, [travar]);
+  }, [limites]);
 
   useEffect(() => {
     try { localStorage.setItem(`obs:jan:${id}`, JSON.stringify(caixa)); } catch { /* segue */ }
@@ -76,20 +69,7 @@ export const Janela: React.FC<Props> = ({
   const mover = (e: React.PointerEvent) => {
     const i = inicio.current;
     if (!i) return;
-    const dx = e.clientX - i.px, dy = e.clientY - i.py;
-    const c = { ...i.c };
-
-    if (i.modo === "mover") { c.x += dx; c.y += dy; }
-    if (i.modo.includes("d")) c.w = i.c.w + dx;
-    if (i.modo.includes("b")) c.h = i.c.h + dy;
-    if (i.modo.includes("e")) {
-      // Puxar pela esquerda move a origem E muda a largura. Sem mexer no x, a
-      // janela cresceria para a direita e a borda esquerda ficaria parada.
-      const w = Math.max(minW, i.c.w - dx);
-      c.x = i.c.x + (i.c.w - w);
-      c.w = w;
-    }
-    setCaixa(travar(c));
+    setCaixa(arrastar(i.modo, e.clientX - i.px, e.clientY - i.py, i.c, limites()));
   };
 
   const soltar = (e: React.PointerEvent) => {
@@ -120,7 +100,7 @@ export const Janela: React.FC<Props> = ({
     >
       <header
         className="jan-topo"
-        onPointerDown={pegar("mover")}
+        onPointerDown={pegar(MOVER)}
         onPointerMove={mover}
         onPointerUp={soltar}
         onPointerCancel={soltar}
