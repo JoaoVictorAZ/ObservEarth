@@ -35,7 +35,36 @@ export interface WindFrame {
   field: WindField;
 }
 
-const SPEED_MAX = 40;
+// -----------------------------------------------------------------------------
+// DUAS CONSTANTES QUE ERAM UMA SÓ — e isso estava decepando ciclone.
+//
+// `SPEED_MAX = 40` fazia DOIS trabalhos diferentes ao mesmo tempo:
+//
+//   1. o teto de armazenamento da textura (o clamp em buildTexture)
+//   2. a referência da rampa de cor (spd / SPEED_MAX)
+//
+// São grandezas distintas, e juntá-las num número tem uma consequência
+// concreta. O campo do GFS de 29/07/2026 tem máximo de 67,8 m/s — um ciclone
+// tropical de categoria 4 ou 5, que é exatamente o tipo de coisa que alguém
+// abre este mapa para ver. Com o teto em 40, o NÚCLEO DELE ERA CORTADO: os
+// 67,8 m/s viravam 40, o gradiente interno da parede do olho desaparecia, e o
+// que sobrava era um platô chapado.
+//
+// Agora separadas:
+//
+//   TETO_FISICO  limite de plausibilidade, não de estética. Vento de 10 m
+//                acima de ~120 m/s não existe na Terra; o que passa disso é
+//                erro de desempacotamento, e o contador de saturação continua
+//                servindo de alarme para isso.
+//
+//   REF_COR      onde a rampa chega ao branco. Fica em 40 m/s de propósito:
+//                é vendaval forte, e acima disso a leitura "é extremo" já foi
+//                dada. O que muda é que agora o dado ACIMA de 40 continua no
+//                campo — para o traçado, para a sonda e para a estatística —
+//                em vez de ser aplainado na entrada.
+// -----------------------------------------------------------------------------
+const TETO_FISICO = 120;
+const REF_COR = 40;
 const FRAME_CACHE = 3;
 
 // -----------------------------------------------------------------------------
@@ -201,7 +230,7 @@ const UPDATE_FRAG = /* glsl */ `
 
     // ---- ESCALA PERCEPTUAL DE VELOCIDADE ---------------------------------
     //
-    // A normalização era linear sobre SPEED_MAX = 40 m/s. Mas 40 m/s é rajada
+    // A normalização era linear sobre 40 m/s. Mas 40 m/s é rajada
     // de ciclone: o vento de superfície do planeta vive entre 3 e 12 m/s, o
     // que caía em t = 0,08 a 0,30 — o terço inferior da rampa, todo azul
     // escuro. Praticamente o mapa inteiro ficava na mesma cor, e só os
@@ -213,7 +242,7 @@ const UPDATE_FRAG = /* glsl */ `
     // 10 -> 0,47; 20 -> 0,71; 40 -> 1,0). É o mesmo raciocínio de um eixo
     // logarítmico — a monotonicidade se preserva, então nenhuma comparação
     // muda de sinal, e a legenda diz qual velocidade é qual.
-    float t = pow(clamp(spd / ${SPEED_MAX}.0, 0.0, 1.0), 0.6);
+    float t = pow(clamp(spd / ${REF_COR}.0, 0.0, 1.0), 0.6);
 
     gl_FragColor = vec4(pos, t, age);
   }
@@ -363,6 +392,8 @@ export class WindGPU {
   private frameTex = new Map<string, THREE.DataTexture>();
   /** % do último campo que estourou o teto de velocidade — ver buildTexture */
   lastSaturatedPct = 0;
+  /** pico real do último campo, em m/s, antes do corte */
+  lastPeakMs = 0;
   private clock = 0;
   private disposed = false;
   private trailW = TRAIL_W;
@@ -630,13 +661,17 @@ export class WindGPU {
     // Ele existe por um motivo legítimo: meia-precisão satura e um valor
     // extremo isolado não deve estourar a textura. Mas quando o campo INTEIRO
     // está fora de escala — um desempacotamento GRIB2 quebrado, por exemplo —
-    // o clamp leva todo nó para exatamente ±SPEED_MAX. O resultado é um campo
+    // o clamp leva todo nó para exatamente ±TETO_FISICO. O resultado é um campo
     // CONSTANTE, que a tela mostra como listras diagonais paralelas perfeitas:
     // convincente, estável, e completamente inventado.
     //
     // Contar quantos nós ele tocou é a diferença entre "o vento está estranho"
     // e "97% do campo foi saturado, o dado está errado antes de chegar aqui".
     let saturados = 0;
+    // Guarda o pico REAL do campo, antes de qualquer corte. É o número que
+    // distingue "ciclone categoria 5" (68 m/s) de "desempacotamento quebrado"
+    // (2 x 10^7 m/s) — e antes ele se perdia dentro do clamp.
+    let picoBruto = 0;
 
     for (let y = 0; y < oy; y++) {
       const fy = (y + 0.5) / S - 0.5;
@@ -646,10 +681,12 @@ export class WindGPU {
 
         const ru = sample(u, fx, fy);
         const rv = sample(v, fx, fy);
-        if (Math.abs(ru) > SPEED_MAX || Math.abs(rv) > SPEED_MAX) saturados++;
+        const mag = Math.hypot(ru, rv);
+        if (Number.isFinite(mag) && mag > picoBruto) picoBruto = mag;
+        if (Math.abs(ru) > TETO_FISICO || Math.abs(rv) > TETO_FISICO) saturados++;
 
-        const uu = Math.max(-SPEED_MAX, Math.min(SPEED_MAX, ru));
-        const vv = Math.max(-SPEED_MAX, Math.min(SPEED_MAX, rv));
+        const uu = Math.max(-TETO_FISICO, Math.min(TETO_FISICO, ru));
+        const vv = Math.max(-TETO_FISICO, Math.min(TETO_FISICO, rv));
         buf[i] = h(uu);
         buf[i + 1] = h(vv);
 
@@ -666,9 +703,10 @@ export class WindGPU {
     // Acima de 5% saturado não é rajada extrema: é escala errada. Avisa uma vez
     // por campo, com número, em vez de deixar a tela mentir bonito.
     this.lastSaturatedPct = +((saturados / (ox * oy)) * 100).toFixed(1);
+    this.lastPeakMs = +picoBruto.toFixed(1);
     if (this.lastSaturatedPct > 5) {
       console.warn(
-        `[vento] ${this.lastSaturatedPct}% do campo saturou em ±${SPEED_MAX} m/s. ` +
+        `[vento] ${this.lastSaturatedPct}% do campo passou de ±${TETO_FISICO} m/s. ` +
         `Campo quase constante — provável erro de desempacotamento, não meteorologia.`
       );
     }
