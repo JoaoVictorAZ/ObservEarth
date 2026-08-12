@@ -576,7 +576,13 @@ app.get("/api/probe", async (req, res) => {
       pressure: pressureHpa, pressureMmHg, precipitation: precip,
       windSpeed: windMs, windKmH, windKnots, windDirection: windDir, windCardinal,
       cloudCover: cloud, airDensity, uvIndex: uvIndex == null ? null : Math.max(0, uvIndex), elevationM,
-      source: h ? (isTodayOrFuture ? "Open-Meteo · GFS Operacional 0.25°" : "Open-Meteo · ERA5 Reanálise") : "Modelo Climatológico Físico GFS/ERA5",
+      // A procedência tem que descrever de onde o número VEIO. Sem resposta da
+      // fonte, todos os campos acima são null e a tela diz "sem dado" — mas
+      // esta linha ainda declarava "Modelo Climatológico Físico GFS/ERA5",
+      // atribuindo a dois centros de dados uma leitura que não existe.
+      source: h
+        ? (isTodayOrFuture ? "Open-Meteo · GFS Operacional 0.25°" : "Open-Meteo · ERA5 (reanálise)")
+        : "fonte não respondeu — nenhum valor foi estimado",
     });
   } catch (e) { res.status(502).json({ error: e.message }); }
 });
