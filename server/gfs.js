@@ -10,6 +10,7 @@
 // -----------------------------------------------------------------------------
 
 import { decodeGrib2 } from "./grib2.js";
+import { baixarPorIndice } from "./gribIndex.js";
 
 /** Alcance máximo de previsão do GFS em horas (16 dias) */
 export const GFS_MAX_LEAD = 384;
@@ -20,6 +21,23 @@ export const GFS_MAX_LEAD = 384;
  * O GFS publica com ~4h de atraso. Para "agora", usamos o ciclo anterior.
  * Para datas no passado, usamos o último ciclo do dia (18z).
  */
+/**
+ * Traduz o nome de nível do filtro do NOMADS para o texto que aparece no .idx.
+ *
+ * São vocabulários diferentes para a mesma coisa: o filtro usa
+ * `lev_10_m_above_ground`, o índice escreve "10 m above ground". Sem esta
+ * tradução a busca no índice não acha nada — e falharia em silêncio, caindo no
+ * recuo de 3° outra vez.
+ */
+export function nivelIdx(lev) {
+  const s = String(lev).replace(/_/g, " ").trim();
+  const mb = /^(\d+)\s*mb$/.exec(s);
+  if (mb) return `${mb[1]} mb`;
+  if (s === "mean sea level") return "mean sea level";
+  if (s === "surface") return "surface";
+  return s;
+}
+
 function resolveCycle(dateStr, hour) {
   const askedMs = Date.UTC(
     +dateStr.slice(0, 4), +dateStr.slice(5, 7) - 1, +dateStr.slice(8, 10), Number(hour) || 0
@@ -105,14 +123,25 @@ export async function fetchGfsMessages(fetchImpl, dateStr, hour, vars = [], levs
   }
 
   if (!buf) {
+    // S3 POR FAIXA DE BYTES, NUNCA O ARQUIVO INTEIRO.
+    //
+    // Aqui havia um GET simples de `pgrb2.0p25.fXXX`: o arquivo COMPLETO, com
+    // todas as variáveis e todos os níveis de pressão, ~500 MB, com prazo de
+    // 30 s, para extrair dois campos de vento de superfície. Nunca terminava.
+    //
+    // Como o NOMADS só guarda ~10 dias de ciclos, isso significava que TODA
+    // data mais antiga caía no recuo de 3° — grade 144x mais grossa em área,
+    // onde o núcleo de um ciclone tropical cabe numa célula e desaparece.
     const s3Url = `https://noaa-gfs-bdp-pds.s3.amazonaws.com/gfs.${date}/${cycle}/atmos/gfs.t${cycle}z.pgrb2.0p25.f${fhr}`;
     try {
-      const r = await fetchImpl(s3Url, { signal: AbortSignal.timeout(30000) });
-      if (r.ok) {
-        const b = Buffer.from(await r.arrayBuffer());
-        if (b.length >= 16 && b.toString("latin1", 0, 4) === "GRIB") buf = b;
-      }
-    } catch {}
+      const alvos = [];
+      for (const v of vars) for (const l of levs) alvos.push({ campo: v, nivel: nivelIdx(l) });
+      const r = await baixarPorIndice(fetchImpl, s3Url, alvos);
+      console.log(`[gfs] S3 por indice: ${(r.bytes / 1e6).toFixed(1)} MB em ${r.requisicoes} requisicoes`);
+      buf = r.buf;
+    } catch (e) {
+      console.warn(`[gfs] S3 por indice falhou: ${e.message}`);
+    }
   }
 
   if (!buf) {
@@ -182,25 +211,15 @@ export async function fetchGfsWind(fetchImpl, dateStr, hour) {
   const s3Url = `https://noaa-gfs-bdp-pds.s3.amazonaws.com/gfs.${date}/${cycle}/atmos/gfs.t${cycle}z.pgrb2.0p25.f${fhr}`;
 
   try {
-    console.log(`[gfs] tentando S3: ${s3Url.slice(0, 100)}...`);
-    const r = await fetchImpl(s3Url, {
-      signal: AbortSignal.timeout(30000),
-    });
-
-    if (!r.ok) {
-      throw new Error(`S3 HTTP ${r.status}: ${r.statusText}`);
-    }
-
-    const buf = Buffer.from(await r.arrayBuffer());
-    if (buf.length < 16 || buf.toString("latin1", 0, 4) !== "GRIB") {
-      throw new Error("S3 resposta não é GRIB2");
-    }
-
-    console.log(`[gfs] GRIB2 baixado do S3: ${buf.length} bytes`);
-    return buf;
-
+    // Ver a nota em fetchGfsMessages: o GET inteiro deste arquivo são ~500 MB.
+    const r = await baixarPorIndice(fetchImpl, s3Url, [
+      { campo: "UGRD", nivel: "10 m above ground" },
+      { campo: "VGRD", nivel: "10 m above ground" },
+    ]);
+    console.log(`[gfs] S3 por indice: ${(r.bytes / 1e6).toFixed(1)} MB em ${r.requisicoes} requisicoes`);
+    return r.buf;
   } catch (e) {
-    console.warn(`[gfs] S3 falhou: ${e.message}`);
+    console.warn(`[gfs] S3 por indice falhou: ${e.message}`);
   }
 
   // ─── Tentativa 3: Open-Data do DWD (German Weather Service) ───
