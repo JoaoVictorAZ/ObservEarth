@@ -2,24 +2,25 @@
 // -----------------------------------------------------------------------------
 // SONDA — leitura pontual das condições de superfície.
 //
-// DOIS DEFEITOS DE CONTEÚDO CORRIGIDOS AQUI (não eram de estilo)
+// SOBRE AS CORES, E SOBRE EU TER ERRADO DUAS VEZES NO MESMO LUGAR
 //
-//   1. HEMISFÉRIO CRAVADO NO TEXTO
-//      A linha era `{lat.toFixed(4)}°S {lng.toFixed(4)}°O`. Londres saía como
-//      "51.50°S -0.13°O" — hemisfério errado E sinal duplicado. Todo ponto ao
-//      norte do equador ou a leste de Greenwich exibia uma coordenada falsa,
-//      com quatro casas decimais de aparente precisão.
+// Primeira versão: dez matizes do Tailwind, um por linha. Cor decorativa, sem
+// relação com o valor.
 //
-//   2. AUSÊNCIA VIRANDO AFIRMAÇÃO
-//      `{probe.elevationM ?? 0}m` transformava "sem dado" em "0 m" — nível do
-//      mar. O servidor foi corrigido para devolver `null` quando não há pressão
-//      medida; a view desfazia isso a três linhas da tela.
+// Eu "consertei" removendo TODAS as cores, com o argumento de que cor é dado e
+// dez cores fixas não são dado. O argumento estava certo e a conclusão estava
+// errada: um painel todo cinza obriga a ler dez números e comparar de cabeça
+// com faixas que só um meteorologista tem decoradas. Tirei a leitura junto com
+// o enfeite.
 //
-// SOBRE AS CORES
-// Havia dez matizes diferentes, um por linha, vindos da paleta do Tailwind.
-// Isso viola a regra do sistema: cor é DADO, não enfeite. Dez cores para dez
-// grandezas não informa nada — só compete com o mapa, onde cor significa
-// medida. Aqui a hierarquia é peso e alinhamento; o ícone é neutro.
+// Agora a cor SAI DO VALOR (`src/probe/escalas.ts`). 38 °C fica quente, −5 °C
+// fica frio, e o vento usa a MESMA rampa do mapa — se a partícula está branca
+// no globo, o número aqui também está. Cada linha tem uma barrinha mostrando
+// onde o valor cai na faixa, porque cor sozinha diz "onde nesta escala" mas não
+// diz qual é a escala.
+//
+// E o painel cresceu: era estreito demais para números com unidade, secundário
+// e classificação na mesma linha.
 // -----------------------------------------------------------------------------
 
 import React from "react";
@@ -27,8 +28,12 @@ import { useProbeStore } from "../../store/probeStore";
 import { useUIStore } from "../../store/uiStore";
 import {
   Thermometer, Wind, Droplets, Compass, BarChart2, Activity,
-  Cloud, Sun, ArrowUpRight, Mountain,
+  Cloud, Sun, ArrowUpRight, Mountain, Gauge,
 } from "lucide-react";
+import {
+  corDe, posicaoNaFaixa, type Parada,
+  TEMPERATURA, ORVALHO, VENTO, RAJADA, UMIDADE, PRESSAO, CHUVA, NUVEM, UV, ELEVACAO,
+} from "../../probe/escalas";
 
 /** Ausência é traço, e o traço tem título explicando. Nunca zero, nunca vazio. */
 const fmt = (v: number | null | undefined, casas: number, unidade: string) =>
@@ -46,28 +51,46 @@ interface LinhaProps {
   rotulo: string;
   valor: string | null;
   secundario?: string | null;
+  /** o número cru, para a cor e a barra saírem do VALOR e não da linha */
+  bruto?: number | null;
+  escala?: readonly Parada[];
+  destaque?: boolean;
 }
 
-const Linha: React.FC<LinhaProps> = ({ icone, rotulo, valor, secundario }) => (
-  <div className={`prow ${valor == null ? "prow-vazio" : ""}`}>
-    <span className="prow-rot">
-      {icone}
-      {rotulo}
-    </span>
-    {valor == null ? (
-      <span className="prow-sem" title="A fonte não reportou este valor para este ponto e hora">
-        sem dado
-      </span>
-    ) : (
-      <strong className="prow-val">
-        {valor}
-        {secundario && <small>{secundario}</small>}
-      </strong>
-    )}
-  </div>
-);
+const Linha: React.FC<LinhaProps> = ({ icone, rotulo, valor, secundario, bruto, escala, destaque }) => {
+  const cor = escala ? corDe(escala, bruto) : null;
+  const pos = escala ? posicaoNaFaixa(escala, bruto) : null;
 
-const ico = { size: 13, strokeWidth: 1.5 } as const;
+  return (
+    <div className={`prow ${valor == null ? "prow-vazio" : ""} ${destaque ? "prow-forte" : ""}`}>
+      <span className="prow-rot">
+        <span className="prow-ico" style={cor ? { color: cor } : undefined}>{icone}</span>
+        {rotulo}
+      </span>
+
+      {valor == null ? (
+        <span className="prow-sem" title="A fonte não reportou este valor para este ponto e hora">
+          sem dado
+        </span>
+      ) : (
+        <strong className="prow-val" style={cor ? { color: cor } : undefined}>
+          {valor}
+          {secundario && <small>{secundario}</small>}
+        </strong>
+      )}
+
+      {/* A barra é o que transforma a cor de enfeite em leitura: ela mostra
+          ONDE na faixa o valor caiu, não só que ele é "quente" ou "frio". */}
+      {pos != null && cor && (
+        <span className="prow-faixa" aria-hidden="true">
+          <span className="prow-marca" style={{ left: `${pos * 100}%`, background: cor }} />
+        </span>
+      )}
+    </div>
+  );
+};
+
+const ico = { size: 14, strokeWidth: 1.6 } as const;
 
 export const ProbePanel: React.FC = () => {
   const { probe, clearProbe } = useProbeStore();
@@ -75,26 +98,12 @@ export const ProbePanel: React.FC = () => {
 
   if (!probe) return null;
 
-  // -------------------------------------------------------------------------
-  // VENTO SUSTENTADO E RAJADA SÃO GRANDEZAS DIFERENTES.
-  //
-  // A tela mostrava só "Vento (10 m)" com o valor SUSTENTADO — média da hora.
-  // Quando o noticiário diz "ventos de 100 km/h no Rio", está falando de
-  // RAJADA. Sobre terra o fator típico é 1,5 a 2,0, então os dois números nunca
-  // batem, e a diferença parece erro de unidade quando é diferença de grandeza.
-  //
-  // Numa plataforma de monitoramento, a rajada é a variável de segurança: é ela
-  // que derruba árvore, telhado e poste. Ela vem agora em destaque igual.
-  // -------------------------------------------------------------------------
   const vento = fmt(probe.windSpeed, 1, " m/s");
   const ventoSec = [
     fmt(probe.windKmH, 0, " km/h"),
     probe.windCardinal,
-    probe.windScale ? `${probe.windScale.nome} (${probe.windScale.grau} Bft)` : null,
+    probe.windScale ? `${probe.windScale.nome}` : null,
   ].filter(Boolean).join(" · ") || null;
-
-  const rajada = fmt(probe.windGustMs, 1, " m/s");
-  const rajadaSec = fmt(probe.windGustKmH, 0, " km/h");
 
   return (
     <div className="probe" role="region" aria-label={`Condições em ${probe.place}`}>
@@ -107,52 +116,42 @@ export const ProbePanel: React.FC = () => {
       </div>
 
       <div className="prows">
-        <Linha
-          icone={<Thermometer {...ico} />} rotulo="Temperatura (2 m)"
-          valor={fmt(probe.temperature, 1, " °C")}
-          secundario={fmt(probe.temperatureF, 0, " °F")}
-        />
-        <Linha
-          icone={<Droplets {...ico} />} rotulo="Ponto de orvalho"
-          valor={fmt(probe.dewPoint, 1, " °C")}
-        />
-        <Linha
-          icone={<Wind {...ico} />} rotulo="Vento (10 m)"
+        <Linha icone={<Thermometer {...ico} />} rotulo="Temperatura (2 m)"
+          valor={fmt(probe.temperature, 1, " °C")} secundario={fmt(probe.temperatureF, 0, " °F")}
+          bruto={probe.temperature} escala={TEMPERATURA} />
+
+        <Linha icone={<Droplets {...ico} />} rotulo="Ponto de orvalho"
+          valor={fmt(probe.dewPoint, 1, " °C")} bruto={probe.dewPoint} escala={ORVALHO} />
+
+        {/* Vento e rajada juntos e em destaque: são as duas grandezas de
+            segurança, e separá-las faz alguém ler uma achando que leu a outra. */}
+        <Linha icone={<Wind {...ico} />} rotulo="Vento (10 m)"
           valor={vento} secundario={ventoSec}
-        />
-        {/* A rajada logo abaixo do sustentado, com o mesmo peso: separá-las
-            em lugares diferentes da tela é o que faz alguém ler uma e achar
-            que leu a outra. */}
-        <Linha
-          icone={<Wind {...ico} />} rotulo="Rajada (10 m)"
-          valor={rajada} secundario={rajadaSec}
-        />
-        <Linha
-          icone={<Compass {...ico} />} rotulo="Umidade relativa"
-          valor={fmt(probe.humidity, 0, " %")}
-        />
-        <Linha
-          icone={<BarChart2 {...ico} />} rotulo="Pressão à superfície"
-          valor={fmt(probe.pressure, 0, " hPa")}
-        />
-        <Linha
-          icone={<Activity {...ico} />} rotulo="Precipitação"
-          valor={fmt(probe.precipitation, 1, " mm/h")}
-        />
-        <Linha
-          icone={<Cloud {...ico} />} rotulo="Cobertura de nuvens"
-          valor={fmt(probe.cloudCover, 0, " %")}
-        />
-        <Linha
-          icone={<Sun {...ico} />} rotulo="Índice UV"
-          valor={fmt(probe.uvIndex, 1, "")}
-        />
+          bruto={probe.windSpeed} escala={VENTO} destaque />
+
+        <Linha icone={<Gauge {...ico} />} rotulo="Rajada (10 m)"
+          valor={fmt(probe.windGustMs, 1, " m/s")} secundario={fmt(probe.windGustKmH, 0, " km/h")}
+          bruto={probe.windGustMs} escala={RAJADA} destaque />
+
+        <Linha icone={<Compass {...ico} />} rotulo="Umidade relativa"
+          valor={fmt(probe.humidity, 0, " %")} bruto={probe.humidity} escala={UMIDADE} />
+
+        <Linha icone={<BarChart2 {...ico} />} rotulo="Pressão à superfície"
+          valor={fmt(probe.pressure, 0, " hPa")} bruto={probe.pressure} escala={PRESSAO} />
+
+        <Linha icone={<Activity {...ico} />} rotulo="Precipitação"
+          valor={fmt(probe.precipitation, 1, " mm/h")} bruto={probe.precipitation} escala={CHUVA} />
+
+        <Linha icone={<Cloud {...ico} />} rotulo="Cobertura de nuvens"
+          valor={fmt(probe.cloudCover, 0, " %")} bruto={probe.cloudCover} escala={NUVEM} />
+
+        <Linha icone={<Sun {...ico} />} rotulo="Índice UV"
+          valor={fmt(probe.uvIndex, 1, "")} bruto={probe.uvIndex} escala={UV} />
+
         {/* Elevação é DERIVADA da pressão por barometria. Sem pressão medida
             não há elevação — e "0 m" seria uma afirmação de nível do mar. */}
-        <Linha
-          icone={<Mountain {...ico} />} rotulo="Elevação (barométrica)"
-          valor={fmt(probe.elevationM, 0, " m")}
-        />
+        <Linha icone={<Mountain {...ico} />} rotulo="Elevação (barométrica)"
+          valor={fmt(probe.elevationM, 0, " m")} bruto={probe.elevationM} escala={ELEVACAO} />
       </div>
 
       <button
@@ -160,22 +159,10 @@ export const ProbePanel: React.FC = () => {
         onClick={() => setAnalysisTarget({ lat: probe.lat, lng: probe.lng, place: probe.place })}
       >
         <span>Análise completa · séries e sondagem</span>
-        <ArrowUpRight size={13} strokeWidth={1.5} aria-hidden="true" />
+        <ArrowUpRight size={14} strokeWidth={1.6} aria-hidden="true" />
       </button>
 
-      {/* ---------------------------------------------------------------
-          O AVISO NÃO É RODAPÉ. Ele fica antes da procedência e com marca de
-          alerta porque é a informação que impede alguém de tomar decisão
-          operacional com um número de modelo.
-
-          Nenhuma correção de fonte resolve isto: modelo global não resolve
-          microexplosão, canalização urbana nem efeito de relevo. A estação da
-          praia mede o que a célula de 11 km não pode conter.
-          --------------------------------------------------------------- */}
-      {probe.windNotice && (
-        <p className="probe-aviso" role="note">{probe.windNotice}</p>
-      )}
-
+      {probe.windNotice && <p className="probe-aviso" role="note">{probe.windNotice}</p>}
       {probe.source && <p className="probe-fonte">{probe.source}</p>}
       {probe.sourceNote && <p className="probe-fonte">{probe.sourceNote}</p>}
     </div>
