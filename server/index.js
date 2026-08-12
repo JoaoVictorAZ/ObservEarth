@@ -22,6 +22,7 @@ import { escolherFonte, caminhoDe, VARIAVEIS, beaufort, avisoDeVento } from "./a
 import { registerGeoRoutes, placeAt } from "./geo.js";
 import { describeModelLayer, sortModelLayers } from "./modelNames.js";
 import { parseCapabilities, snapTime, coverageOf } from "./gibsTime.js";
+import { lerBBox, alturaDe, janelaEm } from "./janela.js";
 import cors from "cors";
 
 const app = express();
@@ -92,15 +93,21 @@ function resolveTime(layerName, dateStr, lagDays) {
   return { time: shiftDate(dateStr, lagDays ?? 1), exact: false, reason: "fallback" };
 }
 
-function imageryUrl(id, dateStr, width) {
+function imageryUrl(id, dateStr, width, bbox = null, height = null) {
   const cfg = IMAGERY[id] ?? { layer: id, lag: 1 };
   const snap = resolveTime(cfg.layer, dateStr, cfg.lag);
   const time = snap.time;
   const qs = new URLSearchParams({
     SERVICE: "WMS", REQUEST: "GetMap", VERSION: "1.3.0",
     LAYERS: cfg.layer, CRS: "EPSG:4326",
-    BBOX: "-90,-180,90,180",
-    WIDTH: String(width), HEIGHT: String(Math.round(width / 2)),
+    // JANELA DE INTERESSE. Sem bbox, o mundo — que é o comportamento antigo.
+    // Com bbox, a MESMA requisição recorta a região visível, e a resolução
+    // efetiva multiplica pelo fator de zoom. Uma textura global de 4096 px dá
+    // 11,4 texels por grau e isso é FIXO; os pixels de tela por grau crescem
+    // sem limite ao aproximar. Nenhum aumento de textura resolve — só recorte.
+    BBOX: bbox ? bbox.join(",") : "-90,-180,90,180",
+    WIDTH: String(width),
+    HEIGHT: String(height ?? Math.round(width / 2)),
     FORMAT: "image/png",
     TRANSPARENT: cfg.opaque ? "FALSE" : "TRUE",
     TIME: time,
@@ -121,6 +128,17 @@ async function ensureGibsTime() {
   return GIBS_TIME;
 }
 
+// Diz qual janela uma câmera produz, sem baixar imagem. Serve para conferir o
+// custo em requisições antes de ligar o recorte no cliente.
+app.get("/api/imagery/janela", (req, res) => {
+  const lat = Number(req.query.lat) || 0;
+  const lng = Number(req.query.lng) || 0;
+  const graus = Number(req.query.graus) || 360;
+  const j = janelaEm(lat, lng, graus);
+  res.json({ ...j, altura: alturaDe(j.bbox, j.largura),
+    ganhoDeResolucao: j.mundo ? 1 : +(360 / (j.bbox[3] - j.bbox[1])).toFixed(1) });
+});
+
 app.get("/api/imagery/:id/time", async (req, res) => {
   const { id } = req.params;
   const date = String(req.query.date ?? new Date().toISOString().slice(0, 10));
@@ -135,12 +153,18 @@ app.get("/api/imagery/:id", async (req, res) => {
   const { id } = req.params;
   const date = String(req.query.date ?? new Date().toISOString().slice(0, 10));
   const width = Math.min(4096, Math.max(512, Number(req.query.width) || 2048));
+  const bbox = lerBBox(String(req.query.bbox ?? ""));
+  const height = bbox ? alturaDe(bbox, width) : null;
   await ensureGibsTime();
-  const built = imageryUrl(id, date, width);
+  const built = imageryUrl(id, date, width, bbox, height);
   if (!built) return res.status(404).json({ error: `camada desconhecida: ${id}` });
 
   try {
-    const img = await cached(`img:${id}:${built.time}:${width}`, 6 * HOUR, async () => {
+    // A bbox ENTRA na chave. Sem isso, a primeira janela pedida ficaria em
+    // cache e todas as outras receberiam a imagem dela — a região errada, com
+    // aparência perfeitamente normal.
+    const chave = `img:${id}:${built.time}:${width}:${bbox ? bbox.join(",") : "mundo"}`;
+    const img = await cached(chave, 6 * HOUR, async () => {
       const r = await metered("nasa-gibs", 1, () => fetch(built.url));
       if (!r.ok) throw new Error(`GIBS HTTP ${r.status}`);
       const buf = Buffer.from(await r.arrayBuffer());
@@ -150,6 +174,7 @@ app.get("/api/imagery/:id", async (req, res) => {
     res.set("Content-Type", "image/png");
     res.set("Cache-Control", "public, max-age=21600");
     res.set("X-Imagery-Time", built.time);
+    if (bbox) res.set("X-Imagery-BBox", bbox.join(","));
     res.send(img);
   } catch (e) {
     const msg = String(e.message ?? e);
