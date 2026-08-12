@@ -1,41 +1,6 @@
 // server/vorticidade.js
 // -----------------------------------------------------------------------------
-// DETECÇÃO DE CIRCULAÇÃO — achar o ciclone no campo, em vez de torcer para que
-// ele apareça.
-//
-// O RELATO: "o vento do Rio foi devido a um ciclone na costa e NÃO É POSSÍVEL
-// IDENTIFICAR ELE através dos dados de vento que estão no app."
-//
-// O QUE EU TINHA ERRADO
-// Quando o relato anterior foi "calmaria esticada parece furacão", eu achatei o
-// brilho do rastro para uniforme e argumentei que a cor carregaria a
-// velocidade. Isso consertou o borrão e removeu, junto, a coisa que fazia um
-// ciclone REAL saltar aos olhos: o contraste no topo da escala. Troquei um
-// defeito por outro.
-//
-// Mas mesmo desfazendo aquilo, a identificação continuaria frágil, porque
-// CICLONE NÃO SE DISTINGUE POR VELOCIDADE. Um jato de altos níveis tem
-// 60 m/s e não é ciclone. Um ciclone subtropical na costa do Sudeste tem
-// 20-25 m/s e é. O que os separa é a ROTAÇÃO.
-//
-// A grandeza é a vorticidade relativa:
-//
-//     ζ = (1/(a·cos φ)) · [ ∂v/∂λ − ∂(u·cos φ)/∂φ ]
-//
-// Em coordenadas esféricas — o `cos φ` dentro da derivada meridional não é
-// detalhe: sem ele, a convergência dos meridianos aparece como vorticidade
-// falsa, crescente com a latitude, e o detector encheria os polos de ciclones
-// inexistentes.
-//
-// O SINAL DEPENDE DO HEMISFÉRIO, E ERRAR ISSO INVERTE TUDO
-//   Hemisfério NORTE: ciclone gira no sentido anti-horário -> ζ POSITIVO
-//   Hemisfério SUL:   ciclone gira no sentido horário      -> ζ NEGATIVO
-//
-// Ou seja: é ciclônico quando sinal(ζ) = sinal(latitude). Trocar isso faria o
-// detector marcar ANTICICLONES como ciclones — e anticiclone é céu limpo. Num
-// aplicativo de monitoramento, apontar tempo bom onde há tempestade é o pior
-// erro possível, e por isso o caso do ciclone na costa do Rio (hemisfério sul,
-// giro horário) é um dos testes.
+// Cálculo de vorticidade relativa, parâmetro de Coriolis e detecção de circulação.
 // -----------------------------------------------------------------------------
 
 const RAIO_TERRA = 6371000;   // metros

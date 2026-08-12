@@ -1,21 +1,6 @@
 // src/store/chatStore.ts
 // -----------------------------------------------------------------------------
-// ESTADO DO TERMINAL — fora do componente, de propósito.
-//
-// O DEFEITO QUE ISTO CORRIGE
-// O estado do modelo vivia em `useState` dentro do PointChat. Fechar o terminal
-// desmonta o componente, o React descarta o estado, e ao reabrir a tela voltava
-// para "carregue um modelo" — pedindo um download de 4,6 GB que já estava
-// feito.
-//
-// O modelo nunca havia sido descarregado: o motor é um singleton e continuava
-// com os pesos na VRAM. Era só a INTERFACE que esquecia. Um pedido de
-// reinstalação para algo já instalado é o tipo de erro que destrói a confiança
-// do usuário em tudo o mais que a tela afirma.
-//
-// Estado que sobrevive ao ciclo de vida do componente não pode morar dentro
-// dele. Aqui também ficam a largura do painel e o histórico, pelo mesmo motivo:
-// fechar para consultar o mapa e reabrir não deve custar a conversa.
+// Estado global do terminal de conversação LLM (Zustand store).
 // -----------------------------------------------------------------------------
 
 import { create } from "zustand";

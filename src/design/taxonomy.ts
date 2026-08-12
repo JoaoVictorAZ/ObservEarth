@@ -1,30 +1,4 @@
-// src/design/taxonomy.ts
-// -----------------------------------------------------------------------------
-// TAXONOMIA DE CAMADAS — o eixo organizador do redesign.
-//
-// O PROBLEMA
-// O painel agrupava por PROCEDÊNCIA: campos GFS, satélite, modelo, sobreposições.
-// Isso responde "de onde veio", que é a pergunta de quem construiu o sistema —
-// não a de quem o usa. Quem lê o mapa pergunta outra coisa:
-//
-//     "o que posso ver ao mesmo tempo, e por que isto parece com aquilo?"
-//
-// Agrupado por procedência, temperatura (raster contínuo) fica ao lado de chuva
-// (raster em classes) e de vento (partículas), como se fossem a mesma coisa —
-// e nada na tela explica por que ligar uma apaga a outra.
-//
-// A SOLUÇÃO
-// Agrupar pela NATUREZA do dado. E a natureza determina três coisas de uma vez:
-//
-//   1. a CODIFICAÇÃO visual  (já implementada em server/fields.js)
-//   2. se as camadas PODEM COEXISTIR
-//   3. que controle é honesto — rádio ou interruptor
-//
-// O item 3 é o que resolve um defeito real: só existe UM plano de imagem no
-// globo. Oferecer temperatura, chuva e WBGT como interruptores independentes é
-// prometer o que não se cumpre — ligar a segunda apaga a primeira em silêncio.
-// Rádio não promete.
-// -----------------------------------------------------------------------------
+
 
 /** como o dado é desenhado — espelha o `render` de server/fields.js */
 export type Encoding = "suave" | "faixas" | "particulas" | "linhas" | "pontos";
@@ -49,13 +23,7 @@ export interface Family {
   accent: string;
 }
 
-/**
- * AS CINCO FAMÍLIAS.
- *
- * Cinco, e não sete ou dez, porque o número precisa caber na memória de quem
- * abre o painel pela primeira vez. Cada uma responde a uma pergunta diferente
- * sobre a atmosfera, e é por isso que compõem bem entre si.
- */
+
 export const FAMILIES: Family[] = [
   {
     id: "campo",
@@ -106,27 +74,14 @@ export const FAMILIES: Family[] = [
 
 export const familyOf = (id: string) => FAMILIES.find((f) => f.id === id) ?? null;
 
-/**
- * Frase curta que explica a REGRA do grupo, exibida sob o título.
- *
- * Existe porque "só um por vez" precisa ser dito ANTES de o usuário descobrir
- * clicando. Interface que só revela sua regra pelo erro é interface que culpa
- * quem a usa.
- */
+/** Frase curta que explica a regra do grupo. */
 export function ruleOf(f: Family): string {
   return f.exclusive
     ? "um por vez — dividem o mesmo plano de imagem"
     : "combinam livremente, inclusive com um campo";
 }
 
-/**
- * Onde cada camada existente entra.
- *
- * `slotKey` casa com o estado no layerStore. Manter este mapa num só lugar é o
- * que impede a taxonomia de divergir do que a aplicação faz de fato — foi
- * exatamente assim que a legenda passou a descrever cores que o mapa não
- * pintava mais.
- */
+/** Mapeamento de camadas existentes para a taxonomia. */
 export interface LayerEntry {
   id: string;
   label: string;

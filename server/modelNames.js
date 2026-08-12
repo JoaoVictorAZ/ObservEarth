@@ -1,19 +1,6 @@
 // server/modelNames.js
 // -----------------------------------------------------------------------------
-// NOMES DE FENOMENO A PARTIR DE IDENTIFICADORES DA NASA.
-//
-// O painel listava `MERRA2_Ozone_Mixing_Ratio_50hPa_Monthly` com o subtitulo
-// "MERRA2". Isso e nome de ARQUIVO, nao de fenomeno: obriga o leitor a decorar a
-// nomenclatura de um centro de dados para achar "ozonio". Numa banca, ninguem
-// deveria precisar saber o que significa "MERRA2" para entender a tela.
-//
-// Aqui traduzimos o identificador para o SISTEMA ABSTRATO que ele representa,
-// mantendo a proveniencia visivel — mas como metadado, nao como titulo.
-//
-// A traducao e por REGRA, nao por tabela ponto a ponto: o GIBS publica dezenas
-// de camadas de modelo e ganha novas com o tempo. Uma tabela ficaria velha; as
-// regras cobrem o que existe e degradam de forma legivel no que ainda nao
-// conhecemos.
+// Tradução e mapeamento de nomes de modelos e produtos NASA GIBS / MERRA-2.
 // -----------------------------------------------------------------------------
 
 /** familia do produto -> como cita-la */

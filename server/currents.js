@@ -1,45 +1,6 @@
 // server/currents.js
 // -----------------------------------------------------------------------------
-// CORRENTES MARÍTIMAS — DADO MEDIDO, finalmente.
-//
-// O QUE ISTO SUBSTITUI
-// A rota `/api/hycom` gerava o oceano inteiro por fórmula: giros como gaussianas
-// em caixas de lat/lng cravadas, Corrente do Golfo como `0.8·exp(−d²/15)`,
-// Circumpolar Antártica como um cosseno, e sete vórtices com posição escrita à
-// mão. Nenhuma requisição, nenhum dado — e o nome de um modelo da Marinha
-// americana na rota.
-//
-// COMO CHEGUEI AQUI (duas recomendações minhas que não sobreviveram)
-//   1. OSCAR via ERDDAP, que eu disse ser "livre e sem chave": os espelhos
-//      livres estão congelados — jplOscar termina em 2014, erdTAgeo1day em 2012.
-//   2. RTOFS Global via NOMADS em GRIB2: o GRIB2 do RTOFS é só REGIONAL; o
-//      global sai em NetCDF de 9,3 milhões de pontos, e a própria página do
-//      NCEP avisa que o OPeNDAP do RTOFS "is not operational at the present
-//      time". Sem subsetting, seriam centenas de MB por quadro.
-//
-// A resposta estava na Open-Meteo, que o projeto já usa: a Marine API serve
-// `ocean_current_velocity` e `ocean_current_direction`, alimentada pelo SMOC do
-// Copernicus Marine (GLOBAL_ANALYSISFORECAST_PHY_001_024) a 0,08° (~8 km),
-// global, horária, sem chave.
-//
-// -----------------------------------------------------------------------------
-// A ARMADILHA PRINCIPAL: A CONVENÇÃO DE DIREÇÃO É INVERTIDA
-//
-// Vento e corrente usam convenções OPOSTAS, e as duas se chamam "direção":
-//
-//   VENTO      (meteorológica)  direção = DE ONDE VEM.
-//                               270° = vento de oeste, soprando PARA leste.
-//   CORRENTE   (oceanográfica)  direção = PARA ONDE VAI.
-//                               270° = corrente indo PARA oeste.
-//
-// A documentação da Open-Meteo é explícita: "Direction following the flow of
-// the current. E.g. where the current is heading towards."
-//
-// Copiar a conversão do vento — que soma 180° para inverter o sentido — poria
-// TODA corrente do planeta ao contrário. E não quebraria nada: o Golfo desceria
-// a costa americana em vez de subir, com aparência perfeitamente normal para
-// quem não conhece a circulação de cor. É o tipo exato de erro que este projeto
-// já pagou caro, e por isso tem teste próprio.
+// Processamento e conversão de vetores de correntes oceânicas.
 // -----------------------------------------------------------------------------
 
 const BASE = "https://marine-api.open-meteo.com/v1/marine";

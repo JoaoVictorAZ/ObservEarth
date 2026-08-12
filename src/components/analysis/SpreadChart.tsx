@@ -1,21 +1,3 @@
-// src/components/analysis/SpreadChart.tsx
-// -----------------------------------------------------------------------------
-// DISPERSÃO ENTRE MODELOS.
-//
-// A tela anterior tinha o título "GFS vs ECMWF vs ICON" e mostrava uma chamada
-// só, com ICON = GFS + 0,4 °C e ECMWF = GFS − 0,2 °C.
-//
-// O QUE ESTA TELA EXISTE PARA MOSTRAR
-// Não é a previsão — é a CONFIANÇA nela. Três modelos que concordam hoje e
-// divergem 6 °C depois de amanhã estão dizendo que depois de amanhã é chute. É
-// por isso que o desenho põe a faixa de desacordo em primeiro plano e as três
-// linhas por cima: a leitura é a LARGURA da faixa ao longo do prazo.
-//
-// AS TRÊS LINHAS SÃO DISTINGUÍVEIS SEM COR
-// Contínua, tracejada, pontilhada. Cor sozinha para codificar categoria falha
-// para quem não distingue matizes (WCAG 1.4.1) e falha impressa em cinza.
-// -----------------------------------------------------------------------------
-
 import React, { useId } from "react";
 
 export interface Modelo { id: string; sigla: string; centro: string; grade: string; }

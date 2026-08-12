@@ -1,32 +1,6 @@
 // server/gibsTime.js
 // -----------------------------------------------------------------------------
-// DIMENSAO TEMPORAL DAS CAMADAS DO GIBS.
-//
-// O DEFEITO QUE ISTO CORRIGE
-// Todas as camadas de modelo pediam `TIME = hoje - 1 dia`. Nenhuma MERRA-2
-// aceita isso. Verificado no proprio GetCapabilities, em 06/08/2026:
-//
-//   <Dimension name="time" units="ISO8601" default="2026-03-01" nearestValue="0">
-//     1980-01-01/2023-11-01/P1M,2024-02-01/2024-04-01/P1M,2024-06-01/2026-03-01/P1M
-//   </Dimension>
-//
-// Tres fatos nessa linha, e cada um sozinho ja quebrava o pedido:
-//
-//   1. O periodo e P1M — so existe imagem no PRIMEIRO DIA de cada mes. Pedir
-//      dia 05 nao devolve o mes 08: devolve excecao.
-//   2. A cobertura termina em 2026-03-01. A MERRA-2 e REANALISE: passa por
-//      controle de qualidade e sai com meses de atraso. Pedir "ontem" e pedir
-//      dado que ainda nao foi produzido.
-//   3. `nearestValue="0"` significa que o GIBS NAO arredonda por conta propria.
-//      O valor tem de chegar exato.
-//
-// E ha BURACOS no meio da serie (nada entre 2023-11 e 2024-02). Tratar a
-// cobertura como um intervalo continuo produziria pedidos invalidos no meio da
-// faixa, que e o tipo de falha que aparece so as vezes e custa caro para
-// diagnosticar.
-//
-// O `lag` fixo que existia antes era um palpite. Isto le o que o servico
-// publica.
+// Resolução de dimensões temporais e disponibilidade de camadas NASA GIBS.
 // -----------------------------------------------------------------------------
 
 /**

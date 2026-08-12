@@ -1,36 +1,6 @@
 // src/components/AnalysisModal.tsx
 // -----------------------------------------------------------------------------
-// ANÁLISE DO PONTO — série histórica, perfil vertical e dispersão entre modelos.
-//
-// ESTA TELA ESTAVA INTEIRAMENTE QUEBRADA, DE TRÊS MANEIRAS DIFERENTES.
-//
-//   1. A ABA DE SÉRIE NUNCA FUNCIONOU. O componente exigia `{ ok, data }` e a
-//      rota devolvia `{ stats, series }`. Não havia interseção: caía sempre em
-//      "Formato de dados inválido". O seletor de 1 mês a 10 anos mandava
-//      `?range=`, e a rota lia `?days=`, com teto de 14.
-//
-//   2. O QUE SOBRAVA ERA INVENTADO. Sem resposta da fonte, a rota fabricava a
-//      série toda — temperatura por `25 − |lat|·0,35 + sen(i/4)·3`, umidade por
-//      cosseno, e os próprios carimbos de tempo — e devolvia com status 200. A
-//      sondagem vinha de uma reta em pressão. A "comparação GFS vs ECMWF vs
-//      ICON" era um modelo só, com +0,4 e −0,2 somados.
-//
-//   3. O GRÁFICO MENTIA SOBRE O PRÓPRIO EIXO. Filtrava os nulos e espaçava o
-//      resto por índice; a legenda colava o valor mínimo na data do primeiro
-//      ponto. Detalhado em `src/analysis/series.ts`.
-//
-// E o botão de exportar CSV levava tudo isso para dentro de uma planilha.
-//
-// ---------------------------------------------------------------------------
-// A ABA DE IA FOI REMOVIDA
-// Ela dizia "ONNX Runtime · Inferência Neural Realizada com Sucesso" e exibia
-// `confidence_score ?? 0.94` — uma confiança de 94% inventada quando o modelo
-// não reportava nenhuma. O microserviço que ela chamava
-// (`pipeline/model_server_template.py`, em localhost:8000) é um template que
-// não existe treinado. Uma aba que anuncia inferência neural bem-sucedida sobre
-// um servidor ausente é a afirmação mais forte da tela inteira, e era a única
-// sem nenhum dado atrás. Quando houver modelo, ela volta — com a métrica que o
-// modelo realmente reportar.
+// Análise de ponto — série histórica, perfil vertical e dispersão entre modelos.
 // -----------------------------------------------------------------------------
 
 import { useEffect, useState } from "react";

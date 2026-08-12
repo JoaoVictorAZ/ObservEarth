@@ -19,6 +19,12 @@
 
 @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap");
 
+/* Component stylesheets */
+@import "./css/janela.css";
+@import "./css/sonda.css";
+@import "./css/analise.css";
+@import "./css/console.css";
+
 :root {
   /* ---- vácuo e superfícies ------------------------------------------- */
   --void: #04060a;           /* fundo absoluto: o espaço */
@@ -926,125 +932,9 @@ input[type="range"]::-moz-range-thumb {
 }
 
 /* ================================================================ SONDA === */
-.probe {
-  position: absolute; z-index: 6;
-  /* Era 300px de largura e 13px de respiro. Estreito demais para uma linha com
-     número, unidade, valor secundário e classificação — tudo se espremia e a
-     leitura virava um amontoado. 380px cabe "10,5 m/s  38 km/h · NE · brisa
-     forte" sem quebrar. */
-  top: calc(var(--head-h) + var(--s-4)); right: var(--s-4);
-  width: 380px; max-width: calc(100vw - var(--s-6) * 2);
-  max-height: calc(100vh - var(--head-h) - var(--s-7));
-  overflow-y: auto;
-  padding: var(--s-5) var(--s-5) var(--s-5);
-  background: var(--scrim);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-lg);
-  backdrop-filter: blur(12px);
-  box-shadow: var(--e-panel);
-  animation: rise 0.28s var(--ease) both;
-}
-@keyframes rise { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+/* Styles moved to src/css/sonda.css + src/css/janela.css.
+   The probe panel is now a draggable/resizable Janela. */
 
-.phead {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  gap: var(--s-4); margin-bottom: var(--s-4);
-  padding-bottom: var(--s-4); border-bottom: 1px solid var(--rule-soft);
-}
-.phead-txt { display: flex; flex-direction: column; gap: var(--s-1); min-width: 0; }
-.phead-txt strong { font-size: var(--t-lead); font-weight: var(--w-medium); color: var(--ink); }
-.pcoord { font-family: var(--mono); font-size: var(--t-micro); color: var(--ink-3); }
-.probe-fechar {
-  flex: none; font-size: 18px; line-height: 1; color: var(--ink-3);
-  padding: var(--s-1) var(--s-3); border-radius: 3px;
-}
-.probe-fechar:hover { color: var(--ink); background: var(--surface-hi); }
-
-.prows { display: flex; flex-direction: column; }
-
-/* Cada linha tem três faixas: rótulo, valor e a barrinha de posição. A barra
-   ocupa a largura toda embaixo, porque é a régua daquela grandeza. */
-.prow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: var(--s-3) var(--s-4);
-  padding: var(--s-3) 0 var(--s-2);
-  border-bottom: 1px solid var(--rule-soft);
-}
-.prow:last-child { border-bottom: none; }
-
-.prow-rot {
-  display: flex; align-items: center; gap: var(--s-3);
-  font-size: var(--t-small); color: var(--ink-2); min-width: 0;
-}
-.prow-ico { display: flex; flex: none; color: var(--ink-3); }
-
-.prow-val {
-  font-family: var(--mono); font-size: var(--t-lead); font-weight: var(--w-medium);
-  color: var(--ink); text-align: right; white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-.prow-val small {
-  display: block; margin-top: 1px;
-  font-size: var(--t-micro); font-weight: var(--w-normal);
-  color: var(--ink-3); font-family: var(--mono);
-}
-
-/* Vento e rajada são as grandezas de segurança: ganham mais peso. */
-.prow-forte .prow-val { font-size: 19px; }
-.prow-forte .prow-rot { color: var(--ink); }
-
-.prow-sem {
-  font-size: var(--t-small); color: var(--ink-3); font-style: italic; text-align: right;
-}
-.prow-vazio .prow-rot { color: var(--ink-3); }
-
-.prow-faixa {
-  grid-column: 1 / -1;
-  position: relative; height: 2px; margin-top: var(--s-1);
-  background: var(--rule-soft); border-radius: 1px;
-}
-.prow-marca {
-  position: absolute; top: -1px; width: 4px; height: 4px;
-  border-radius: 50%; transform: translateX(-50%);
-}
-
-.probe-analise {
-  display: flex; align-items: center; justify-content: center;
-  gap: var(--s-3);
-  width: 100%;
-  margin-top: var(--s-5);
-  padding: var(--s-4);
-  font-family: var(--sans);
-  font-size: var(--t-small);
-  font-weight: var(--w-medium);
-  color: #04140f;
-  background: var(--signal);
-  border-radius: var(--r);
-  transition: opacity var(--m-fast) var(--ease);
-}
-.probe-analise:hover { opacity: 0.88; }
-
-.probe-fonte {
-  margin: var(--s-4) 0 0;
-  font-family: var(--mono);
-  font-size: var(--t-micro);
-  line-height: 1.4;
-  color: var(--ink-4);
-}
-
-/* Aviso de leitura do vento. Não é rodapé: é a informação que impede alguém de
-   tomar decisão operacional com um número de modelo, e por isso tem marca de
-   alerta e vem ANTES da procedência. */
-.probe-aviso {
-  margin: var(--s-4) 0 var(--s-2);
-  padding: var(--s-3) var(--s-4);
-  font-size: var(--t-micro); line-height: 1.6; color: var(--ink-2);
-  background: var(--surface);
-  border-left: 2px solid var(--warn);
-  border-radius: 0 var(--r) var(--r) 0;
-}
 
 /* ---- densidade das partículas ------------------------------------------- */
 .dens {
@@ -1100,4 +990,15 @@ input[type="range"]::-moz-range-thumb {
 
 @media (prefers-reduced-motion: reduce) {
   .dens input[type="range"]::-webkit-slider-thumb { transition: none; }
+}
+
+/* ---- Estilização global para dropdowns (select / option) ---------------- */
+select option {
+  background-color: #0d111a;
+  color: #f4f7fa;
+  padding: 8px 12px;
+}
+select option:disabled {
+  color: #55606e;
+  background-color: #070a10;
 }

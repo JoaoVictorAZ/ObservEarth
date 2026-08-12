@@ -25,10 +25,23 @@ export const AppShell: React.FC = () => {
   // O terminal abre por AÇÃO EXPLÍCITA, nunca no clique. Clicar num ponto do
   // globo é gesto de exploração; abrir um painel que quer baixar gigabytes a
   // cada clique seria hostil.
-  const [chatAberto, setChatAberto] = React.useState(false);
+  const [chatAberto, setChatAberto] = React.useState(true);
+
+  // Quando um novo ponto é selecionado, abre o terminal por padrão
+  React.useEffect(() => {
+    if (probe) setChatAberto(true);
+  }, [probe?.lat, probe?.lng]);
 
   const handleSearchCoord = (lat: number, lng: number) => {
     globeRef.current?.flyTo(lat, lng);
+  };
+
+  const handleOrganizarJanelas = () => {
+    try {
+      localStorage.removeItem("obs:probe:pos:v3");
+      localStorage.removeItem("obs:chat:pos:v2");
+    } catch { /* segue */ }
+    window.dispatchEvent(new Event("resize"));
   };
 
   return (
@@ -37,16 +50,10 @@ export const AppShell: React.FC = () => {
       <TopBar onSearchCoord={handleSearchCoord} />
       <ForecastToolbar />
       <LeftDock />
-      <ProbePanel />
+      <ProbePanel onToggleChat={() => setChatAberto((v) => !v)} chatAberto={chatAberto} />
       <StatusBar />
       <CommandPalette onFlyTo={handleSearchCoord} />
 
-      {/* Convite ao terminal: só aparece quando há ponto selecionado. */}
-      {probe && !chatAberto && (
-        <button className="ptchat-abrir" onClick={() => setChatAberto(true)}>
-          Terminal deste ponto
-        </button>
-      )}
       {probe && chatAberto && (
         <PointChat
           lat={probe.lat}
@@ -54,6 +61,7 @@ export const AppShell: React.FC = () => {
           date={day}
           hour={hour}
           onFechar={() => setChatAberto(false)}
+          onOrganizarJanelas={handleOrganizarJanelas}
         />
       )}
 

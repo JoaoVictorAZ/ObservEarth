@@ -1,45 +1,6 @@
 // server/arquivo.js
 // -----------------------------------------------------------------------------
-// QUAL ARQUIVO RESPONDE A PERGUNTA — e por que o anterior era o errado.
-//
-// O RELATO: "o Rio teve no dia 29/07 ventos de 100 km/h e o modal mostra
-// 14 km/h". E a observação que importa mais que o número: se alguém confiasse
-// nisso durante um evento, estaríamos colocando a vida dessa pessoa em risco.
-//
-// TRÊS COISAS ERRADAS, E A SEGUNDA É ESCOLHA DE FONTE, NÃO BUG
-//
-// 1. A SONDA NUNCA PEDIU RAJADA.
-//    Ela pedia `wind_speed_10m` — vento SUSTENTADO, média da hora. Os 100 km/h
-//    noticiados no Rio são RAJADA. São grandezas diferentes: sobre terra o
-//    fator de rajada típico é 1,5 a 2,0, então 100 km/h de rajada corresponde a
-//    uns 50-65 km/h sustentados NA ESTAÇÃO.
-//
-//    `wind_gusts_10m` existe, é gratuito e vem na MESMA chamada. Numa
-//    plataforma de monitoramento, a rajada é a variável de segurança — é ela
-//    que derruba árvore, telhado e poste. Não pedi-la foi o defeito central.
-//
-// 2. DATA PASSADA IA PARA O ARQUIVO ERRADO. (meu erro de escolha)
-//    `archive-api` é o ERA5. A documentação da própria Open-Meteo diz dele:
-//    "Optimised for long-term consistency rather than day-to-day accuracy —
-//    the right choice for climate trend analysis."
-//
-//    Eu usei o arquivo de ANÁLISE CLIMÁTICA para responder uma pergunta sobre
-//    um EVENTO METEOROLÓGICO. São produtos diferentes, com propósitos que a
-//    documentação declara como diferentes.
-//
-//    O certo é `historical-forecast-api`, descrito como "Closely tracks actual
-//    conditions because each run is initialised from real measurements" — e que
-//    serve ICON a 0,1° (~11 km) e GFS a 0,11° (~13 km) em vez do ERA5 a 25 km.
-//    Numa célula de 25 km, o Rio é a média da baía, da Serra do Mar e da
-//    cidade; a 11 km ainda é grosso, mas é quatro vezes menos grosso em área.
-//
-// 3. O RÓTULO NÃO DIZIA O QUE O NÚMERO ERA.
-//    A tela mostrava "Vento (10 m)" e um valor. Não dizia que era média horária
-//    sustentada, de modelo, numa célula de dezenas de quilômetros. Um número nu
-//    vindo de uma média de célula, num aplicativo de monitoramento, é
-//    exatamente o risco descrito — e é o defeito que sobrevive mesmo depois de
-//    (1) e (2) serem corrigidos, porque nenhum modelo global representa uma
-//    microexplosão convectiva.
+// Seleção de fontes de dados meteorológicos e tratamento de variáveis de superfície.
 // -----------------------------------------------------------------------------
 
 /** o arquivo de previsão de alta resolução começa por volta de 2021 */

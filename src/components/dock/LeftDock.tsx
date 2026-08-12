@@ -1,29 +1,3 @@
-// src/components/dock/LeftDock.tsx
-// -----------------------------------------------------------------------------
-// EXPLORADOR DE CAMADAS — organizado pela NATUREZA do dado.
-//
-// O QUE MUDOU, E POR QUÊ
-//
-// A versão anterior agrupava por PROCEDÊNCIA: campos GFS, satélite, modelo,
-// sobreposições. Essa é a pergunta de quem construiu o sistema. Quem lê o mapa
-// pergunta outra: "o que posso ver ao mesmo tempo, e por que isto parece com
-// aquilo?"
-//
-// Agora o eixo é `src/design/taxonomy.ts`, e a natureza do dado determina três
-// coisas de uma vez: a codificação visual, se as camadas coexistem, e qual
-// controle é honesto.
-//
-// O CONTROLE COMO PROMESSA
-// Só existe UM plano de imagem no globo. Oferecer temperatura, chuva e WBGT
-// como interruptores independentes promete o que não se cumpre: ligar a segunda
-// apaga a primeira em silêncio. Rádio não promete — a restrição fica visível na
-// FORMA do controle, antes do erro.
-//
-// E o arquivo perdeu 54 blocos de `style={{}}` e as cores da paleta do Tailwind
-// cravadas em hexadecimal (#3b82f6, #60a5fa, #93c5fd), que conviviam com o
-// sistema "Instrumento" sem saber dele.
-// -----------------------------------------------------------------------------
-
 import React, { useEffect, useState } from "react";
 import {
   useLayerStore,
@@ -62,9 +36,6 @@ export const LeftDock: React.FC = () => {
   const [fechadas, setFechadas] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    // Catálogos vêm do servidor; falha deixa a lista padrão do store, que já
-    // existe. Uma barra lateral vazia por causa de rede caída seria pior que
-    // uma lista incompleta e rotulada.
     fetch("/api/imagery").then((r) => r.json())
       .then((d: SatLayer[]) => Array.isArray(d) && d.length > 0 && setSats(d)).catch(() => {});
     fetch("/api/models").then((r) => r.json())
@@ -97,15 +68,6 @@ export const LeftDock: React.FC = () => {
     })),
   ];
 
-  // -------------------------------------------------------------------------
-  // TÍTULOS DUPLICADOS.
-  //
-  // O catálogo da MERRA-2 traz três camadas chamadas exatamente "Poeira" e
-  // duas "Evaporação". Três linhas idênticas numa lista de 39 não são uma
-  // escolha: são um impasse. A pessoa clica em uma, não é o que queria, e não
-  // tem como saber qual das outras é.
-  //
-  // Quando o título se repete, o detalhe entra no rótulo para desempatar.
   const contagem = new Map<string, number>();
   for (const r of rasters) contagem.set(r.titulo, (contagem.get(r.titulo) ?? 0) + 1);
   for (const r of rasters) {

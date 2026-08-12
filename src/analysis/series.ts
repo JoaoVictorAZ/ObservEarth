@@ -1,32 +1,6 @@
 // src/analysis/series.ts
 // -----------------------------------------------------------------------------
-// A MATEMÁTICA DO GRÁFICO — separada do desenho, para poder ser testada.
-//
-// TRÊS MENTIRAS QUE O GRÁFICO ANTERIOR CONTAVA
-//
-//   1. O EIXO HORIZONTAL NÃO ERA O TEMPO.
-//      O código fazia `data.filter(d => d.y != null)` e depois
-//      `x = pad + (i / (valid.length - 1)) * largura`. O eixo era o ÍNDICE DOS
-//      PONTOS QUE SOBRARAM. Uma série com 200 dias faltando no meio era
-//      desenhada como uma linha contínua e uniformemente espaçada — a lacuna
-//      sumia e o resto se esticava para tapar o buraco. O rótulo dizia "tempo".
-//
-//   2. A LEGENDA ASSOCIAVA O VALOR À DATA ERRADA.
-//        Mín: {min} ({valid[0].x})        ← data do PRIMEIRO ponto
-//        Máx: {max} ({valid.at(-1).x})    ← data do ÚLTIMO ponto
-//      Ela imprimia o mínimo da série ao lado da data de início. Quem lesse
-//      "mínima de 3,2 °C em 05/08" estaria lendo duas informações verdadeiras
-//      coladas numa afirmação falsa.
-//
-//   3. DESVIO PADRÃO POPULACIONAL numa série que é amostra.
-//
-// E UM PROBLEMA DE ESCALA
-// Dez anos são 3.652 pontos num traçado de ~700 px. Reduzir pegando um a cada
-// N descarta justamente os extremos — o dia de pico de chuva desaparece do
-// gráfico e continua no CSV. A redução aqui é por ENVELOPE: cada coluna de
-// pixel guarda o mínimo, o máximo e a média do que caiu nela. Nenhum extremo
-// se perde; o que se perde é a ordem interna dentro de um pixel, que nenhuma
-// tela poderia mostrar de qualquer forma.
+// Funções auxiliares e matemática para redução e renderização de séries temporais.
 // -----------------------------------------------------------------------------
 
 export interface Ponto {

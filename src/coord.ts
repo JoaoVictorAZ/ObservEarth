@@ -1,23 +1,3 @@
-// src/coord.ts
-// -----------------------------------------------------------------------------
-// LEITURA DE COORDENADA EM FORMATO LIVRE.
-//
-// Mora fora do componente para poder ser testado: o Node não processa JSX, e
-// um parser de coordenada é exatamente o tipo de código que precisa de teste —
-// erra em silêncio e leva a câmera para o lugar errado sem nada quebrar.
-//
-// A busca anterior não usava parser nenhum além de um regex decimal: era uma
-// escada de `if (q.includes("são paulo"))` com cinco cidades. Qualquer outra
-// coisa não fazia NADA — sem mensagem, sem erro, sem limpar o campo.
-// -----------------------------------------------------------------------------
-
-/**
- * Lê uma coordenada em formato livre.
- *
- * Aceita "-23.55, -46.63", "-23.55 -46.63", "23.55S 46.63W" e "23°33'S".
- * Recusa o que estiver fora da faixa: latitude 91 não é um lugar, e aceitar
- * silenciosamente poria a câmera num ponto que não existe.
- */
 export function lerCoordenada(txt: string): { lat: number; lng: number } | null {
   const s = txt.trim().toUpperCase().replace(/,/g, " ").replace(/\s+/g, " ");
 

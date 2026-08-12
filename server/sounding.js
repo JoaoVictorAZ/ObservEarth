@@ -1,39 +1,6 @@
 // server/sounding.js
 // -----------------------------------------------------------------------------
-// PERFIL VERTICAL DA ATMOSFERA.
-//
-// O QUE ISTO SUBSTITUI
-//
-// A rota anterior montava o perfil inteiro com uma reta:
-//
-//     const lapseTemp = 25.0 - (1000 - hpa) * 0.08;
-//     temperature: h[`temperature_${lvl}`]?.[idx] ?? +lapseTemp.toFixed(1)
-//     humidity:    ... ?? Math.round(75 - (1000 - hpa) * 0.05)
-//     windSpeed:   ... ?? +(15 + (1000 - hpa) * 0.04).toFixed(1)
-//
-// E o `catch` devolvia status 200 com `place: "Ponto Consultado"`.
-//
-// Três coisas erradas, em ordem crescente de gravidade:
-//
-//   1. Pedia `temperature_1000hpa`. A Open-Meteo publica `temperature_1000hPa`,
-//      com P maiúsculo. Se a API rejeitava o parâmetro, TODO valor caía no `??`.
-//      É plausível que este perfil nunca tenha mostrado um dado real.
-//
-//   2. A reta não é uma atmosfera. Temperatura caindo linearmente COM A PRESSÃO
-//      não tem tropopausa, não tem inversão, não tem camada limite. A 200 hPa
-//      dá −39 °C — plausível o bastante para ninguém desconfiar, e errado o
-//      bastante para inutilizar qualquer índice calculado sobre ele.
-//
-//   3. Sondagem é de onde saem CAPE, CIN, índices de instabilidade. Um perfil
-//      inventado não erra o gráfico: erra a previsão de tempestade.
-//
-// AQUI: nível sem dado é nível ausente. Falha é erro com código.
-//
-// SOBRE O ORVALHO
-// A Open-Meteo não publica ponto de orvalho em níveis de pressão — publica
-// umidade relativa. O orvalho é DERIVADO por Magnus-Tetens e vai marcado como
-// derivado, com a fórmula e a faixa de validade declaradas. Derivar por uma
-// relação física publicada não é inventar; apresentar sem dizer, sim.
+// Perfil vertical atmosférico (sondagem em níveis padrão de pressão hPa).
 // -----------------------------------------------------------------------------
 
 /**

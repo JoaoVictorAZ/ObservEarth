@@ -1,34 +1,6 @@
 // src/windGrid.ts
 // -----------------------------------------------------------------------------
-// AS TRÊS CONVENÇÕES DE LATITUDE QUE PRECISAM CONCORDAR.
-//
-// O desalinhamento de vento não lança exceção. O globo continua bonito, as
-// partículas continuam correndo, e o vento do hemisfério sul mostra o campo do
-// norte. Já aconteceu neste projeto, e custou uma sessão inteira ("let's roll
-// back to two versions before, now the wind is completely wrong").
-//
-// O problema é que há TRÊS sistemas de coordenadas em série, cada um escrito
-// num lugar diferente do código, e nenhum lugar onde eles se encontram:
-//
-//   1. A GRADE GRIB2. Linha 0 é 90°N quando o bit de varredura j é negativo
-//      (o caso do GFS). A linha é um PARALELO, e as linhas extremas caem
-//      exatamente sobre os polos.
-//
-//   2. A TEXTURA. `buildTexture` escreve a linha 0 do campo na linha 0 da
-//      textura. Em WebGL, v = 0 é a BASE da imagem. Então v = 0 guarda 90°N.
-//
-//   3. O SHADER. Lê `lat = (0.5 - p.y) * 180`, tratando a textura como se ela
-//      cobrisse de +90 a −90 de borda a borda.
-//
-// (2) e (3) concordam no SENTIDO — v = 0 é norte nos dois. É por isso que o
-// vento não está invertido hoje. Mas discordam no ALINHAMENTO: a convenção (1)
-// põe as linhas SOBRE os polos, e a (3) supõe células cujas bordas tocam os
-// polos. A diferença é meia célula.
-//
-// Este módulo escreve as três fórmulas num lugar só, para que o teste possa
-// medir a discordância em vez de acreditar nos comentários. O limite que o
-// teste exige é APERTADO por um motivo: um espelhamento de hemisfério aparece
-// como erro de 180°, e qualquer limite abaixo disso o pega imediatamente.
+// Conversões de latitude e coordenadas para grades de vento GRIB2 / WebGL.
 // -----------------------------------------------------------------------------
 
 /**

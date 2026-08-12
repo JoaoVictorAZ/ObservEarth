@@ -1,4 +1,3 @@
-// server/gfs.js
 // -----------------------------------------------------------------------------
 // Download de GRIB2 do NOMADS (NOAA) para vento a 10m.
 //

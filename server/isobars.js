@@ -1,33 +1,6 @@
 // server/isobars.js
 // -----------------------------------------------------------------------------
-// ISÓBARAS A PARTIR DA PRESSÃO AO NÍVEL DO MAR.
-//
-// POR QUE ISOBARA E NAO MAIS UMA CAMADA COLORIDA
-// Nuvem e chuva pintadas mostram ONDE esta acontecendo. Isobara mostra POR QUE:
-// a estrutura de altas e baixas e o que organiza todo o resto. Um mapa sinotico
-// sem isobaras e uma lista de sintomas sem diagnostico — e num trabalho de
-// meteorologia e justamente a analise que se espera ver.
-//
-// COMO
-// Marching squares sobre a grade de PRMSL. Para cada celula, os quatro cantos
-// dizem de que lado do limiar estao, e isso determina por quais arestas a curva
-// passa. Interpolacao linear ao longo da aresta da o ponto exato.
-//
-// TRES DECISOES QUE MUDAM O RESULTADO:
-//
-//   1. SUAVIZAR ANTES. A 0,25 graus o campo tem ruido de escala de grade. Sem
-//      suavizacao a isobara sai serrilhada e cheia de lacinhos que nao existem
-//      na atmosfera — o mapa fica com aparencia de erro numerico, que e o que
-//      de fato seria.
-//
-//   2. REAMOSTRAR PARA 1 GRAU. Analise sinotica se faz nessa escala. Contornar
-//      1.038.240 celulas para desenhar uma linha que sera vista num globo de
-//      900 px e gastar CPU para produzir vertices que caem no mesmo pixel.
-//
-//   3. FECHAR NO ANTIMERIDIANO. A grade da a volta no planeta. Tratando-a como
-//      uma folha plana, toda isobara que cruza 180 graus fica CORTADA — e o
-//      corte aparece como uma cicatriz vertical no Pacifico, num lugar onde
-//      quase ninguem olha e por isso demora a ser notado.
+// Extração e geração de isóbaras via algoritmo Marching Squares sobre campo PRMSL.
 // -----------------------------------------------------------------------------
 
 import { fetchGfsMessages } from "./gfs.js";

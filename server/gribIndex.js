@@ -1,37 +1,6 @@
 // server/gribIndex.js
 // -----------------------------------------------------------------------------
-// ÍNDICE .idx E DOWNLOAD POR FAIXA DE BYTES.
-//
-// O DEFEITO QUE ISTO CONSERTA
-//
-// Quando o NOMADS não tem mais a data (ele guarda ~10 dias de ciclos), o código
-// tentava o arquivo do S3 assim:
-//
-//     const r = await fetchImpl(s3Url, { signal: AbortSignal.timeout(30000) });
-//     const buf = Buffer.from(await r.arrayBuffer());
-//
-// `gfs.tXXz.pgrb2.0p25.fXXX` é o arquivo COMPLETO: todas as variáveis, todos os
-// níveis de pressão, ~500 MB. Baixado inteiro, com 30 s de prazo, para extrair
-// dois campos de vento de superfície. Nunca terminava.
-//
-// Então o caminho do S3 era código morto, e TODA data fora da janela do NOMADS
-// caía no recuo de 3° — grade 144x mais grossa, onde um ciclone tropical cabe
-// numa célula e some. Era isso que fazia "o furacão perto do Japão não aparecer
-// mais" e a rajada do Rio virar a média de 333 km de oceano.
-//
-// A SOLUÇÃO É A PADRÃO DO MEIO
-//
-// O NOAA publica, ao lado de cada GRIB, um `.idx`: um texto pequeno com o
-// deslocamento em bytes de cada mensagem.
-//
-//     10:4522696:d=2021072701:UGRD:250 mb:anl:
-//     ^  ^       ^            ^     ^      ^
-//     n  byte    data         campo nível  tipo
-//
-// Lê-se o índice (algumas centenas de kB), acham-se as duas mensagens de vento
-// a 10 m, e pede-se ao S3 só aquele intervalo com `Range: bytes=a-b`. São ~3 MB
-// em vez de 500 MB — e as mensagens de UGRD e VGRD costumam ser vizinhas, então
-// uma faixa contígua cobre as duas numa requisição só.
+// Leitura de índices .idx GRIB2 e download parcial via HTTP Range requests.
 // -----------------------------------------------------------------------------
 
 /**

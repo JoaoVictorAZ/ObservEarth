@@ -1,12 +1,6 @@
 // src/windGPU.ts
 // -----------------------------------------------------------------------------
-// SISTEMA DE VENTO EM GPU — ALINHAMENTO GEOGRÁFICO DE ALTA PRECISÃO (RK2)
-//
-// CORREÇÃO CRÍTICA:
-//   O amostrador de textura `getWindVector` agora inverte o eixo Y (`1.0 - p.y`)
-//   para alinhar a conveniente convenção WebGL (UV (0,0) na base) com a grade
-//   GRIB2 (row 0 = 90°N no topo). Sem isto, ventos da latitude sul (-28°S) mostravam
-//   dados da latitude norte (+28°N).
+// Sistema de simulação de partículas de vento em GPU (WebGL GPGPU + RK2).
 // -----------------------------------------------------------------------------
 
 import * as THREE from "three";
@@ -22,35 +16,6 @@ export interface WindFrame {
   key: string;
   field: WindField;
 }
-
-// -----------------------------------------------------------------------------
-// RENDERIZAÇÃO RESTAURADA DO BACKUP DE 08-08, que o usuário identificou como
-// "a melhor versão visual e de informações que já foi implementada".
-//
-// O QUE EU TINHA DESTRUÍDO, E COMO
-//
-// Ao longo de seis rodadas eu fui trocando parâmetros de desenho perseguindo um
-// relato de cada vez, sem nunca comparar com uma referência boa:
-//
-//                    backup            o que eu deixei
-//   espessura        1,2 + vel·2,5     0,8 + vel·0,9      (menos da metade)
-//   opacidade        0,88              0,01 + vel·0,30    (até 88x menor)
-//   brilho no miolo  presente          removido por mim
-//
-// Passei rodadas discutindo física de acúmulo de tinta e IGNOREI o canal mais
-// óbvio que o backup usava: a ESPESSURA. No backup a largura do traço cresce
-// 2,5x com a velocidade — é ela que faz vento forte aparecer, não a opacidade.
-// Ao apagar isso e mexer só no alfa, eu deixei o campo quase invisível e depois
-// tentei compensar com cor, que é o canal mais fraco dos três.
-//
-// E o "erro de índice" que eu relatei na rampa (`mix(c2, c3, s - 1.0)`) NÃO
-// existe aqui: o backup tem `s - 2.0`, correto. O bug foi introduzido depois
-// dele. Eu encontrei um defeito real, mas ele não estava na versão boa.
-//
-// A ÚNICA coisa que mantive da minha versão é a separação do teto de
-// armazenamento — porque ela não muda nada abaixo de 40 m/s e impede que o
-// núcleo de um ciclone (67,8 m/s medidos em 29/07) seja decepado na entrada.
-// -----------------------------------------------------------------------------
 
 /** teto de plausibilidade física para ARMAZENAR: vento de 10 m acima disso não
  *  existe na Terra, e o que passar é erro de desempacotamento. */

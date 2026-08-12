@@ -1,31 +1,3 @@
-// server/geo.js
-// -----------------------------------------------------------------------------
-// GEOGRAFIA POLITICA — fronteiras e rotulos com nivel de detalhe.
-//
-// O DEFEITO QUE ISTO CORRIGE
-// A versao anterior carregava SO `admin_1` (estados). Esse arquivo do Natural
-// Earth contem apenas os paises que possuem subdivisao mapeada — todo o resto do
-// mundo ficava sem NENHUM contorno. E como o `placeAt` usava a mesma fonte, um
-// clique na Colombia nao encontrava poligono e caia no rotulo generico
-// "Oceano Atlantico / Pacifico" para um ponto a 178 m de altitude, em terra.
-//
-// Agora carregamos as duas camadas:
-//   admin_0 = paises   (cobertura global, sempre existe)
-//   admin_1 = estados  (onde houver)
-// A busca por ponto tenta estado primeiro e cai para pais. Nenhum ponto em terra
-// fica sem nome.
-//
-// NIVEL DE DETALHE (inspirado no Google Earth)
-// Nao existe API publica e gratuita do Google Earth para globo proprio; o
-// Google Maps Platform e pago por carregamento. O Natural Earth resolve o mesmo
-// problema sem chave, sem custo e offline — e ja traz o campo `scalerank`, que e
-// literalmente uma ordem de importancia pensada para zoom.
-//
-// UTF-8: os nomes vem com acentuacao correta (Ceara, Piaui, Sao Paulo, Goias).
-// Enviamos `charset=utf-8` explicito e preferimos o campo em portugues quando o
-// Natural Earth o fornece.
-// -----------------------------------------------------------------------------
-
 import { gzipSync } from "node:zlib";
 
 const CDN = "https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson";
@@ -38,7 +10,6 @@ const SRC = {
   places: `${CDN}/ne_50m_populated_places_simple.geojson`,
 };
 
-// -------------------------------------------------------------- simplificacao
 /**
  * Douglas-Peucker. O Natural Earth guarda precisao cartografica de impressao;
  * num globo de 900 px na tela, vertices a menos de ~0,05 grau caem no mesmo

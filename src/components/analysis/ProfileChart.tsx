@@ -1,23 +1,3 @@
-// src/components/analysis/ProfileChart.tsx
-// -----------------------------------------------------------------------------
-// PERFIL VERTICAL — diagrama de temperatura e orvalho contra pressão.
-//
-// POR QUE O EIXO VERTICAL É LOGARÍTMICO
-// A atmosfera não se distribui igualmente na pressão: entre 1000 e 500 hPa há
-// ~5,5 km, e entre 500 e 100 hPa há mais ~10 km. Num eixo linear em pressão, a
-// metade superior da troposfera fica espremida e a tropopausa — que é o que se
-// procura numa sondagem — some. Todo diagrama aeronáutico (skew-T, tefigrama)
-// usa log de pressão pelo mesmo motivo: em log(p), a altura fica quase linear.
-//
-// AS DUAS CURVAS
-// Temperatura e ponto de orvalho. A DISTÂNCIA entre elas é a leitura principal:
-// juntas significam ar saturado (nuvem), afastadas significam ar seco. Por isso
-// elas ficam no mesmo par de eixos, e não em gráficos separados.
-//
-// O orvalho é derivado por Magnus-Tetens no servidor e vai rotulado como
-// derivado — a legenda diz isso, não fica só no comentário do código.
-// -----------------------------------------------------------------------------
-
 import React from "react";
 
 export interface Nivel {

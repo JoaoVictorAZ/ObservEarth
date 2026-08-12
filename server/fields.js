@@ -22,21 +22,7 @@ function rampColor(stops, v) {
 const hex = ([r, g, b]) =>
   "#" + [r, g, b].map((x) => x.toString(16).padStart(2, "0")).join("");
 
-/**
- * COR POR CLASSE, sem interpolar: o valor cai numa faixa e recebe a cor dela.
- *
- * Chuva não é um campo suave. Ela acontece em células, com bordas. Interpolar
- * entre 0,2 mm e 3 mm INVENTA garoa onde não há nada — a rampa contínua produz
- * um halo de "chuvisco" ao redor de cada núcleo, e esse halo não existe no
- * dado, é artefato do desenho.
- *
- * É por isso que radar meteorológico usa faixas discretas há décadas: as
- * bordas visíveis SÃO informação. Elas dizem onde a classe muda, e é isso que
- * se lê num mapa de precipitação.
- *
- * O mesmo vale para índices operacionais (WBGT): 27,9 e 28,1 °C não são
- * "quase a mesma coisa" — 28 é um limiar de decisão. Suavizar apaga o limiar.
- */
+/** Cor por classe discreta para mapeamento meteorológico. */
 function stepColor(stops, v) {
   let cor = stops[0][1];
   for (const [limite, c] of stops) {

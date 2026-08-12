@@ -1,28 +1,17 @@
 // src/components/chat/PointChat.tsx
 // -----------------------------------------------------------------------------
-// TERMINAL DO PONTO — conversa sobre o dossiê, com modelo local.
-//
-// DUAS REGRAS DE INTERFACE QUE NÃO SÃO ESTÉTICA
-//
-//   1. O MODELO EM USO FICA VISÍVEL O TEMPO TODO.
-//      Um 8B e um 1,5B respondem com a mesma fluência e qualidades muito
-//      diferentes. Quem lê precisa saber qual está falando.
-//
-//   2. O DOSSIÊ É INSPECIONÁVEL.
-//      Há um botão que mostra o JSON exato entregue ao modelo. Se a resposta
-//      parecer estranha, dá para conferir a fonte em vez de acreditar.
-//
-// O estado do modelo NÃO vive aqui: vive no chatStore e é sincronizado com o
-// singleton do motor na montagem. Ver o comentário no store para o defeito que
-// isso corrige.
+// Terminal do ponto — conversa sobre o dossiê com modelo local LLM (8B).
+// Janela flutuante com foco z-index, minimização, arraste e redimensionamento em 8 direções.
 // -----------------------------------------------------------------------------
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
+import { GripVertical, X, Minus, RotateCcw } from "lucide-react";
 import {
   motor, MODELOS, detectarCapacidade,
   type Capacidade, type EstadoMotor,
 } from "../../llm/engine";
-import { useChatStore, LARGURA_MIN, LARGURA_MAX } from "../../store/chatStore";
+import { useChatStore } from "../../store/chatStore";
+import { useWindowStore } from "../../store/windowStore";
 import { useDialog } from "../../hooks/useDialog";
 
 interface Props {
@@ -31,17 +20,56 @@ interface Props {
   date: string;
   hour: number;
   onFechar: () => void;
+  onOrganizarJanelas?: () => void;
+}
+
+const CHAT_STORAGE_KEY = "obs:chat:pos:v2";
+const MIN_W = 340;
+const MIN_H = 220;
+
+function lerPadraoChat(): { x: number; y: number; w: number; h: number } {
+  const W = typeof window !== "undefined" ? window.innerWidth : 1200;
+  const H = typeof window !== "undefined" ? window.innerHeight : 800;
+
+  const padrao = {
+    x: Math.max(20, W - 520),
+    y: Math.min(140, H - 450),
+    w: 460,
+    h: 380,
+  };
+
+  try {
+    const t = localStorage.getItem(CHAT_STORAGE_KEY);
+    if (!t) return padrao;
+    const c = JSON.parse(t);
+    if ([c.x, c.y, c.w, c.h].every((v: number) => Number.isFinite(v))) {
+      if (c.x > 0 && c.x < W - 50 && c.y >= 0 && c.y < H - 50) {
+        return c;
+      }
+    }
+  } catch { /* usa padrão */ }
+  return padrao;
 }
 
 const GB = (n: number) => `${n.toFixed(1)} GB`;
 
-export function PointChat({ lat, lng, date, hour, onFechar }: Props) {
+export function PointChat({ lat, lng, date, hour, onFechar, onOrganizarJanelas }: Props) {
   const {
-    largura, setLargura,
     modeloCarregado, setModeloCarregado,
     modeloEscolhido, setModeloEscolhido,
     msgs, addMsg, patchUltima, trocarPonto,
   } = useChatStore();
+
+  const { activeWindow, focusWindow, minimizedWindows, toggleMinimize } = useWindowStore();
+
+  const [caixa, setCaixa] = useState(lerPadraoChat);
+  const [movendo, setMovendo] = useState(false);
+
+  const caixaRef = useRef(caixa);
+  caixaRef.current = caixa;
+
+  const isFocused = activeWindow === "chat";
+  const isMinimized = !!minimizedWindows["chat"];
 
   const [cap, setCap] = useState<Capacidade | null>(null);
   const [progresso, setProgresso] = useState<EstadoMotor>({ fase: "ocioso" });
@@ -51,16 +79,93 @@ export function PointChat({ lat, lng, date, hour, onFechar }: Props) {
   const [gerando, setGerando] = useState(false);
   const [verJson, setVerJson] = useState(false);
   const fimRef = useRef<HTMLDivElement>(null);
-  // Esc fecha, foco entra ao abrir e volta ao fechar. NÃO prende o foco: o
-  // terminal fica ao lado do mapa e a pessoa deve poder navegar entre os dois
-  // sem fechar — prender aqui seria transformar um painel em prisão.
   const painelRef = useDialog<HTMLElement>({ aberto: true, aoFechar: onFechar });
   const abortRef = useRef<AbortController | null>(null);
 
-  // ---- SINCRONIZA COM O MOTOR NA MONTAGEM --------------------------------
-  // Esta é a correção do "pede para instalar de novo". O motor é um singleton:
-  // se ele já tem pesos na VRAM, o painel precisa saber disso ao reabrir, em
-  // vez de assumir que nada foi carregado.
+  const travar = useCallback((c: { x: number; y: number; w: number; h: number }) => {
+    const W = window.innerWidth, H = window.innerHeight;
+    const w = Math.max(MIN_W, Math.min(c.w, W));
+    const h = Math.max(MIN_H, Math.min(c.h, H));
+    return {
+      w, h,
+      // JANELA SOLTA, NÃO ENCAIXADA.
+      //
+      // Antes era `x: max(10, min(c.x, W - w - 10))`, que obriga a janela a
+      // caber INTEIRA entre as margens. O efeito é que ela nunca encosta nem
+      // passa da borda: arrastar para a direita empurra até o limite e ela
+      // "gruda" ali, e uma janela mais larga que a tela sequer se move.
+      //
+      // Agora o único compromisso é a barra de título continuar alcançável —
+      // é por ela que se traz a janela de volta. Fora isso, vai onde quiser,
+      // inclusive metade para fora.
+      x: Math.min(W - 80, Math.max(80 - w, c.x)),
+      y: Math.min(H - 40, Math.max(0, c.y)),
+    };
+  }, []);
+
+  useEffect(() => {
+    const aoRedimensionar = () => setCaixa((c) => travar(c));
+    window.addEventListener("resize", aoRedimensionar);
+    return () => window.removeEventListener("resize", aoRedimensionar);
+  }, [travar]);
+
+  useEffect(() => {
+    try { localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(caixa)); } catch { /* segue */ }
+  }, [caixa]);
+
+  const iniciarArrasto = (modo: string) => (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    if (
+      (e.target as HTMLElement).closest("button") ||
+      (e.target as HTMLElement).closest("input") ||
+      (e.target as HTMLElement).closest("select")
+    ) return;
+
+    e.preventDefault();
+    focusWindow("chat");
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startCaixa = { ...caixaRef.current };
+
+    setMovendo(true);
+
+    const aoMover = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      const c = { ...startCaixa };
+
+      if (modo === "mover") {
+        c.x += dx;
+        c.y += dy;
+      }
+      if (modo.includes("d")) c.w = startCaixa.w + dx;
+      if (modo.includes("b")) c.h = startCaixa.h + dy;
+      if (modo.includes("e")) {
+        const w = Math.max(MIN_W, startCaixa.w - dx);
+        c.x = startCaixa.x + (startCaixa.w - w);
+        c.w = w;
+      }
+      if (modo.includes("c")) {
+        const h = Math.max(MIN_H, startCaixa.h - dy);
+        c.y = startCaixa.y + (startCaixa.h - h);
+        c.h = h;
+      }
+
+      setCaixa(travar(c));
+    };
+
+    const aoSoltar = () => {
+      setMovendo(false);
+      window.removeEventListener("pointermove", aoMover);
+      window.removeEventListener("pointerup", aoSoltar);
+      window.removeEventListener("pointercancel", aoSoltar);
+    };
+
+    window.addEventListener("pointermove", aoMover);
+    window.addEventListener("pointerup", aoSoltar);
+    window.addEventListener("pointercancel", aoSoltar);
+  };
+
   useEffect(() => {
     if (motor.pronto && motor.modelo) {
       setModeloCarregado(motor.modelo);
@@ -75,7 +180,6 @@ export function PointChat({ lat, lng, date, hour, onFechar }: Props) {
     });
   }, [setModeloEscolhido]);
 
-  // troca de ponto limpa a conversa, mas nunca o modelo
   useEffect(() => {
     trocarPonto(`${lat.toFixed(3)}:${lng.toFixed(3)}:${date}:${hour}`);
   }, [lat, lng, date, hour, trocarPonto]);
@@ -97,29 +201,6 @@ export function PointChat({ lat, lng, date, hour, onFechar }: Props) {
 
   useEffect(() => { fimRef.current?.scrollIntoView({ block: "end" }); }, [msgs]);
 
-  // ---- REDIMENSIONAR ------------------------------------------------------
-  // O painel nasce em 560px mas cresce até 1100px. Terminal estreito obriga a
-  // rolar para ler uma resposta de dez linhas, e a comparação entre instantes —
-  // que é o propósito da coisa — exige ver a série inteira de uma vez.
-  const arrastando = useRef(false);
-  useEffect(() => {
-    const mover = (e: PointerEvent) => {
-      if (!arrastando.current) return;
-      setLargura(window.innerWidth - e.clientX - 14);
-    };
-    const soltar = () => {
-      arrastando.current = false;
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-    window.addEventListener("pointermove", mover);
-    window.addEventListener("pointerup", soltar);
-    return () => {
-      window.removeEventListener("pointermove", mover);
-      window.removeEventListener("pointerup", soltar);
-    };
-  }, [setLargura]);
-
   const carregar = useCallback(async () => {
     if (!modeloEscolhido) return;
     try {
@@ -129,7 +210,7 @@ export function PointChat({ lat, lng, date, hour, onFechar }: Props) {
         autor: "sistema",
         texto: `${modeloEscolhido.rotulo} pronto. O dossiê deste ponto está na memória — pergunte.`,
       });
-    } catch { /* o estado de erro já foi publicado pelo motor */ }
+    } catch { /* erro já publicado pelo motor */ }
   }, [modeloEscolhido, setModeloCarregado, addMsg]);
 
   const enviar = useCallback(async () => {
@@ -170,164 +251,199 @@ export function PointChat({ lat, lng, date, hour, onFechar }: Props) {
   return (
     <aside
       ref={painelRef}
-      className="ptchat"
-      style={{ width: largura }}
+      className={`ptchat ${movendo ? "ptchat-movendo" : ""} ${isFocused ? "win-foco" : ""} ${isMinimized ? "win-minimizada" : ""}`}
+      style={{
+        left: caixa.x,
+        top: caixa.y,
+        width: caixa.w,
+        height: isMinimized ? "auto" : caixa.h,
+        zIndex: isFocused ? 30 : 21,
+      }}
+      onPointerDownCapture={() => focusWindow("chat")}
       role="dialog"
-      aria-label="Terminal do ponto"
+      aria-label="Terminal LLM do ponto"
     >
-      {/* punho de redimensionamento na borda esquerda */}
-      <div
-        className="ptchat-punho"
-        role="separator"
-        aria-label="Redimensionar terminal"
-        aria-valuenow={largura}
-        aria-valuemin={LARGURA_MIN}
-        aria-valuemax={LARGURA_MAX}
-        tabIndex={0}
-        onPointerDown={() => {
-          arrastando.current = true;
-          document.body.style.cursor = "col-resize";
-          document.body.style.userSelect = "none";
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "ArrowLeft") setLargura(largura + 40);
-          if (e.key === "ArrowRight") setLargura(largura - 40);
-        }}
-      />
-
-      <header className="ptchat-head">
-        <div>
-          <strong>{lugar ?? "Ponto selecionado"}</strong>
+      <header
+        className="ptchat-head"
+        onPointerDown={iniciarArrasto("mover")}
+        onDoubleClick={() => toggleMinimize("chat")}
+        title="Clique duplo para minimizar/expandir"
+      >
+        <GripVertical size={14} className="ptchat-pega" aria-hidden="true" />
+        <div className="ptchat-titulos">
+          <strong className="ptchat-tit">Terminal LLM 8B</strong>
           <span className="ptchat-coord">
-            {lat.toFixed(3)}°, {lng.toFixed(3)}° · {date} {String(hour).padStart(2, "0")}h UTC
+            {lat.toFixed(3)}°, {lng.toFixed(3)}° · {lugar ?? "Ponto selecionado"}
           </span>
         </div>
-        <div className="ptchat-acoes">
+        <div className="ptchat-botoes-topo">
           <button
-            onClick={() => setLargura(largura >= LARGURA_MAX - 20 ? 560 : LARGURA_MAX)}
-            title="Alternar largura"
-            aria-label="Alternar largura"
-          >⇔</button>
-          <button onClick={onFechar} aria-label="Fechar terminal">✕</button>
+            type="button"
+            className="ptchat-btn-topo"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              setCaixa({
+                x: Math.max(20, window.innerWidth - 520),
+                y: Math.min(140, window.innerHeight - 450),
+                w: 460,
+                h: 380,
+              });
+            }}
+            title="Resetar posição da janela"
+            aria-label="Resetar posição"
+          >
+            <RotateCcw size={13} strokeWidth={1.6} />
+          </button>
+          <button
+            type="button"
+            className="ptchat-btn-topo"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleMinimize("chat");
+            }}
+            title={isMinimized ? "Expandir janela" : "Minimizar janela"}
+            aria-label="Minimizar terminal"
+          >
+            <Minus size={14} strokeWidth={1.6} />
+          </button>
+          <button
+            type="button"
+            className="ptchat-btn-fechar"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onFechar();
+            }}
+            aria-label="Fechar terminal"
+          >
+            <X size={15} strokeWidth={1.6} />
+          </button>
         </div>
       </header>
 
-      {/* ---- carga do modelo: só quando NÃO há modelo na VRAM ------------- */}
-      {!pronto && (
-        <div className="ptchat-setup">
-          {cap && (
-            <p className={cap.webgpu ? "ptchat-nota" : "ptchat-alerta"}>{cap.motivo}</p>
+      {!isMinimized && (
+        <>
+          {!pronto && (
+            <div className="ptchat-setup">
+              {cap && (
+                <p className={cap.webgpu ? "ptchat-nota" : "ptchat-alerta"}>{cap.motivo}</p>
+              )}
+
+              <label className="ptchat-campo">
+                <span>modelo</span>
+                <select
+                  value={modeloEscolhido?.id ?? ""}
+                  disabled={progresso.fase === "baixando"}
+                  onChange={(e) =>
+                    setModeloEscolhido(MODELOS.find((m) => m.id === e.target.value) ?? null)}
+                >
+                  {MODELOS.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.rotulo} · {m.params} · {GB(m.downloadGB)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {modeloEscolhido && <p className="ptchat-nota">{modeloEscolhido.nota}</p>}
+
+              {progresso.fase === "baixando" ? (
+                <div className="ptchat-prog">
+                  <div className="ptchat-bar"><i style={{ width: `${progresso.pct}%` }} /></div>
+                  <small>{progresso.pct}% · {progresso.texto}</small>
+                </div>
+              ) : (
+                <button className="ptchat-go" onClick={carregar} disabled={!modeloEscolhido}>
+                  Carregar {modeloEscolhido?.rotulo} ({GB(modeloEscolhido?.downloadGB ?? 0)})
+                </button>
+              )}
+
+              {progresso.fase === "erro" && <p className="ptchat-alerta">{progresso.mensagem}</p>}
+              <small className="ptchat-rodape">
+                Baixa uma vez e fica em cache do navegador. Roda 100% local via WebGPU.
+              </small>
+            </div>
           )}
 
-          <label className="ptchat-campo">
-            <span>modelo</span>
-            <select
-              value={modeloEscolhido?.id ?? ""}
-              disabled={progresso.fase === "baixando"}
-              onChange={(e) =>
-                setModeloEscolhido(MODELOS.find((m) => m.id === e.target.value) ?? null)}
-            >
-              {MODELOS.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.rotulo} · {m.params} · {GB(m.downloadGB)}
-                </option>
-              ))}
-            </select>
-          </label>
-          {modeloEscolhido && <p className="ptchat-nota">{modeloEscolhido.nota}</p>}
-
-          {progresso.fase === "baixando" ? (
-            <div className="ptchat-prog">
-              <div className="ptchat-bar"><i style={{ width: `${progresso.pct}%` }} /></div>
-              <small>{progresso.pct}% · {progresso.texto}</small>
-            </div>
-          ) : (
-            <button className="ptchat-go" onClick={carregar} disabled={!modeloEscolhido}>
-              Carregar {modeloEscolhido?.rotulo} ({GB(modeloEscolhido?.downloadGB ?? 0)})
-            </button>
+          <div className="ptchat-dossie">
+            {erroDossie ? (
+              <span className="ptchat-alerta">dossiê indisponível: {erroDossie}</span>
+            ) : dossie ? (
+              <>
+                <span>
+                  dossiê pronto · {(dossie.serie as unknown[] | undefined)?.length ?? 0} instantes
+                </span>
+                <button onClick={() => setVerJson((v) => !v)}>
+                  {verJson ? "ocultar" : "ver"} JSON
+                </button>
+              </>
+            ) : (
+              <span>montando dossiê…</span>
+            )}
+          </div>
+          {verJson && dossie && (
+            <pre className="ptchat-json">{JSON.stringify(dossie, null, 2)}</pre>
           )}
 
-          {progresso.fase === "erro" && <p className="ptchat-alerta">{progresso.mensagem}</p>}
-          <small className="ptchat-rodape">
-            Baixa uma vez e fica em cache do navegador. Depois disso funciona sem internet,
-            e fechar o terminal não descarrega o modelo.
-          </small>
-        </div>
+          <div
+            className="ptchat-log"
+            role="log"
+            aria-live="polite"
+            aria-atomic="false"
+            aria-busy={gerando}
+          >
+            {msgs.length === 0 && pronto && (
+              <div className="ptchat-msg ptchat-sistema">
+                <span className="ptchat-prompt">·</span>
+                <div>
+                  {modeloCarregado?.rotulo} pronto. Pergunte sobre este ponto (ex: "como a temperatura variou?", "descreva o vento").
+                </div>
+              </div>
+            )}
+            {msgs.map((m, i) => (
+              <div key={i} className={`ptchat-msg ptchat-${m.autor}`}>
+                <span className="ptchat-prompt">
+                  {m.autor === "voce" ? "›" : m.autor === "modelo" ? "◆" : "·"}
+                </span>
+                <div>{m.texto || (gerando && i === msgs.length - 1 ? "▊" : "")}</div>
+              </div>
+            ))}
+            <div ref={fimRef} />
+          </div>
+
+          <form className="ptchat-entrada" onSubmit={(e) => { e.preventDefault(); void enviar(); }}>
+            <span className="ptchat-prompt">›</span>
+            <input
+              value={entrada}
+              onChange={(e) => setEntrada(e.target.value)}
+              placeholder={pronto ? "pergunte sobre este ponto…" : "carregue um modelo para começar"}
+              disabled={!pronto || !dossie || gerando}
+            />
+            {gerando ? (
+              <button type="button" onClick={() => abortRef.current?.abort()}>parar</button>
+            ) : (
+              <button type="submit" disabled={!pronto || !dossie}>enviar</button>
+            )}
+          </form>
+
+          <footer className="ptchat-rodape">
+            {modeloCarregado
+              ? `${modeloCarregado.rotulo} · ${modeloCarregado.params} · local, sem rede`
+              : "nenhum modelo carregado"}
+          </footer>
+        </>
       )}
 
-      {/* ---- dossiê ------------------------------------------------------- */}
-      <div className="ptchat-dossie">
-        {erroDossie ? (
-          <span className="ptchat-alerta">dossiê indisponível: {erroDossie}</span>
-        ) : dossie ? (
-          <>
-            <span>
-              dossiê pronto · {(dossie.serie as unknown[] | undefined)?.length ?? 0} instantes
-              {Array.isArray(dossie.lacunas) && dossie.lacunas.length > 0 &&
-                ` · ${dossie.lacunas.length} lacuna(s)`}
-            </span>
-            <button onClick={() => setVerJson((v) => !v)}>
-              {verJson ? "ocultar" : "ver"} JSON
-            </button>
-          </>
-        ) : (
-          <span>montando dossiê…</span>
-        )}
-      </div>
-      {verJson && dossie && (
-        <pre className="ptchat-json">{JSON.stringify(dossie, null, 2)}</pre>
-      )}
-
-      {/* ---- conversa ----------------------------------------------------- */}
-      <div
-        className="ptchat-log"
-        role="log"
-        aria-live="polite"
-        aria-atomic="false"
-        aria-busy={gerando}
-      >
-        {msgs.length === 0 && pronto && (
-          <div className="ptchat-msg ptchat-sistema">
-            <span className="ptchat-prompt">·</span>
-            <div>
-              {modeloCarregado?.rotulo} já carregado. Exemplos: “como a pressão variou
-              na janela?”, “compare o vento do primeiro e do último instante”,
-              “que dados faltam?”
-            </div>
-          </div>
-        )}
-        {msgs.map((m, i) => (
-          <div key={i} className={`ptchat-msg ptchat-${m.autor}`}>
-            <span className="ptchat-prompt">
-              {m.autor === "voce" ? "›" : m.autor === "modelo" ? "◆" : "·"}
-            </span>
-            <div>{m.texto || (gerando && i === msgs.length - 1 ? "▊" : "")}</div>
-          </div>
-        ))}
-        <div ref={fimRef} />
-      </div>
-
-      <form className="ptchat-entrada" onSubmit={(e) => { e.preventDefault(); void enviar(); }}>
-        <span className="ptchat-prompt">›</span>
-        <input
-          value={entrada}
-          onChange={(e) => setEntrada(e.target.value)}
-          placeholder={pronto ? "pergunte sobre este ponto…" : "carregue um modelo para começar"}
-          disabled={!pronto || !dossie || gerando}
-        />
-        {gerando ? (
-          <button type="button" onClick={() => abortRef.current?.abort()}>parar</button>
-        ) : (
-          <button type="submit" disabled={!pronto || !dossie}>enviar</button>
-        )}
-      </form>
-
-      <footer className="ptchat-rodape">
-        {modeloCarregado
-          ? `${modeloCarregado.rotulo} · ${modeloCarregado.params} · local, sem rede`
-          : "nenhum modelo carregado"}
-        {" · descreve e compara o dossiê; não interpreta meteorologia"}
-      </footer>
+      {/* Puxadores de redimensionamento em 8 direções */}
+      <div className="win-puxa win-puxa-n" onPointerDown={iniciarArrasto("c")} />
+      <div className="win-puxa win-puxa-s" onPointerDown={iniciarArrasto("b")} />
+      <div className="win-puxa win-puxa-e" onPointerDown={iniciarArrasto("d")} />
+      <div className="win-puxa win-puxa-w" onPointerDown={iniciarArrasto("e")} />
+      <div className="win-puxa win-puxa-nw" onPointerDown={iniciarArrasto("ec")} />
+      <div className="win-puxa win-puxa-ne" onPointerDown={iniciarArrasto("dc")} />
+      <div className="win-puxa win-puxa-sw" onPointerDown={iniciarArrasto("eb")} />
+      <div className="win-puxa win-puxa-se" onPointerDown={iniciarArrasto("db")} />
     </aside>
   );
 }

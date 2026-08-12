@@ -1,28 +1,6 @@
 // src/analysis/csv.ts
 // -----------------------------------------------------------------------------
-// EXPORTAÇÃO EM CSV.
-//
-// Por que este arquivo tem teste próprio: o botão gera
-// `observatorio_historico_10y_<lat>_<lng>.csv`. É o tipo de arquivo que sai da
-// tela, entra numa planilha, vira gráfico de tese e nunca mais é conferido
-// contra a origem. Depois que sai daqui, ninguém sabe de onde veio.
-//
-// O QUE A VERSÃO ANTERIOR FAZIA DE ERRADO
-//
-//   Cabeçalho: "Data,TempMédia(C),...,VentoMáx(km/h),Pressão(hPa)"
-//
-//   - `Pressão(hPa)` não existia. A coluna vinha de `surface_pressure_mean`,
-//     que a API não publica como agregado diário: saía vazia em toda linha,
-//     com um cabeçalho prometendo o dado.
-//   - `VentoMáx(km/h)` estava em m/s. Fator 3,6, mesmo erro que a sonda tinha.
-//   - Sem procedência, sem intervalo, sem unidade padronizada, sem data de
-//     obtenção. Uma planilha anônima.
-//   - `(C)` em vez de `(°C)`, e vírgula decimal impossível num arquivo separado
-//     por vírgula.
-//
-// AQUI: cabeçalho preambulado com origem e janela, unidade em toda coluna,
-// ausência como célula vazia (nunca zero), ponto decimal, e RFC 4180 para as
-// aspas.
+// Exportação de séries temporais diárias para CSV (RFC 4180).
 // -----------------------------------------------------------------------------
 
 export interface SerieDiaria {

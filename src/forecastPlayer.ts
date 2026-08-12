@@ -1,30 +1,3 @@
-// src/forecastPlayer.ts
-// -----------------------------------------------------------------------------
-// REPRODUCAO DA PREVISAO.
-//
-// O QUE HAVIA ANTES
-//   setHour((prev) => (prev + 3) % 24)
-//
-// Isso nao era uma animacao: era o mesmo dia em loop. A hora subia, dava a volta
-// no 24 e voltava ao inicio, entao nenhum sistema meteorologico jamais
-// atravessava a tela. Pior: cada passo disparava uma busca de rede sincrona e o
-// globo congelava entre um quadro e o outro.
-//
-// O QUE ISTO FAZ
-// Trata a sequencia da previsao como um VIDEO:
-//
-//   - a linha do tempo vem do servidor, que sabe ate onde o ciclo do GFS alcanca
-//   - os quadros sao BAIXADOS ADIANTE do cursor, nao no momento de exibir
-//   - o cursor anda em fracoes, e o par de campos vizinhos e interpolado na GPU
-//   - se o proximo quadro nao chegou, a reproducao ESPERA em vez de saltar
-//
-// O ultimo ponto e o que separa isto de um carrossel. Saltar um quadro faltante
-// mostraria o tempo pulando 6 h sem aviso; esperar mostra uma barra de
-// carregamento e mantem a sequencia intacta. Numa banca, a diferenca entre as
-// duas coisas e a diferenca entre "o modelo evolui assim" e "as vezes some um
-// pedaco".
-// -----------------------------------------------------------------------------
-
 import type { WindGrid } from "./globe";
 
 export interface Frame {

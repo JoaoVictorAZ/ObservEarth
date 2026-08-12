@@ -1,30 +1,6 @@
 // server/janela.js
 // -----------------------------------------------------------------------------
-// JANELA DE INTERESSE — por que uma textura global nunca serve zoom.
-//
-// A MEDIÇÃO QUE DECIDE
-// A imagem de satélite é uma textura equirretangular única, de 4096 px, esticada
-// sobre o planeta inteiro. Isso dá 4096/360 = 11,4 texels por grau, FIXO. Os
-// pixels de tela por grau, ao contrário, crescem sem limite conforme se
-// aproxima:
-//
-//   altitude   graus visíveis   texels/grau   px de tela/grau   texel por px
-//     2,50          147            11,4             15             0,77
-//     1,70          137            11,4             16             0,72
-//     0,40           89            11,4             24             0,47
-//     0,10           49            11,4             44             0,26
-//
-// Abaixo de 1,0 a textura está sendo AMPLIADA. Ou seja: mesmo na vista inicial
-// já se vê textura esticada, e a 0,10 cada texel cobre quatro pixels de tela.
-//
-// Aumentar a textura não resolve — só empurra o problema. 8192 px custaria
-// 134 MB de memória de vídeo e compraria um fator 2, que some com dois passos
-// de zoom.
-//
-// A SAÍDA é a mesma de qualquer mapa: buscar SÓ A REGIÃO VISÍVEL, na resolução
-// que a tela pede. O GIBS é WMS e aceita BBOX arbitrário, então é a mesma
-// requisição com uma janela em vez do mundo.
-//
+// Cálculo de caixas delimitadoras (BBOX) e janelas de visualização regional.
 // -----------------------------------------------------------------------------
 // O QUE PRECISA DE CUIDADO: O ORÇAMENTO
 //

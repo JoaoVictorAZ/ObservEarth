@@ -1,26 +1,6 @@
 // server/timeseries.js
 // -----------------------------------------------------------------------------
-// SÉRIE HISTÓRICA DIÁRIA — o que alimenta a aba de análise.
-//
-// DOIS DEFEITOS QUE ISTO SUBSTITUI
-//
-//   1. CONTRATO QUEBRADO. A rota anterior devolvia série HORÁRIA em
-//      `{ stats, series }`; o modal esperava agregados DIÁRIOS em
-//      `{ ok, data }`. Não havia interseção — a aba caía sempre em "formato de
-//      dados inválido". E o seletor de 1 mês a 10 anos mandava `?range=`, que
-//      a rota nem lia (ela lia `?days=`, com teto de 14).
-//
-//   2. FABRICAÇÃO. Quando a Open-Meteo não respondia, a rota INVENTAVA a série
-//      inteira: temperatura de `25 − |lat|·0,35 + sen(i/4)·3`, umidade de
-//      `60 + cos(i/3)·20`, e até os carimbos de tempo. Devolvia com status 200
-//      e sem marca nenhuma.
-//
-//      Esta era a mais grave das cinco fabricações encontradas neste projeto,
-//      porque a tela tem um botão EXPORTAR CSV. O arquivo saía chamado
-//      `observatorio_historico_10y_<lat>_<lng>.csv`, com dez anos de senóides.
-//      É o tipo de arquivo que entra numa tese.
-//
-// AQUI NÃO HÁ PLANO B INVENTADO. Falha é erro, com código e mensagem.
+// Consulta e agregação de séries históricas temporais diárias.
 // -----------------------------------------------------------------------------
 
 /** janelas oferecidas na interface, em dias */

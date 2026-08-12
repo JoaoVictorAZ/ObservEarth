@@ -1,28 +1,3 @@
-// src/components/analysis/SeriesChart.tsx
-// -----------------------------------------------------------------------------
-// TRAÇADO DE SÉRIE TEMPORAL.
-//
-// A matemática está em `src/analysis/series.ts`, com teste. Aqui só o desenho.
-//
-// QUATRO DECISÕES DE DESENHO, TODAS COM MOTIVO
-//
-//   1. LACUNA É LACUNA. A linha quebra onde faltam dados. O traçado anterior
-//      filtrava os nulos e ligava as pontas: três meses ausentes viravam um
-//      segmento reto, que é um dado que ninguém mediu.
-//
-//   2. FAIXA MIN–MAX QUANDO REDUZ. Em dez anos cada pixel cobre ~15 dias. A
-//      linha sozinha mostraria a média e esconderia que naquele intervalo
-//      houve de 8 °C a 34 °C. A faixa clara atrás da linha é a variação real
-//      dentro da coluna, e some sozinha quando não há redução.
-//
-//   3. UM ACENTO SÓ. O sistema já decidiu: cor é DADO. Seis matizes do Tailwind
-//      para seis grandezas não informavam nada — competiam com o mapa, onde a
-//      cor significa medida. Aqui a distinção entre gráficos é o rótulo.
-//
-//   4. EIXO VERTICAL COM MARCAS. Sem escala visível, um traçado bonito é um
-//      desenho. Com marcas, é leitura.
-// -----------------------------------------------------------------------------
-
 import React, { useId, useMemo } from "react";
 import { pontos, envelope, extremos, trechos, escala, marcas, type Ponto } from "../../analysis/series";
 

@@ -1,25 +1,3 @@
-// src/hooks/useDialog.ts
-// -----------------------------------------------------------------------------
-// COMPORTAMENTO DE DIÁLOGO — Esc, foco preso, foco devolvido.
-//
-// A AUDITORIA ENCONTROU TRÊS DIÁLOGOS SEM NENHUM DOS TRÊS:
-// PointChat, AnalysisModal e CommandPalette. Nenhum fecha com Esc, nenhum
-// move o foco para dentro, nenhum devolve o foco ao fechar.
-//
-// O que isso significa na prática, para quem navega por teclado:
-//
-//   · abre o terminal, mas o foco continua no botão que o abriu — atrás do
-//     painel. Tab passeia pelo mapa inteiro antes de chegar ao campo de texto.
-//   · não há como fechar sem encontrar o ✕ com o cursor.
-//   · ao fechar, o foco vai para o começo do documento. A pessoa perde o lugar
-//     onde estava e recomeça a navegação do zero.
-//
-// Nada disso aparece em teste de clique, e nada disso é opcional: WCAG 2.1
-// exige 2.1.2 (sem armadilha de teclado) e 2.4.3 (ordem de foco coerente).
-//
-// Um observatório para trabalho de campo tem chance real de ser usado por
-// alguém de mãos ocupadas, com luva, ou num terminal sem mouse decente.
-// -----------------------------------------------------------------------------
 
 import { useEffect, useRef } from "react";
 

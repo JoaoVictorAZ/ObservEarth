@@ -137,32 +137,7 @@ async function buildWindGridGfs(fetchImpl, dateStr, hour) {
   const u = Array.from(uMsg.values);
   const v = Array.from(vMsg.values);
 
-  // -------------------------------------------------------------------------
-  // PLAUSIBILIDADE FÍSICA, e não apenas "é um número".
-  //
-  // A checagem antiga só perguntava `Number.isFinite`. Um campo decodificado
-  // errado, com 21 MILHÕES de m/s em cada nó, passava com "100% medido" — e
-  // então o cliente aplicava `clamp(±40)` ao montar a textura, o que
-  // transformava TODO nó em exatamente +40 ou -40.
-  //
-  // Campo constante = todas as partículas no mesmo rumo = listras diagonais
-  // paralelas, uniformes, bonitas e completamente falsas. O clamp convertia
-  // lixo absurdo em escoamento convincente, e por isso o defeito sobreviveu a
-  // várias rodadas de "o vento está errado".
-  //
-  // O recorde de rajada registrado na Terra é ~113 m/s (Barrow Island, 1996).
-  // Na alta troposfera um jato passa de 100 m/s, mas isto é vento de 10 m.
-  // 150 m/s é folga generosa: nada real chega lá, e qualquer coisa acima é
-  // defeito de desempacotamento, não meteorologia.
-  // REVERTIDO A PEDIDO: a guarda deixou de RECUSAR o campo.
-  //
-  // Ela continua MEDINDO e reportando, porque a medição é útil e não custa
-  // nada — mas não derruba mais o pedido. Recusar um campo inteiro por 0,1%
-  // de nós absurdos é uma política forte demais para uma tela de trabalho:
-  // se o desempacotamento estiver ruim numa faixa pequena, era melhor ver o
-  // resto do planeta do que não ver nada.
-  //
-  // O número segue disponível em `implausiblePct` e `maxAbsMs` na resposta,
+  // Validação de plausibilidade física e limites de velocidade (m/s).
   // e no console. Quem quiser reativar a recusa: lançar quando
   // `absurdos > nPoints * 0.001`.
   const LIMITE_FISICO = 150;

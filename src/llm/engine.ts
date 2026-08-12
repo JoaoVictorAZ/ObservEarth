@@ -1,20 +1,6 @@
 // src/llm/engine.ts
 // -----------------------------------------------------------------------------
-// MOTOR DE LINGUAGEM LOCAL — WebLLM sobre WebGPU.
-//
-// Roda inteiramente no navegador. Depois do primeiro carregamento o modelo fica
-// no cache do navegador e funciona SEM REDE — que é o requisito de campo: um
-// observatório que só responde com internet não serve para trabalho de campo.
-//
-// A CONTA QUE DECIDE TUDO
-// Um modelo de 8 bilhões de parâmetros quantizado em 4 bits ocupa ~4,6 GB de
-// VRAM, e precisa dela LIVRE. No mesmo dispositivo já estão as texturas do
-// globo, os alvos de rastro das partículas e os campos em meia-precisão.
-//
-// Por isso existe uma ESCADA. O 8B é o padrão pedido, mas se o dispositivo não
-// couber, cair para um modelo menor é melhor que a feature simplesmente não
-// abrir — e o usuário precisa saber qual está rodando, porque a qualidade da
-// resposta muda.
+// Motor de inferência LLM local via WebLLM / WebGPU.
 // -----------------------------------------------------------------------------
 
 import type { MLCEngine, InitProgressReport } from "@mlc-ai/web-llm";

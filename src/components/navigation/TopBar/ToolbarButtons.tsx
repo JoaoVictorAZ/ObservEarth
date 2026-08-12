@@ -1,33 +1,3 @@
-// src/components/navigation/TopBar/ToolbarButtons.tsx
-// -----------------------------------------------------------------------------
-// FERRAMENTAS, AGRUPADAS POR NATUREZA.
-//
-// TRÊS DEFEITOS CORRIGIDOS AQUI, E DOIS SÃO DE CONTEÚDO
-//
-//   1. UM BOTÃO MENTIA SOBRE O QUE FAZ.
-//      O ícone de bússola tinha `title="Travar Norte / Resetar Câmera"` e o
-//      manipulador `onSearchCoord?.(-23.5505, -46.6333)` — as coordenadas de
-//      São Paulo. Ele não trava norte nem reseta nada: ele voa para São Paulo.
-//
-//   2. O PAINEL DE DIAGNÓSTICO ERA CRAVADO.
-//        Resolução Pixel Ratio:   2x (Retina)
-//        Partículas GPU:          131.072 vetores
-//        Suavização Anisotrópica: 8x Max
-//      Nenhum dos três vinha do motor. O pixel ratio muda com o degrau
-//      (2,0/1,5/1,0), as partículas são 160.000/90.000/40.000, e "anisotrópica
-//      8x" não é configurada em lugar nenhum do código.
-//
-//      Um painel de diagnóstico é o único lugar da interface onde o número não
-//      pode ser decorativo: ele existe para responder "por que está lento?".
-//      Número fixo ali é a resposta errada para a única pergunta que ele serve.
-//
-//   3. SEIS BOTÕES IGUAIS, SEM AGRUPAMENTO.
-//      Interruptores (rotação, iluminação) e ações (início, captura) tinham a
-//      mesma forma, o mesmo tamanho e a mesma vizinhança. A distinção importa:
-//      interruptor tem ESTADO e fica aceso; ação acontece e acaba. Agora estão
-//      separados por um fio, e os interruptores usam `aria-pressed`.
-// -----------------------------------------------------------------------------
-
 import React, { useState, useRef, useEffect } from "react";
 import { useGlobeStore } from "../../../store/globeStore";
 import { usePerfStore } from "../../../store/perfStore";

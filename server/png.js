@@ -1,20 +1,6 @@
 // server/png.js
 // -----------------------------------------------------------------------------
-// CODIFICADOR PNG, SEM DEPENDENCIA.
-//
-// POR QUE ESCREVER ISTO EM VEZ DE INSTALAR UMA BIBLIOTECA
-// O campo do GFS chega como 1.038.240 numeros. Mandar isso ao navegador como
-// JSON sao ~16 MB por camada por fatia — inviavel. Como PNG equirretangular,
-// o mesmo campo cabe em algumas centenas de kB, e o cliente ja sabe desenhar
-// PNG no globo: e exatamente o caminho que as imagens do GIBS ja percorrem.
-//
-// PNG e um formato simples quando se escreve apenas o subconjunto necessario:
-// assinatura, IHDR, IDAT (deflate, que o `node:zlib` faz) e IEND, com CRC-32
-// por bloco. Sao ~120 linhas contra uma arvore de dependencias que teria de ser
-// auditada e mantida. O projeto ja tomou essa decisao no decodificador GRIB2,
-// e pelo mesmo motivo.
-//
-// Referencia: PNG (Portable Network Graphics) Specification, W3C REC-png-20031110.
+// Codificador PNG puro em Node.js (sem dependências externas).
 // -----------------------------------------------------------------------------
 
 import zlib from "node:zlib";

@@ -1,33 +1,3 @@
-// server/dossier.js
-// -----------------------------------------------------------------------------
-// DOSSIÊ DO PONTO — o contrato de dados que o chat consome.
-//
-// Ao clicar num ponto, o usuário passa a poder conversar sobre ele. Para que
-// essa conversa seja confiável, o modelo de linguagem precisa receber um objeto
-// que satisfaça quatro condições. Nenhuma delas é opcional.
-//
-//   1. TODO VALOR TEM PROCEDÊNCIA
-//      Cada número diz de onde veio e em que unidade está. Sem isso o modelo
-//      mistura GFS com Open-Meteo numa frase só, e quem lê não tem como saber.
-//
-//   2. AUSÊNCIA É EXPLÍCITA
-//      Falta de dado é `null` com motivo declarado, nunca zero nem estimativa.
-//      Este projeto já removeu três fabricações que se apresentavam como
-//      medição; um dossiê que preenche buraco reintroduz a quarta.
-//
-//   3. A ARITMÉTICA É FEITA AQUI, NÃO PELO MODELO
-//      Diferenças entre instantes, máximos, mínimos e tendências vêm
-//      pré-calculados. Modelo de linguagem erra conta — e erra com fluência,
-//      produzindo número plausível que ninguém confere. Se ele só precisa LER
-//      um delta já calculado, não há onde inventar.
-//
-//   4. UMA REQUISIÇÃO, MUITOS INSTANTES
-//      A Open-Meteo devolve séries HORÁRIAS numa chamada só. Pedir hora a hora
-//      seria multiplicar o custo por N sem ganhar nada — e o orçamento deste
-//      projeto é 25% do plano gratuito.
-// -----------------------------------------------------------------------------
-
-/** o que cada variável significa, em que unidade, e de onde vem */
 export const ESQUEMA = {
   temperatura:  { unidade: "°C",    fonte: "Open-Meteo", campo: "temperature_2m",       desc: "temperatura do ar a 2 m" },
   orvalho:      { unidade: "°C",    fonte: "Open-Meteo", campo: "dew_point_2m",         desc: "ponto de orvalho a 2 m" },

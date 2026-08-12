@@ -1,25 +1,6 @@
 // server/windVerify.js
 // -----------------------------------------------------------------------------
-// O CAMPO DE PARTÍCULAS CONCORDA COM A SONDA?
-//
-// POR QUE ISTO EXISTE
-// "O vento está errado" foi dito muitas vezes neste projeto, e quase sempre
-// estava certo — mas por motivos DIFERENTES a cada vez: orientação espelhada,
-// quantização de 8 bits, cache servindo esquema velho, decodificador quebrado.
-// Cada diagnóstico custou horas porque a discussão era sobre a APARÊNCIA.
-//
-// Aparência não se discute; número se confere. Este módulo lê o MESMO ponto por
-// dois caminhos independentes:
-//
-//   sonda  -> Open-Meteo, wind_speed_10m / wind_direction_10m (1 ponto)
-//   campo  -> GFS 0,25°, UGRD/VGRD do GRIB2 (a grade que move as partículas)
-//
-// São modelos diferentes, então NÃO se espera igualdade. Espera-se acordo
-// dentro do erro entre modelos: poucos m/s e algumas dezenas de graus. Se a
-// direção divergir ~180°, há inversão de sinal; se divergir ~90°, há troca de
-// eixo; se a latitude estiver espelhada, o desacordo cresce com |lat|. Cada
-// defeito tem uma assinatura própria, e é isso que torna a conferência útil em
-// vez de apenas tranquilizadora.
+// Verificação de consistência e alinhamento do campo de vento (GFS vs Sonda).
 // -----------------------------------------------------------------------------
 
 /**

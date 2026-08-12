@@ -1,19 +1,6 @@
 // src/perf.ts
 // -----------------------------------------------------------------------------
-// MEDICAO E QUALIDADE ADAPTATIVA.
-//
-// Regra de otimizacao: nao se otimiza o que nao se mede. Este modulo instrumenta
-// o quadro de verdade — tempo de CPU do nosso loop, tempo total entre quadros,
-// e os contadores do proprio WebGL (chamadas de desenho, triangulos, texturas).
-// Sem isso, "esta travando" e um palpite e cada correcao e um tiro no escuro.
-//
-// A segunda funcao e ADAPTAR. O mesmo codigo roda num notebook integrado e numa
-// maquina com placa dedicada. Em vez de escolher uma qualidade fixa que e ruim
-// nos dois casos, medimos e descemos de degrau quando o quadro estoura o
-// orcamento — como fazem motores de jogo.
-//
-// ORCAMENTO: 16,7 ms por quadro sao 60 FPS. Adotamos 20 ms como teto tolerado
-// (50 FPS) e 33 ms como limite critico (30 FPS).
+// Medição de desempenho (FPS / CPU / GPU) e controle de qualidade adaptativa.
 // -----------------------------------------------------------------------------
 
 export interface FrameStats {

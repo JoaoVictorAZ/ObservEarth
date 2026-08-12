@@ -1,38 +1,9 @@
-// src/components/dock/DensidadeVento.tsx
-// -----------------------------------------------------------------------------
-// CONTROLE DE DENSIDADE DAS PARTÍCULAS.
-//
-// Mora dentro da própria linha do vento, e não num painel de configurações
-// separado, porque é um atributo DAQUELA camada. Um controle longe do que ele
-// controla obriga a ir e voltar para ver o efeito.
-//
-// DUAS COISAS QUE ELE PRECISA FAZER CERTO
-//
-// 1. NÃO REALOCAR A CADA PIXEL DE ARRASTO.
-//    `setWindDensity` chama `resize()`, que destrói e recria as texturas de
-//    estado e o buffer de atributos das partículas. Um arrastar normal dispara
-//    umas 60 mudanças por segundo; sem espera, são 60 realocações de GPU por
-//    segundo. O ponteiro anda macio (é só estado do React) e a aplicação de
-//    verdade espera o arrasto sossegar.
-//
-// 2. MOSTRAR O NÚMERO REAL, NÃO A PORCENTAGEM.
-//    "45%" não diz nada. "40.500 partículas" diz — e deixa comparar com o custo
-//    que se vê no painel do motor. A porcentagem é do degrau ATUAL, então o
-//    número muda sozinho quando o monitor de desempenho degrada; mostrar o
-//    absoluto é o que torna isso visível em vez de misterioso.
-// -----------------------------------------------------------------------------
-
 import React, { useEffect, useRef, useState } from "react";
 import { useGlobeStore } from "../../store/globeStore";
 import { usePerfStore } from "../../store/perfStore";
 import { TIERS } from "../../perf";
 
-/**
- * Não recebe referência do motor. Ele só escreve no store, e o `GlobeViewport`
- * — que é quem tem o motor — reage. Passar uma referência do globo até aqui
- * atravessaria quatro componentes e criaria um segundo caminho para mexer na
- * mesma coisa.
- */
+
 export const DensidadeVento: React.FC = () => {
   const { windDensity, setWindDensity } = useGlobeStore();
   const { stats } = usePerfStore();

@@ -1,14 +1,3 @@
-// server/fires.js
-// -----------------------------------------------------------------------------
-// FOCOS DE CALOR — NASA FIRMS (deteccao real, quase em tempo real).
-//
-// FIRMS entrega CSV por area. Usamos a area global e o sensor VIIRS S-NPP, que
-// tem resolucao de 375 m e passagem duas vezes ao dia — o mesmo produto que a
-// maioria dos paineis operacionais usa.
-//
-// Sem MAP_KEY a rota responde 503 com instrucao, em vez de inventar focos.
-// -----------------------------------------------------------------------------
-
 import { get, has } from "./keys.js";
 
 const BASE = "https://firms.modaps.eosdis.nasa.gov/api/area/csv";

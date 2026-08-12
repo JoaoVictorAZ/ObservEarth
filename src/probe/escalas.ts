@@ -1,24 +1,6 @@
 // src/probe/escalas.ts
 // -----------------------------------------------------------------------------
-// COR POR VALOR — não por linha.
-//
-// O QUE EU FIZ DE ERRADO ANTES
-// Numa rodada anterior a sonda tinha dez matizes diferentes, um por linha,
-// tirados da paleta do Tailwind. Eu removi todas e escrevi que "cor é DADO,
-// não enfeite; dez cores para dez grandezas não informa nada".
-//
-// O princípio estava certo. A APLICAÇÃO estava errada. Se dez cores fixas não
-// informam nada, a resposta não é zero cor — é cor que carrega o valor. Um
-// painel todo cinza obriga a ler dez números e comparar de cabeça com faixas
-// que só um meteorologista tem decoradas.
-//
-// Aqui cada grandeza tem a SUA escala, e a cor sai do valor medido:
-//   22 °C fica temperado, 38 °C fica quente, −5 °C fica frio
-//   10 m/s de vento usa a MESMA rampa do mapa, então painel e globo concordam
-//   85% de umidade fica saturado, 20% fica seco
-//
-// Some a cor e os números continuam lá. É o teste de que ela é redundante com
-// o dado, e não a única forma de lê-lo.
+// Escalas de cores e gradientes de mapeamento meteorológico por grandeza.
 // -----------------------------------------------------------------------------
 
 export type Parada = readonly [valor: number, cor: string];
@@ -64,18 +46,14 @@ export const TEMPERATURA: readonly Parada[] = [
 export const ORVALHO = TEMPERATURA;
 
 /**
- * Vento em m/s — a MESMA rampa do mapa.
- *
- * Isto é o que faz painel e globo concordarem: se a partícula está branca no
- * mapa, o número no painel também está. Se as duas escalas divergirem, a tela
- * passa a dizer duas coisas sobre a mesma medida.
+ * Vento em m/s
  */
 export const VENTO: readonly Parada[] = [
   [0, "#6e86c4"], [5, "#7fb4d8"], [10, "#7fd8c4"], [15, "#a8e08a"],
   [21, "#e8e070"], [26, "#fff4d6"],
 ];
 
-/** rajada: mesma escala do vento, porque é a mesma grandeza física */
+/** rajada: mesma escala do vento */
 export const RAJADA = VENTO;
 
 /** umidade relativa, em %: seco a saturado */
@@ -90,21 +68,13 @@ export const PRESSAO: readonly Parada[] = [
 
 /**
  * Precipitação em mm/h: convenção de radar.
- *
- * O extremo seco era #5a6478 (3,27:1) — e "sem chuva" é o valor mais comum de
- * todos. Deixar o mais frequente ilegível é o pior lugar para economizar
- * contraste.
  */
 export const CHUVA: readonly Parada[] = [
   [0, "#8a94a8"], [0.5, "#7fb4d8"], [2.5, "#7fd88a"], [10, "#e8e070"], [30, "#ff9d6b"], [60, "#ff7a9d"],
 ];
 
 /**
- * Cobertura de nuvens, em %: luminância pura, como no mapa.
- *
- * O extremo escuro era #4a5568, que dá 2,58:1 contra o fundo do painel —
- * REPROVA no mínimo de 4,5:1 para texto. Céu limpo é o valor mais comum do
- * planeta: era justamente o mais frequente que ficava ilegível.
+ * Cobertura de nuvens, em %: luminância pura
  */
 export const NUVEM: readonly Parada[] = [
   [0, "#8593a8"], [50, "#b4c0cf"], [100, "#e8eef5"],
@@ -122,10 +92,6 @@ export const ELEVACAO: readonly Parada[] = [
 
 /**
  * Faixa de referência para a barrinha de posição.
- *
- * A cor sozinha diz "onde nesta escala", mas não diz qual é a escala. A barra
- * mostra a posição do valor dentro da faixa — é o que transforma a cor de
- * enfeite em leitura.
  */
 export function posicaoNaFaixa(escala: readonly Parada[], v: number | null | undefined): number | null {
   if (v == null || !Number.isFinite(v)) return null;

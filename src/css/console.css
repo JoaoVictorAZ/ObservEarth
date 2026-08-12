@@ -1,0 +1,185 @@
+/* src/css/console.css — console de conversa com o modelo local (8B LLM).
+   Modal flutuante, arrastável e redimensionável alinhado abaixo da sonda. */
+
+.ptchat {
+  /* `fixed`, não `absolute`: assim nenhum ancestral posicionado — agora ou
+     depois — consegue ancorar a janela a um canto. Ela flutua sobre a tela
+     inteira e o `left`/`top` em linha manda sozinho. */
+  position: fixed; z-index: 22;
+  display: flex; flex-direction: column;
+  min-width: 340px; min-height: 240px;
+  background: var(--scrim);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-lg);
+  box-shadow: var(--e-float);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+  animation: ptchatRise 0.25s var(--ease) both;
+}
+
+@keyframes ptchatRise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+.ptchat-movendo, .ptchat-movendo * {
+  user-select: none;
+  cursor: grabbing !important;
+}
+
+.ptchat-head {
+  flex: none; display: flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+  cursor: grab;
+}
+.ptchat-head:active { cursor: grabbing; }
+
+.ptchat-pega {
+  flex: none; color: var(--ink-4); display: flex;
+}
+.ptchat-titulos {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px;
+}
+.ptchat-tit {
+  margin: 0; font-size: var(--t-body); font-weight: var(--w-medium); color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ptchat-coord {
+  font-family: var(--mono); font-size: var(--t-micro); color: var(--ink-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ptchat-botoes-topo {
+  margin-left: auto; display: flex; align-items: center; gap: 4px;
+}
+.ptchat-btn-topo {
+  position: relative; z-index: 5; pointer-events: auto;
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 3px;
+  color: var(--ink-3); background: transparent; border: none; cursor: pointer;
+  transition: all var(--m-fast) var(--ease);
+}
+.ptchat-btn-topo:hover { color: var(--ink); background: var(--surface-hi); }
+.ptchat-btn-fechar {
+  position: relative; z-index: 5; pointer-events: auto;
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 3px;
+  color: var(--ink-3); background: transparent; border: none; cursor: pointer;
+}
+.ptchat-btn-fechar:hover { color: var(--ink); background: var(--surface-hi); }
+
+/* O registro da conversa rola; a entrada fica fixa embaixo. */
+.ptchat-log {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: var(--s-4); display: flex; flex-direction: column; gap: var(--s-4);
+}
+.ptchat-msg {
+  max-width: 88%; padding: var(--s-3) var(--s-4);
+  font-size: var(--t-small); line-height: 1.55;
+  border-radius: var(--r-lg); background: var(--surface); color: var(--ink-2);
+}
+.ptchat-msg strong { color: var(--ink); }
+.ptchat-msg[data-de="user"], .ptchat-voce {
+  align-self: flex-end; background: var(--surface-hi);
+  border: 1px solid var(--rule-soft); color: var(--ink);
+}
+.ptchat-sistema {
+  align-self: center; max-width: 100%;
+  font-family: var(--mono); font-size: var(--t-micro); color: var(--ink-3);
+  background: none; padding: 0;
+}
+
+.ptchat-entrada {
+  flex: none; display: flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-3) var(--s-4); border-top: 1px solid var(--rule);
+  background: var(--surface);
+}
+.ptchat-entrada input {
+  flex: 1; min-height: 34px; padding: var(--s-2) var(--s-3);
+  background: var(--scrim); color: var(--ink);
+  border: 1px solid var(--rule); border-radius: var(--r);
+  font-family: var(--sans); font-size: var(--t-small); outline: none;
+}
+.ptchat-entrada input:focus { border-color: var(--signal); background: var(--surface-hi); }
+.ptchat-entrada input::placeholder { color: var(--ink-4); }
+.ptchat-entrada button {
+  flex: none; padding: var(--s-2) var(--s-4); height: 34px;
+  border-radius: var(--r); font-size: var(--t-small); font-weight: var(--w-medium);
+  color: var(--void); background: var(--signal); border: none; cursor: pointer;
+}
+.ptchat-entrada button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ---- instalação do modelo ------------------------------------------------ */
+.ptchat-setup { padding: var(--s-4); text-align: center; }
+.ptchat-campo {
+  display: flex; flex-direction: column; gap: var(--s-2); text-align: left;
+  margin-bottom: var(--s-3);
+}
+.ptchat-campo select {
+  width: 100%; padding: var(--s-2) var(--s-3);
+  background: var(--surface-hi); color: var(--ink);
+  border: 1px solid var(--rule); border-radius: var(--r);
+  font-family: var(--sans); font-size: var(--t-small);
+  cursor: pointer; outline: none;
+}
+.ptchat-campo select:focus {
+  border-color: var(--signal);
+}
+.ptchat-campo select option {
+  background-color: #0d111a;
+  color: #f4f7fa;
+  padding: 8px 12px;
+}
+.ptchat-campo select option:disabled {
+  color: #55606e;
+  background-color: #070a10;
+}
+.ptchat-go {
+  width: 100%; padding: var(--s-3) var(--s-4); border-radius: var(--r-lg);
+  font-size: var(--t-small); font-weight: var(--w-medium);
+  color: var(--void); background: var(--signal); border: none; cursor: pointer;
+}
+.ptchat-go:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.ptchat-prog {
+  width: 100%; height: 4px; margin: var(--s-3) 0;
+  background: var(--rule-soft); border-radius: 2px; overflow: hidden;
+}
+.ptchat-prog .ptchat-bar i { display: block; height: 100%; background: var(--signal); transition: width 0.2s; }
+.ptchat-nota, .ptchat-rodape {
+  margin: var(--s-2) 0 0; padding: 0 var(--s-4) var(--s-2);
+  font-size: var(--t-micro); color: var(--ink-3); line-height: 1.5;
+}
+
+.ptchat-alerta {
+  margin: var(--s-2) 0; padding: var(--s-2) var(--s-3);
+  font-size: var(--t-micro); line-height: 1.5; color: var(--ink-2);
+  background: var(--surface); border-left: 2px solid var(--warn);
+  border-radius: 0 var(--r) var(--r) 0;
+}
+
+.ptchat-dossie {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--s-2) var(--s-4); border-bottom: 1px solid var(--rule-soft);
+  font-size: var(--t-micro); color: var(--ink-3);
+}
+.ptchat-dossie button {
+  background: transparent; border: none; color: var(--signal);
+  font-size: var(--t-micro); cursor: pointer; text-decoration: underline;
+}
+.ptchat-json {
+  max-height: 160px; overflow: auto; margin: 0;
+  padding: var(--s-3); background: var(--surface);
+  border-bottom: 1px solid var(--rule-soft);
+  font-family: var(--mono); font-size: var(--t-micro);
+  color: var(--ink-2); line-height: 1.5; white-space: pre-wrap;
+}
+.ptchat-prompt { font-family: var(--mono); font-size: var(--t-micro); color: var(--ink-3); }
+
+/* Handles de redimensionamento */
+.ptchat-puxa { position: absolute; touch-action: none; z-index: 10; }
+.ptchat-puxa-e { left: 0; top: 8px; bottom: 14px; width: 6px; cursor: ew-resize; }
+.ptchat-puxa-d { right: 0; top: 8px; bottom: 14px; width: 6px; cursor: ew-resize; }
+.ptchat-puxa-b { left: 8px; right: 14px; bottom: 0; height: 6px; cursor: ns-resize; }
+.ptchat-puxa-c { right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; }

@@ -1,30 +1,6 @@
 // server/compare.js
 // -----------------------------------------------------------------------------
-// COMPARAÇÃO ENTRE MODELOS NUMÉRICOS.
-//
-// O QUE ISTO SUBSTITUI — e por que era a pior das seis fabricações.
-//
-// A rota anterior fazia UMA chamada (que a Open-Meteo atende com o modelo
-// padrão) e derivava os outros dois por soma:
-//
-//     gfs:   { temperature: baseTemp }
-//     icon:  { temperature: baseTemp + 0.4 }
-//     ecmwf: { temperature: baseTemp - 0.2 }
-//
-// A tela que exibia isso se chamava "Comparação de Modelos Numéricos
-// (GFS vs ECMWF vs ICON)" e prometia "convergência de previsão entre os três
-// principais centros globais".
-//
-// A DISPERSÃO ENTRE MODELOS É O ÚNICO CONTEÚDO DESSA TELA. É ela que diz se a
-// previsão é confiável: modelos que concordam num ponto e divergem 6 °C em
-// outro estão dizendo algo importante sobre a incerteza. Fixar a diferença em
-// +0,4 e −0,2 apaga exatamente a informação, e substitui por uma afirmação
-// falsa e tranquilizadora: que os centros do mundo inteiro concordam a menos de
-// 0,6 °C, em todo ponto do planeta, em toda hora.
-//
-// A Open-Meteo serve os três modelos de verdade, numa requisição só, via
-// `&models=`. As séries voltam com sufixo por modelo
-// (`temperature_2m_gfs_seamless`, etc.).
+// Comparação entre modelos numéricos globais (GFS, ICON, ECMWF).
 // -----------------------------------------------------------------------------
 
 /**

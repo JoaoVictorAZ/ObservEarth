@@ -1,39 +1,6 @@
 // server/assimilate.js
 // -----------------------------------------------------------------------------
-// ANÁLISE OBJETIVA — corrige o campo do modelo com as observações do clique.
-//
-// O QUE ISTO É
-// Você tem duas coisas de naturezas diferentes:
-//
-//   PALPITE INICIAL   o campo do GFS: 1.038.240 nós, cobertura total, mas com
-//                     viés sistemático próprio do modelo
-//   OBSERVAÇÃO        o valor da sonda no ponto clicado: um ponto só, porém
-//                     de outra fonte, independente
-//
-// Análise objetiva combina os dois: calcula o RESÍDUO (observação − palpite) em
-// cada ponto observado e espalha essa correção pela vizinhança com um peso que
-// cai com a distância. É o esqueleto do que centros operacionais fazem, e tem
-// literatura própria:
-//
-//   Cressman, G. P. (1959). "An operational objective analysis system."
-//   Monthly Weather Review, 87(10), 367–374.
-//   Barnes, S. L. (1964). "A technique for maximizing details in numerical
-//   weather map analysis." J. Appl. Meteorol., 3(4), 396–409.
-//
-// O QUE ISTO NÃO É
-// Não é o campo saindo das observações. Com uma dezena de pontos não se
-// constrói um campo global — as observações CORRIGEM um campo que já existe.
-// Essa distinção é o que separa análise de invenção.
-//
-// TRÊS REGRAS QUE TORNAM ISTO HONESTO
-//
-//   1. VETORIAL, nunca angular. Corrigir a direção entre 350° e 10° pela média
-//      dos ângulos dá 180° — vento invertido. Corrige-se u e v.
-//   2. CONTROLE DE QUALIDADE. Observação que discorda demais do palpite é
-//      provavelmente ruim, não reveladora. Centros operacionais rejeitam por
-//      "gross error check"; aqui também.
-//   3. A CORREÇÃO É DECLARADA. Um campo corrigido não é mais "GFS puro". A
-//      função devolve quanto mexeu, e a interface tem obrigação de dizer.
+// Análise objetiva de dados (esquema Cressman/Barnes para assimilação pontual).
 // -----------------------------------------------------------------------------
 
 /** raio de influência padrão, em km — escala de correlação sinótica do vento */

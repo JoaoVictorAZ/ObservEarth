@@ -1,0 +1,180 @@
+/* src/css/sonda.css
+   -------------------------------------------------------------------------
+   SONDA — Modal de informações da sonda (.probe).
+   Arrastável, redimensionável e móvel sobre o canvas.
+   ------------------------------------------------------------------------- */
+
+.probe {
+  /* `fixed`, não `absolute`: assim nenhum ancestral posicionado — agora ou
+     depois — consegue ancorar a janela a um canto. Ela flutua sobre a tela
+     inteira e o `left`/`top` em linha manda sozinho. */
+  position: fixed; z-index: 20;
+  display: flex; flex-direction: column;
+  min-width: 340px; min-height: 300px;
+  background: var(--scrim);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-lg);
+  box-shadow: var(--e-float);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+  animation: probeRise 0.25s var(--ease) both;
+}
+
+@keyframes probeRise {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+
+.probe-movendo, .probe-movendo * {
+  user-select: none;
+  cursor: grabbing !important;
+}
+
+/* Cabeçalho de arraste da sonda */
+.probe-header {
+  flex: none; display: flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+  cursor: grab;
+}
+.probe-header:active { cursor: grabbing; }
+
+.probe-pega {
+  flex: none; color: var(--ink-4); display: flex;
+}
+.probe-titulos {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px;
+}
+.probe-tit {
+  margin: 0; font-size: var(--t-body); font-weight: var(--w-medium); color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.probe-sub {
+  font-family: var(--mono); font-size: var(--t-micro); color: var(--ink-3);
+  white-space: nowrap;
+}
+.probe-botoes-topo {
+  margin-left: auto; display: flex; align-items: center; gap: 4px;
+}
+.probe-btn-topo {
+  position: relative; z-index: 5; pointer-events: auto;
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 3px;
+  color: var(--ink-3); background: transparent; border: none; cursor: pointer;
+  transition: all var(--m-fast) var(--ease);
+}
+.probe-btn-topo:hover { color: var(--ink); background: var(--surface-hi); }
+.probe-btn-fechar {
+  position: relative; z-index: 5; pointer-events: auto;
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 3px;
+  color: var(--ink-3); background: transparent; border: none; cursor: pointer;
+}
+.probe-btn-fechar:hover { color: var(--ink); background: var(--surface-hi); }
+
+/* Corpo rolável */
+.probe-corpo {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: var(--s-4) var(--s-5) var(--s-5);
+}
+
+.prows { display: flex; flex-direction: column; }
+
+.prow {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline; gap: var(--s-3) var(--s-4);
+  padding: var(--s-3) 0 var(--s-2);
+  border-bottom: 1px solid var(--rule-soft);
+}
+.prow:last-child { border-bottom: none; }
+.prow-rot {
+  display: flex; align-items: center; gap: var(--s-3);
+  font-size: var(--t-small); color: var(--ink-2); min-width: 0;
+}
+.prow-ico { display: flex; flex: none; color: var(--ink-3); }
+.prow-val {
+  font-family: var(--mono); font-size: var(--t-lead); font-weight: var(--w-medium);
+  color: var(--ink); text-align: right; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.prow-val small {
+  display: block; margin-top: 1px;
+  font-size: var(--t-micro); font-weight: var(--w-normal);
+  color: var(--ink-3); font-family: var(--mono);
+}
+.prow-forte .prow-val { font-size: 19px; }
+.prow-forte .prow-rot { color: var(--ink); }
+.prow-sem { font-size: var(--t-small); color: var(--ink-3); font-style: italic; text-align: right; }
+.prow-vazio .prow-rot { color: var(--ink-3); }
+
+.prow-faixa {
+  grid-column: 1 / -1; position: relative;
+  height: 2px; margin-top: var(--s-1);
+  background: var(--rule-soft); border-radius: 1px;
+}
+.prow-marca {
+  position: absolute; top: -1px; width: 4px; height: 4px;
+  border-radius: 50%; transform: translateX(-50%);
+}
+
+.probe-acoes {
+  display: flex; gap: var(--s-3); margin-top: var(--s-4);
+}
+.probe-acoes .probe-analise { flex: 1; margin-top: 0; justify-content: center; text-align: center; }
+
+.probe-analise {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s-3);
+  width: 100%; margin-top: var(--s-5); padding: var(--s-4);
+  font-size: var(--t-small); font-weight: var(--w-medium);
+  color: var(--void); background: var(--signal);
+  border: 1px solid transparent; border-radius: var(--r-lg); cursor: pointer;
+  transition: all var(--m-fast) var(--ease);
+}
+.probe-analise:hover { background: #74ecc0; }
+.probe-analise-ativo {
+  background: var(--surface-hi) !important;
+  color: var(--signal) !important;
+  border-color: var(--signal) !important;
+}
+
+.probe-aviso {
+  margin: var(--s-4) 0 var(--s-2); padding: var(--s-3) var(--s-4);
+  font-size: var(--t-micro); line-height: 1.6; color: var(--ink-2);
+  background: var(--surface); border-left: 2px solid var(--warn);
+  border-radius: 0 var(--r) var(--r) 0;
+}
+.probe-fonte {
+  margin: var(--s-2) 0 0;
+  font-family: var(--mono); font-size: var(--t-micro);
+  color: var(--ink-3); line-height: 1.5;
+}
+
+/* Puxadores de redimensionamento */
+.probe-puxa { position: absolute; touch-action: none; }
+.probe-puxa-e { left: 0; top: 8px; bottom: 14px; width: 6px; cursor: ew-resize; }
+.probe-puxa-d { right: 0; top: 8px; bottom: 14px; width: 6px; cursor: ew-resize; }
+.probe-puxa-b { left: 8px; right: 14px; bottom: 0; height: 6px; cursor: ns-resize; }
+.probe-puxa-c {
+  right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize;
+}
+.probe-puxa-c::after {
+  content: ""; position: absolute; right: 3px; bottom: 3px;
+  width: 9px; height: 9px;
+  background:
+    linear-gradient(135deg, transparent 45%, var(--rule-hi) 45%, var(--rule-hi) 58%, transparent 58%),
+    linear-gradient(135deg, transparent 70%, var(--rule-hi) 70%, var(--rule-hi) 83%, transparent 83%);
+}
+.probe-puxa:hover::after { background-color: var(--signal-dim); }
+
+/* Responsividade em telas pequenas */
+@media (max-width: 720px) {
+  .probe {
+    left: 0 !important; right: 0 !important; bottom: 0 !important;
+    top: auto !important;
+    width: auto !important; height: 60vh !important;
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+  }
+  .probe-puxa, .probe-pega { display: none; }
+  .probe-header { cursor: default; }
+}

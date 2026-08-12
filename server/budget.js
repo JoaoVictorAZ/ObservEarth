@@ -1,27 +1,4 @@
-// server/budget.js
-// -----------------------------------------------------------------------------
-// ORCAMENTO DE CHAMADAS EXTERNAS.
-//
-// Regra do projeto: nunca ultrapassar 1/4 do limite gratuito de nenhum provedor.
-// A margem de 75% existe para absorver replay de desenvolvimento, recarga de
-// pagina em demonstracao e picos de uso simultaneo sem jamais bater no teto —
-// porque bater no teto significa a plataforma inteira parar de responder no meio
-// de uma apresentacao.
-//
-// O que este modulo faz:
-//   1. conta chamadas por provedor, por dia UTC;
-//   2. RECUSA a chamada quando o teto de 25% e atingido, em vez de deixar o
-//      provedor recusar por nos (assim degradamos de forma controlada);
-//   3. expoe o estado para a interface, que pode avisar antes de faltar.
-//
-// O que ele NAO faz: substituir cache. O cache e a primeira linha de defesa —
-// este modulo e a rede de seguranca embaixo dela.
-// -----------------------------------------------------------------------------
 
-/**
- * Limites publicados de cada provedor, em chamadas por dia.
- * `free` = limite do plano gratuito. `share` = fracao que nos permitimos usar.
- */
 export const PROVIDERS = {
   "open-meteo": {
     label: "Open-Meteo",
@@ -78,7 +55,7 @@ function slot(provider) {
 
   let s = state.get(provider);
   if (!s || s.day !== day) {
-    // CORRECAO: antes o contador nascia zerado a cada boot. O provedor, nao.
+
     // Trinta reinicios num dia de desenvolvimento furavam o teto sem aviso.
     // Agora o total do dia e recuperado do disco.
     let restored = null;

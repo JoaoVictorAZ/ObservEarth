@@ -1,21 +1,6 @@
 // server/forecast.js
 // -----------------------------------------------------------------------------
-// LINHA DO TEMPO DA PREVISAO.
-//
-// O botao de reproducao andava com `(hora + 3) % 24`: dava a volta no MESMO dia
-// e voltava ao ponto de partida. Visualmente parecia animacao, mas nao era —
-// era o mesmo dia em loop, e nenhuma evolucao meteorologica aparecia porque o
-// dia nao avancava.
-//
-// Um ciclo do GFS traz f000 ate f240: dez dias de previsao em passos de 3 h,
-// vindos da MESMA rodada do modelo. Isso e uma sequencia coerente — um sistema
-// frontal nasce num quadro e atravessa o continente nos seguintes. E o que faz
-// um globo parecer vivo em vez de uma foto com data ajustavel.
-//
-// Este modulo enumera essa sequencia e diz, para cada quadro, se ele existe e
-// se ja esta em cache. O cliente usa a segunda informacao para desenhar a barra
-// de carregamento do reprodutor, como um player de video: so anda para dentro
-// do que ja foi baixado, em vez de travar esperando a rede a cada passo.
+// Geração da linha do tempo e ordenação de quadros de previsão GFS.
 // -----------------------------------------------------------------------------
 
 import { gfsCoverage, GFS_MAX_LEAD } from "./gfs.js";

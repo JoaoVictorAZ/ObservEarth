@@ -1,25 +1,6 @@
 // src/globe.ts
 // -----------------------------------------------------------------------------
-// Motor do globo. Tudo que toca three.js e globe.gl vive aqui.
-//
-// ALINHAMENTO DE TEXTURA — o detalhe que estraga tudo se estiver errado.
-// O three-globe converte assim:
-//     phi   = (90 - lat)
-//     theta = (90 - lng)
-//     x = r·sin(phi)·cos(theta)  ->  x = r·cos(lat)·sin(lng)
-//     y = r·cos(phi)             ->  y = r·sin(lat)
-//     z = r·sin(phi)·sin(theta)  ->  z = r·cos(lat)·cos(lng)
-// Logo, a inversa correta e:
-//     lat = asin(y)
-//     lng = atan2(x, z)     <-- e NAO atan2(z, -x), que gira 90 graus para leste
-// Toda sobreposicao aqui usa essa formula. Um sinal trocado desalinha a imagem
-// dos continentes, e o erro e sutil o bastante para passar despercebido.
-//
-// E HA UM SEGUNDO ALINHAMENTO, igualmente fatal: toda textura usada por estes
-// shaders precisa de `flipY = false`. O three.js inverte a imagem por padrao,
-// e como a UV vem da POSICAO (norte em v = 0) e nao das UVs da geometria, essa
-// inversao troca o sinal da latitude e desenha o hemisferio sul no norte.
-// Regra pratica: se a UV vem do shader, flipY tem de ser false.
+// Motor visual 3D do globo (Three.js / globe.gl integration).
 // -----------------------------------------------------------------------------
 
 import Globe from "globe.gl";
@@ -76,16 +57,7 @@ type LabelDatum = PlaceLabel & {
 export interface LabelSets { countries: PlaceLabel[]; states: PlaceLabel[]; cities: PlaceLabel[] }
 
 /**
- * NIVEIS DE ZOOM, no espirito do Google Earth.
- *
- * `altitude` do globe.gl e a distancia da camera em raios do planeta: 2.5 e uma
- * vista de disco inteiro, 0.1 e quase rasante. Os cortes abaixo foram escolhidos
- * para que APENAS UM nivel domine de cada vez — mostrar pais, estado e cidade
- * juntos vira ruido, que e exatamente o que o Google Earth evita.
- *
- *   > 1.15  PLANETARIO   so paises
- *   0.45-1.15 REGIONAL   estados entram, paises sobem de altitude e desbotam
- *   < 0.45  LOCAL        cidades entram por importancia; paises somem
+ * NIVEIS DE ZOOM
  */
 const LOD = {
   regional: 1.15,
@@ -107,16 +79,7 @@ export interface IsobarSet {
   centers: { lat: number; lng: number; hPa: number; kind: "H" | "L" }[];
 }
 
-/**
- * lat/lng -> posição na esfera, na MESMA convenção do three-globe.
- *
- * Está escrita a partir da inversa documentada no topo deste arquivo:
- *   x = r·cos(lat)·sin(lng) | y = r·sin(lat) | z = r·cos(lat)·cos(lng)
- *
- * Deduzir de novo "por analogia" é como nasce um mapa girado 90°: a fórmula
- * intuitiva (x = cos·cos, z = cos·sin) também produz uma esfera coerente, só
- * que com o Atlântico onde deveria estar o Pacífico.
- */
+
 function llToVec3(lat: number, lng: number, r: number) {
   const la = (lat * Math.PI) / 180;
   const lo = (lng * Math.PI) / 180;
@@ -131,20 +94,7 @@ export interface Fire {
 }
 
 /**
- * FOCOS DE CALOR — configuração do efeito.
- *
- * PALETA DE CORPO NEGRO, e não a ordem "amarelo -> laranja -> vermelho".
- *
- * A ordem intuitiva escurece no meio da faixa: amarelo tem luminância 0,76,
- * vermelho vivo tem 0,19. Num globo escuro o olho lê BRILHO como intensidade,
- * então uma queimada agrícola de 5 MW (amarela) apareceria tão forte quanto um
- * megaincêndio de 900 MW, e mais forte que um foco de 300 MW. A leitura do meio
- * da escala sai invertida.
- *
- * Matéria incandescente percorre vermelho escuro -> laranja -> amarelo ->
- * branco conforme esquenta. Essa sequência é ao mesmo tempo a física do fogo e
- * uma rampa monotônica em luminância: mais intenso é sempre mais claro.
- * Verificado em test/fires.mjs.
+ * FOCOS DE CALOR 
  */
 const EMBER: [number, [number, number, number]][] = [
   [0.00, [176, 42, 16]],     // brasa: vermelho escuro, visível mas contido
@@ -155,25 +105,12 @@ const EMBER: [number, [number, number, number]][] = [
 
 const FIRE = {
   /**
-   * Teto de ANÉIS, independente do teto de pontos.
-   *
-   * Cada anel do globe.gl é uma malha animada própria. O FIRMS devolve dezenas
-   * de milhares de focos por dia — anéis em "1% dos significativos" já seriam
-   * centenas de objetos animados disputando quadro com as partículas de vento.
-   * O anel é destaque de EXCEÇÃO: marca o que merece o olhar, não o que existe.
+   * Teto de ANÉIS
    */
   maxRings: 40,
   /** FRP mínimo, em MW, para um foco merecer anel */
   ringMinFrp: 120,
-  /**
-   * Orçamento de pontos por nível de zoom.
-   *
-   * Não é só desempenho: é legibilidade. Com o planeta inteiro na tela, 4.000
-   * pontos viram uma mancha contínua sobre a África e a Amazônia e não se lê
-   * nada. De perto, o mesmo número vira detalhe útil.
-   */
   budget: { planetary: 600, regional: 1800, local: 4000 },
-  /** normaliza FRP para 0..1 numa escala log (ver nota em refreshPointsAndRings) */
   norm: (frp: number) => Math.min(1, Math.log10(1 + Math.max(0, frp)) / 3.2),
 };
 
@@ -205,12 +142,7 @@ interface RingDatum {
 }
 
 /**
- * Rótulo do foco.
- *
- * `brightness` e `confidence` já vinham do servidor e eram descartados aqui. A
- * temperatura de brilho é o que o sensor MEDE (o FRP é derivado dela), e a
- * confiança separa detecção firme de possível falso positivo — sem ela, um
- * reflexo de telhado industrial e uma frente de fogo aparecem iguais na tela.
+ * Rótulo do foco
  */
 function fireLabel(f: Fire): string {
   const conf = /^h/i.test(f.confidence) ? "alta"
@@ -263,16 +195,6 @@ const IMG_FRAG = /* glsl */ `
   }
 `;
 
-
-// Shader do VENTO. Separado do de imagem por causa do limbo.
-//
-// A malha do vento fica a 1,008 do raio. Na borda do disco a esfera vira quase
-// de perfil, e essa casca extra aparece POR FORA da silhueta do planeta — o
-// "sangramento" na borda. Alem disso, ali cada pixel cobre dezenas de graus de
-// longitude, entao o rastro estica em riscos radiais.
-//
-// A correcao e geometrica: desbotar conforme a normal se afasta da direcao de
-// visao. Perto do limbo nao ha informacao legivel, so distorcao.
 const WIND_FRAG = /* glsl */ `
   precision highp float;
   uniform sampler2D uMap;
@@ -393,25 +315,12 @@ export class GlobeEngine {
       this.clickFn?.(lat, lng)
     );
 
-    // BUG CORRIGIDO: as fronteiras sao poligonos e interceptam o raycast, entao
-    // clicar sobre qualquer pais era engolido e a sonda nunca abria. O evento de
-    // poligono ja traz as coordenadas do ponto atingido: basta encaminha-lo.
+
     this.g.onPolygonClick((_p: unknown, _e: unknown, coords: { lat: number; lng: number }) => {
       if (coords && Number.isFinite(coords.lat)) this.clickFn?.(coords.lat, coords.lng);
     });
-    // REMOVIDO o realce de fronteira no hover.
-    // Ele chamava `polygonStrokeColor(fn)` a cada evento de mouse, e cada
-    // chamada faz o three-globe REAVALIAR a cor de TODAS as feicoes. Com
-    // milhares de poligonos, mover o mouse sobre o globo custava mais que
-    // desenhar o quadro. O ganho visual nao pagava nem de longe.
 
-    // Dimensionamento: o globe.gl fixa largura e altura UMA vez. Sem observar o
-    // container, o canvas fica com tamanho errado se a janela mudar ou se o
-    // layout ainda nao existia no primeiro quadro.
     const size = () => {
-      // guarda contra chamada apos dispose: em StrictMode o React monta,
-      // desmonta e remonta, e o ResizeObserver da primeira montagem ainda
-      // dispara depois que this.g virou null
       if (!this.g || this.disposed) return;
       const w = container.clientWidth || window.innerWidth;
       const h = container.clientHeight || window.innerHeight;
@@ -430,14 +339,7 @@ export class GlobeEngine {
     c.autoRotateSpeed = 0.35;
     c.enableDamping = true;
 
-    // OrbitControls emite "change" a cada quadro do arrasto; o agendador
-    // colapsa isso num unico recalculo por quadro, e a chave de vista grossa
-    // descarta a maioria deles sem fazer trabalho nenhum.
     c.addEventListener("change", () => { this.wake(); this.scheduleLOD(); });
-    // ESCALA DINAMICA DURANTE O ARRASTO. Enquanto a camera se move o olho nao
-    // resolve detalhe fino; renderizar em resolucao cheia ali e desperdicio.
-    // Caimos um degrau de DPR ao arrastar e voltamos ao soltar — o ganho e
-    // quadratico e a perda visual e imperceptivel em movimento.
     c.addEventListener("start", () => {
       this.interacting = true;
       const rnd = this.g?.renderer?.();
@@ -458,10 +360,6 @@ export class GlobeEngine {
     this.loadLabels();
   }
 
-  /**
-   * Ajustes de renderizador. O ganho maior aqui e o teto de pixelRatio: em telas
-   * 3x o custo de fragment cresce ~9x sem diferenca perceptivel acima de 2x.
-   */
   private tuneRenderer() {
     const rnd = this.g?.renderer?.();
     if (!rnd) return;
@@ -476,9 +374,7 @@ export class GlobeEngine {
   }
 
   /**
-   * Oceano: aplica a mascara de agua como specularMap. So o mar reflete, a terra
-   * fica fosca. O relevo ja vem do bumpMap do globe.gl; aqui apenas equilibramos
-   * a escala para nao virar plastico enrugado.
+   * Oceano
    */
   private applyOcean() {
     const mat = this.g?.globeMaterial?.();
@@ -513,11 +409,6 @@ export class GlobeEngine {
       this.tickWind(dt);
       this.tickCurrents(dt);
 
-      // PAUSA POR OCIOSIDADE — a maior economia isolada que existe aqui.
-      // O globe.gl mantem um loop de render permanente. Se nada se move (sem
-      // vento, sem rotacao, sem imagem entrando), continuar redesenhando a
-      // mesma cena 60 vezes por segundo gasta GPU, bateria e ventoinha para
-      // produzir pixels identicos. Suspendemos e acordamos no primeiro evento.
       const animating = this.windOn || this.currentsOn || this.imgFade < 1 || this.interacting;
       if (animating) {
         this.idle = 0;
@@ -534,7 +425,6 @@ export class GlobeEngine {
     this.raf = requestAnimationFrame(step);
   }
 
-  /** acorda o render: chamado por qualquer coisa que mude a cena */
   private wake() {
     this.idle = 0;
     if (this.paused) { this.g?.resumeAnimation?.(); this.paused = false; }
@@ -562,10 +452,6 @@ export class GlobeEngine {
   }
 
   // ------------------------------------------------ fronteiras e rotulos
-  // ORCAMENTO DE GEOMETRIA. O three-globe monta UMA geometria por feicao. Com
-  // paises + estados juntos eram ~4.850 feicoes por quadro e o navegador gastava
-  // ~140 ms (7 FPS). A regra agora: a vista planetaria recebe 177 contornos de
-  // pais; estados so entram com zoom, e apenas os que estao na frente do globo.
 
   private vecOf(lat: number, lng: number): [number, number, number] {
     const la = (lat * Math.PI) / 180, ln = (lng * Math.PI) / 180;
@@ -607,22 +493,7 @@ export class GlobeEngine {
     } catch { /* fronteiras sao enfeite: sem elas o globo continua util */ }
   }
 
-  /**
-   * Estados são caros: só baixa quando o zoom pede.
-   *
-   * DOIS DEFEITOS CORRIGIDOS AQUI, e juntos eles explicam "os contornos somem
-   * e não volta mais":
-   *
-   *   1. `statesRequested = true` era marcado ANTES de saber se deu certo.
-   *      Uma única falha — o Natural Earth vem de um CDN remoto, com 45 s de
-   *      timeout no servidor — apagava os estados para o resto da sessão. Não
-   *      havia nova tentativa: só recarregando a página.
-   *
-   *   2. O `catch {}` engolia o erro por completo. O usuário via os países
-   *      desenhados, os estados ausentes, e NENHUMA explicação. Um contorno que
-   *      falta sem aviso é indistinguível de um contorno que não existe — e foi
-   *      exatamente assim que este defeito sobreviveu tanto tempo.
-   */
+
   private async ensureStates() {
     if (this.statesRequested || this.statesLoading) return;
     if (this.statesFailed >= 3) return;              // desiste após 3, mas AVISA
@@ -676,16 +547,7 @@ export class GlobeEngine {
         for (const p of g) this.lblVec.set(p, this.vecOf(p.lat, p.lng));
       }
 
-      // RÓTULOS EM DOM, NÃO EM GEOMETRIA 3D.
-      //
-      // O three-globe desenha `labelsData` com TextGeometry sobre a tipografia
-      // "helvetiker", cujo conjunto de glifos é latino BÁSICO. Sem glifo para
-      // é, â, õ ou ú, o resultado era "Arg?lia", "Maurit?nia", "Camar?es" — o
-      // dado sempre esteve correto em UTF-8; a fonte é que não sabia desenhá-lo.
-      //
-      // Texto em DOM resolve na raiz: o navegador tem cobertura Unicode
-      // completa, herdamos a IBM Plex do sistema de design, e ainda deixamos de
-      // construir geometria a cada mudança de conjunto.
+
       this.g
         ?.htmlLat("lat").htmlLng("lng").htmlAltitude("alt")
         .htmlTransitionDuration(0)
@@ -701,22 +563,20 @@ export class GlobeEngine {
     } catch { /* sem rotulos o globo continua utilizavel */ }
   }
 
-  private scheduleLOD() {
+  private scheduleLOD = () => {
+    if (this.disposed || !this.g) return;
     if (this.labelRaf) return;
     this.labelRaf = requestAnimationFrame(() => {
       this.labelRaf = 0;
+      if (this.disposed || !this.g) return;
       this.applyLOD(false);
     });
-  }
+  };
 
   /**
-   * Recalcula rotulos e fronteiras para a camera atual.
-   *
-   * A chave de vista e GROSSA de proposito: latitude e longitude em passos de
-   * 6 graus e altitude em passos de 5%. Girar o globo dispara "change" a cada
-   * quadro; sem essa quantizacao a lista seria remontada 60 vezes por segundo.
+   * Recalcula rótulos e fronteiras para a câmera atual.
    */
-  private applyLOD(force: boolean) {
+  private applyLOD = (force: boolean) => {
     if (!this.g || this.disposed) return;
     const pov = this.g.pointOfView();
     const alt: number = pov?.altitude ?? 2;
@@ -730,15 +590,6 @@ export class GlobeEngine {
     const [cx, cy, cz] = this.vecOf(lat, lng);
 
     // ---- focos de calor ---------------------------------------------------
-    // Reselecionar aqui, e não a cada quadro: `viewKey` já engrossou a cadência
-    // para uma vez por movimento perceptível de câmera. Sem isto o orçamento
-    // por zoom nunca entraria em vigor — a lista ficaria congelada na que foi
-    // montada quando os focos chegaram da rede, com a câmera onde estava.
-    //
-    // Redesenha SEMPRE que a seleção rodou, sem comparar tamanhos: girar o
-    // globo troca QUAIS focos estão de frente mantendo a contagem no teto, e
-    // uma checagem por comprimento deixaria a tela mostrando os focos do outro
-    // lado do planeta. `viewKey` já garante que isto não roda por quadro.
     if (this.rawFiresAll.length) {
       this.selectFires();
       this.refreshPointsAndRings();
@@ -757,26 +608,13 @@ export class GlobeEngine {
     }
 
     // ---- rotulos ----------------------------------------------------------
-    // TRES FILTROS EM SEQUENCIA, e nessa ordem por um motivo:
-    //
-    //   1. CONE DE FOCO   descarta tudo fora de um raio angular do centro da
-    //                     vista. Rotulo na borda do disco esta quase de perfil,
-    //                     e so acrescenta ruido.
-    //   2. PRIORIDADE     ordena por importancia E por centralidade, para que a
-    //                     disputa por espaco seja vencida pelo que interessa.
-    //   3. COLISAO        aceita um rotulo so se ele nao encostar em outro ja
-    //                     aceito. E o que resolve o Caribe: dezenas de ilhas
-    //                     minusculas cabem no mesmo punhado de pixels, e sem
-    //                     este passo todas eram desenhadas por cima umas das
-    //                     outras. Google Earth e Mapbox fazem exatamente isso.
     if (!this.labelData) return;
 
     const out: LabelDatum[] = [];
     type Cand = { p: PlaceLabel; tier: LabelDatum["tier"]; alt: number; imp: number; v: [number, number, number]; dot: number };
     const cand: Cand[] = [];
 
-    // raio do cone de foco: mais fechado quanto mais perto, porque a area
-    // visivel encolhe e a densidade de rotulos por pixel cresce
+    // raio do cone de foco: mais fechado quanto mais perto, porque a area visivel encolhe e a densidade de rotulos por pixel cresce
     const focusDot = alt > 1.5 ? 0.42 : alt > 0.7 ? 0.66 : 0.86;
 
     const consider = (p: PlaceLabel, tier: LabelDatum["tier"], a: number, imp: number) => {
@@ -810,8 +648,7 @@ export class GlobeEngine {
     // centralidade pesa mais que importancia: o pedido e destacar o centro
     cand.sort((a, b) => (b.dot * 3 - b.imp) - (a.dot * 3 - a.imp));
 
-    // separacao minima em graus, proporcional a altitude: de longe o globo
-    // inteiro cabe na tela e 1 grau e quase nada; de perto, 1 grau e enorme
+    // separacao minima em graus, proporcional a altitude: de longe o globo inteiro cabe na tela e 1 grau e quase nada; de perto, 1 grau e enorme
     const sepDeg = Math.max(0.45, alt * 3.2);
     const minSep = Math.cos((sepDeg * Math.PI) / 180);
 
@@ -828,21 +665,11 @@ export class GlobeEngine {
 
     for (const c of kept) {
       // desbota em direcao a borda do cone: o centro fica nitido, a periferia
-      // apenas sugerida — e a leitura de foco que o Google Earth transmite
       const t = (c.dot - focusDot) / (1 - focusDot);
       const op = 0.30 + 0.70 * Math.min(1, Math.max(0, t)) ** 0.65;
       out.push({ ...c.p, tier: c.tier, alt: c.alt, op: +op.toFixed(2) });
     }
 
-    // Os centros de pressão entram na MESMA lista de elementos em DOM.
-    //
-    // A alternativa era um segundo laço de projeção só para eles. Isso
-    // duplicaria a matemática de câmera e, pior, os dois laços poderiam
-    // divergir meio quadro — o rótulo "B" flutuaria em relação à isóbara que
-    // ele nomeia. Aqui a projeção é literalmente a mesma.
-    //
-    // Não passam pelo desentupidor: são poucos, e um centro de baixa escondido
-    // por um topônimo é exatamente a informação que não se pode perder.
     if (this.isobarsOn) {
       const pov = this.g?.pointOfView?.();
       if (pov) {
@@ -875,11 +702,11 @@ export class GlobeEngine {
   }
 
   // --------------------------------------------------------- dia e noite
-  setTime(d: Date) { this.time = d; this.applySun(); }
-  setDayNight(on: boolean) { this.dayNight = on; this.applySun(); }
+  setTime = (d: Date) => { this.time = d; this.applySun(); };
+  setDayNight = (on: boolean) => { this.dayNight = on; this.applySun(); };
 
-  private applySun() {
-    if (!this.g) return;
+  private applySun = () => {
+    if (!this.g || this.disposed) return;
     const lights: any[] = this.g.lights ? this.g.lights() : [];
     const dir = lights.find((l) => l.type === "DirectionalLight");
     const amb = lights.find((l) => l.type === "AmbientLight");
@@ -889,7 +716,7 @@ export class GlobeEngine {
       if (amb) amb.intensity = 1.35;
       return;
     }
-    // ponto subsolar aproximado: onde o Sol esta a pino nesta data e hora
+    // ponto subsolar aproximado: onde o Sol está a pino nesta data e hora
     const d = this.time;
     const doy = Math.floor((d.getTime() - Date.UTC(d.getUTCFullYear(), 0, 0)) / 86400e3);
     const decl = -23.44 * Math.cos((2 * Math.PI / 365) * (doy + 10));
@@ -898,7 +725,7 @@ export class GlobeEngine {
     const p = this.g.getCoords(decl, lng, 2);
     if (dir) { dir.position.set(p.x, p.y, p.z); dir.intensity = 1.5; }
     if (amb) amb.intensity = 0.12;
-  }
+  };
 
   setBase(style: "day" | "night") {
     this.g?.globeImageUrl(style === "night" ? TEX.night : TEX.day);
@@ -975,19 +802,6 @@ export class GlobeEngine {
   }
 
   // ------------------------------------------------- sobreposicao termica
-  /**
-   * REMOVIDO o gerador sintetico de temperatura.
-   *
-   * A versao anterior desenhava um campo inventado a partir de caixas de
-   * latitude e longitude escritas a mao ("se lat>12 e lat<34 e lng>-16 e
-   * lng<55, soma 13 graus" para o Saara). Isso reintroduzia exatamente os
-   * setores retangulares que ja tinham sido eliminados, e pior: apresentava
-   * numeros fabricados como se fossem observacao.
-   *
-   * Temperatura real e uma camada de imagem do GIBS como qualquer outra. Este
-   * metodo permanece apenas para nao quebrar quem o chamava: ligar significa
-   * escolher o produto real; desligar limpa a sobreposicao.
-   */
   setThermalOverlay(on: boolean, date: Date) {
     if (!on) { this.clearImagery(); return; }
     this.setImagery("temperature", date, 0.85);
@@ -1009,8 +823,6 @@ export class GlobeEngine {
   }
 
   // ---------------------------------------------------------------- vento
-  // Toda a simulacao roda na GPU. Ver src/windGPU.ts para o porque: a versao
-  // em canvas 2D reenviava 33 MB de textura por quadro.
 
   setWind(grid: WindGrid | null, key = "único") {
     this.windGrid = grid;
@@ -1021,14 +833,6 @@ export class GlobeEngine {
     this.wake();
   }
 
-  /**
-   * Par de quadros da reproducao, com a fracao entre eles.
-   *
-   * `grid` continua sendo o quadro A: a sonda e a leitura de valor no ponto
-   * clicado seguem respondendo pelo campo cujo horario esta escrito na tela. Se
-   * elas lessem o campo interpolado, o numero mostrado nao corresponderia a
-   * nenhuma hora real do modelo e nao seria citavel.
-   */
   setWindFrames(
     a: { key: string; grid: WindGrid } | null,
     b: { key: string; grid: WindGrid } | null,
@@ -1051,19 +855,6 @@ export class GlobeEngine {
   }
 
   // -------------------------------------------------------------- isóbaras
-  /**
-   * Desenha as isóbaras como UM ÚNICO LineSegments.
-   *
-   * Uma malha por curva daria ~60 objetos, cada um com sua chamada de desenho e
-   * sua travessia de grafo de cena por quadro. Concatenando tudo num buffer só,
-   * o custo por quadro passa a ser uma chamada — e a diferença aparece
-   * justamente quando as isóbaras convivem com as partículas de vento, que já
-   * disputam o mesmo orçamento de quadro.
-   *
-   * A cor vai por VÉRTICE, não por material: é assim que os múltiplos de 20 hPa
-   * (os traços grossos da carta sinóptica) ficam mais claros que os demais sem
-   * precisar de um segundo objeto.
-   */
   setIsobars(data: IsobarSet | null) {
     this.isobarData = data;
 
@@ -1105,7 +896,7 @@ export class GlobeEngine {
       vertexColors: true,
       transparent: true,
       depthWrite: false,
-      depthTest: false,
+      depthTest: true,
     });
 
     this.isobarLines = new THREE.LineSegments(geo, mat);
@@ -1127,14 +918,11 @@ export class GlobeEngine {
     this.wake();
   }
 
-  /**
-   * Recalcula os rótulos para que os centros de pressão entrem (ou saiam) da
-   * lista de elementos em DOM. A montagem em si vive em `applyLOD`, junto com
-   * os topônimos, porque é a mesma projeção.
-   */
-  private refreshIsobarLabels() {
+
+  private refreshIsobarLabels = () => {
+    if (this.disposed || !this.g) return;
     this.applyLOD(true);
-  }
+  };
 
   setWindVisible(on: boolean) {
     this.windOn = on;
@@ -1171,25 +959,7 @@ export class GlobeEngine {
   }
 
   // ------------------------------------------------------ correntes oceânicas
-  /**
-   * CORRENTES TÊM SISTEMA PRÓPRIO. Antes elas chamavam `setWind(...)` e
-   * SOBRESCREVIAM o campo atmosférico — três consequências, todas ruins:
-   *
-   *   1. ligar correntes APAGAVA o vento;
-   *   2. desligar correntes não devolvia o vento (o ramo de desligar só
-   *      limpava o texto da barra, não escondia nada) — daí "efeitos
-   *      carregados mesmo sem estarem ligados";
-   *   3. as duas saíam com o MESMO desenho, e por isso "as correntes estão do
-   *      mesmo jeito do vento".
-   *
-   * E não é só arrumação de código: são fenômenos de escala diferente. Vento
-   * de superfície vai a 40 m/s; corrente oceânica raramente passa de 2 m/s —
-   * vinte vezes mais lenta. Com a mesma escala de velocidade, a corrente ou
-   * fica parada ou, se acelerada para se mover, mente sobre sua intensidade.
-   *
-   * Por isso o sistema próprio nasce com passo mais lento e rastro mais longo:
-   * corrente é fluxo PERSISTENTE, não rajada.
-   */
+ 
   setCurrents(grid: WindGrid | null) {
     this.currentGrid = grid;
     if (!grid) {
@@ -1220,26 +990,11 @@ export class GlobeEngine {
     const rnd = this.g.renderer?.();
     if (!rnd) return;
 
-    // Menos partículas que o vento: a corrente é lenta e persistente, então
-    // um traço vive muito mais tempo na tela. Manter a mesma contagem faria a
-    // superfície do oceano virar uma malha sólida.
+
     this.currentGPU = new WindGPU(rnd, 49152);
-
-    // GANHO MAIOR, e não menor — o oposto do que a intuição sugere.
-    //
-    // `speed` é ganho de exibição: deslocamento = valor_em_m/s × speed. O vento
-    // usa 0,12, o que a 20 m/s dá 2,4 graus/s. Uma corrente de 1 m/s com o
-    // mesmo ganho daria 0,12 graus/s — praticamente parada.
-    //
-    // 0,45 devolve movimento perceptível à corrente mantendo-a visivelmente
-    // mais lenta que o ar (≈0,45 contra 2,4 graus/s). O ganho é de DESENHO,
-    // não de dado: a sonda continua reportando o valor medido, e as duas
-    // camadas não devem ser comparadas a olho — são fenômenos distintos.
     this.currentGPU.speed = 0.45;
-
-    // Rastro MAIS LONGO que o do vento (0,985): corrente é fluxo persistente,
-    // não rajada. Quanto mais perto de 1, mais tempo o traço sobrevive.
     this.currentGPU.fade = 0.992;
+
     if (this.currentGrid) this.currentGPU.setField(this.currentGrid, "hycom");
 
     this.currentMat = new THREE.ShaderMaterial({
@@ -1253,8 +1008,6 @@ export class GlobeEngine {
       depthWrite: false,
       depthTest: false,
     });
-    // Abaixo da malha do vento: se as duas estiverem ligadas, o ar fica por
-    // cima da água, que é a leitura correta da atmosfera sobre o oceano.
     const geo = new THREE.SphereGeometry(this.g.getGlobeRadius() * 1.0012, 128, 64);
     this.currentMesh = new THREE.Mesh(geo, this.currentMat);
     this.currentMesh.renderOrder = 4;
@@ -1262,17 +1015,10 @@ export class GlobeEngine {
     this.g.scene().add(this.currentMesh);
   }
 
-  /** intensidade do fluxo: graus por segundo por m/s */
   setWindSpeed(v: number) { if (this.windGPU) this.windGPU.speed = v; this.wake(); }
-  /** comprimento do rastro: 0.94 curto e nitido, 0.985 longo e sedoso */
   setWindTrail(v: number) { if (this.windGPU) this.windGPU.fade = v; this.wake(); }
 
-  /**
-   * Opacidade do vento. Antes o material nascia com uOpacity = 1 fixo e NENHUM
-   * controle da interface chegava ate ele — o deslizante de opacidade so mexia
-   * na camada de imagem. Sobrepor vento opaco sobre um campo de temperatura
-   * tornava os dois ilegiveis, sem saida.
-   */
+
   setWindOpacity(v: number) {
     if (this.windMat) this.windMat.uniforms.uOpacity.value = v;
     this.wake();
@@ -1280,12 +1026,6 @@ export class GlobeEngine {
 
   /**
    * Densidade: fração das partículas do degrau atual.
-   *
-   * O valor é GUARDADO, não só aplicado. Sem isso, a primeira vez que o monitor
-   * de desempenho trocasse de degrau, `applyTier` chamaria `resize` com
-   * `q.particles` cheio e a escolha do usuário sumiria — sem aviso, e no meio
-   * de uma queda de quadro, que é exatamente quando ele menos entenderia por
-   * que a tela mudou sozinha.
    */
   setWindDensity(frac: number) {
     this.densidadeVento = Math.max(0.1, Math.min(1, frac));
@@ -1308,12 +1048,7 @@ export class GlobeEngine {
   }
 
   /**
-   * Avanço das correntes, separado do vento.
-   *
-   * A guarda tripla — ligado, sistema existe, campo existe — é o que impede o
-   * caso relatado: camada desligada e mesmo assim desenhando. Antes bastava a
-   * malha ter sido criada uma vez para ela continuar sendo avançada e composta
-   * para sempre.
+   * Avanço das correntes
    */
   private tickCurrents(dt: number) {
     if (!this.currentsOn || !this.currentGPU || !this.currentGrid) return;
@@ -1363,31 +1098,8 @@ export class GlobeEngine {
     this.refreshPointsAndRings();
   }
 
-  /**
-   * Quantos focos estão REALMENTE desenhados agora.
-   *
-   * O painel dizia "N mais intensos exibidos" usando o número que veio da API —
-   * mas o motor ainda aplica o orçamento de zoom e o de desempenho por cima.
-   * Anunciar 1.973 enquanto se desenha 600 é o tipo de imprecisão pequena que
-   * corrói a confiança no resto dos números da tela.
-   */
-  get firesDrawn() { return this.rawFires.length; }
 
-  /**
-   * Escolhe quais focos desenhar para a câmera atual.
-   *
-   * POR QUE NÃO BASTA `slice(0, teto)`.
-   * A lista vem ordenada por FRP decrescente, então cortar o topo dá os focos
-   * mais intensos DO PLANETA. Ao aproximar em Rondônia — onde os focos podem
-   * ser todos pequenos — nenhum deles estaria entre os maiores do mundo, e a
-   * região apareceria VAZIA justamente quando o usuário foi olhá-la de perto.
-   * O bug se disfarça de "não há queimada aqui".
-   *
-   * A seleção correta é em duas etapas: primeiro recorta pelo que está de
-   * frente para a câmera, depois pega os mais intensos DESSE conjunto. De longe
-   * o recorte é quase o planeta inteiro e o efeito é o mesmo de antes; de perto,
-   * o orçamento inteiro é gasto na região que está sendo olhada.
-   */
+  get firesDrawn() { return this.rawFires.length; }
   private selectFires() {
     const todos = this.rawFiresAll;
     if (!todos.length) { this.rawFires = []; return; }
@@ -1539,10 +1251,6 @@ export class GlobeEngine {
     }
 
     // ---- focos de calor -----------------------------------------------------
-    // A escala e LOGARITMICA no FRP (Fire Radiative Power). A distribuicao vai
-    // de ~1 MW a mais de 2.000 MW: em escala linear 99% dos focos viram pontos
-    // invisiveis e so os extremos aparecem. Em log, uma queimada agricola comum
-    // continua legivel ao lado de um megaincendio.
     let aneis = 0;
     for (const f of this.rawFires) {
       const k = FIRE.norm(f.frp);                                  // 0..1
@@ -1559,19 +1267,11 @@ export class GlobeEngine {
       });
 
       // ---- anel pulsante -------------------------------------------------
-      // So para os focos que realmente merecem o olhar. Dois limites: um
-      // FISICO (FRP acima do limiar) e um de ORCAMENTO (teto duro). O segundo
-      // existe porque o primeiro sozinho nao limita nada: num dia de pico da
-      // Amazonia ha milhares de focos acima de 120 MW.
       if (aneis < FIRE.maxRings && f.frp >= FIRE.ringMinFrp) {
         aneis++;
         rings.push({
           lat: f.lat, lng: f.lng,
           maxR: 1.2 + k * 5.5,
-          // VELOCIDADE INVERSA. Foco grande pulsa devagar, como brasa que
-          // respira; foco pequeno pisca rapido. Alem de bonito, e legivel: a
-          // cadencia vira um segundo canal de intensidade, independente da cor,
-          // e continua funcionando para quem nao distingue bem vermelho.
           speed: 3.4 - k * 2.1,
           period: 900 + k * 2600,
           strength: 0.35 + k * 0.5,

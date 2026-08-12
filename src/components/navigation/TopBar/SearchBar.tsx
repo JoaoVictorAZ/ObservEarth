@@ -1,26 +1,3 @@
-// src/components/navigation/TopBar/SearchBar.tsx
-// -----------------------------------------------------------------------------
-// BUSCA.
-//
-// DOIS DEFEITOS DE CONTEÚDO
-//
-//   1. O BOTÃO DE "POSIÇÃO ATUAL" IA PARA SÃO PAULO.
-//      `title="Posição Atual"` com `onSearchCoord?.(-23.5505, -46.6333)`
-//      cravado. Não é a posição de ninguém — é uma coordenada escrita à mão
-//      com rótulo de geolocalização. Agora usa a API do navegador de verdade,
-//      e diz o que acontece quando ela é negada.
-//
-//   2. A BUSCA CONHECIA CINCO CIDADES.
-//      Uma escada de `if (q.includes("são paulo"))` com cinco casos. Qualquer
-//      outra coisa que se digitasse não fazia NADA — sem mensagem, sem erro,
-//      sem nem limpar o campo. O sistema já tem polígonos de país e estado no
-//      servidor; enquanto não há geocodificação de verdade, o certo é dizer
-//      que não achou em vez de engolir em silêncio.
-//
-// O que a busca ACEITA continua: coordenada em vários formatos, que é o que um
-// instrumento precisa. E agora aceita mais formatos do que aceitava.
-// -----------------------------------------------------------------------------
-
 import React, { useState } from "react";
 import { useUIStore } from "../../../store/uiStore";
 import { Search, Crosshair, Command as CommandIcon } from "lucide-react";
