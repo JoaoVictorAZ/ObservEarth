@@ -81,11 +81,19 @@ ok("lixo de desempacotamento continua sendo pego pelo teto", () => {
   }
 });
 
-ok("a rampa chega ao branco em vento de vendaval, não de ciclone", () => {
-  // Se REF_COR fosse o teto físico, 10 m/s cairia em (10/120)^0,6 = 0,22 —
-  // o mapa inteiro voltaria a ser azul escuro.
+ok("a referência de cor é força de tempestade, não vento de furacão", () => {
+  // A referência estava em 40 m/s, e isso escondia exatamente o que o mapa
+  // existe para mostrar: um ciclone subtropical na costa do Sudeste tem 20 a
+  // 25 m/s e caía em (25/40)^0,6 = 0,76 — verde-claro, indistinguível do vento
+  // comum de 12 m/s, que dá 0,64.
+  //
+  // Em 26 m/s (10 Bft, força de tempestade) a separação aparece:
+  //   12 m/s -> 0,66   vento comum
+  //   25 m/s -> 0,98   quase branco
   const t = (ms) => Math.pow(Math.min(1, ms / REF_COR), 0.6);
-  assert.ok(t(10) > 0.4 && t(10) < 0.55, `10 m/s cai em t=${t(10).toFixed(2)}`);
+  assert.ok(REF_COR >= 20 && REF_COR <= 30, `referência de ${REF_COR} m/s`);
+  assert.ok(t(25) > 0.95, `25 m/s cai em ${t(25).toFixed(2)} — ciclone não se destaca`);
+  assert.ok(t(25) - t(12) > 0.28, `separação de só ${(t(25) - t(12)).toFixed(2)} entre 12 e 25 m/s`);
   assert.ok(t(REF_COR) === 1, "a rampa não fecha na referência");
   assert.ok(t(TETO_FISICO) === 1, "acima da referência tem que continuar branco, sem estourar");
 });

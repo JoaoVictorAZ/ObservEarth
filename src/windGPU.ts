@@ -57,14 +57,21 @@ export interface WindFrame {
 //                erro de desempacotamento, e o contador de saturação continua
 //                servindo de alarme para isso.
 //
-//   REF_COR      onde a rampa chega ao branco. Fica em 40 m/s de propósito:
-//                é vendaval forte, e acima disso a leitura "é extremo" já foi
-//                dada. O que muda é que agora o dado ACIMA de 40 continua no
-//                campo — para o traçado, para a sonda e para a estatística —
-//                em vez de ser aplainado na entrada.
+//   REF_COR      onde a rampa chega ao branco.
+//
+//                Estava em 40 m/s, e isso foi outro erro meu. Vento de 10 m de
+//                40 m/s é raríssimo: um ciclone subtropical na costa do Sudeste
+//                tem 20 a 25 m/s. Com a referência em 40, ele caía em
+//                (25/40)^0,6 = 0,76 — verde-claro, no meio da rampa, sem se
+//                distinguir do vento comum de 12 m/s que dá 0,64.
+//
+//                Em 26 m/s (força de tempestade, 10 Bft), 25 m/s dá 0,98:
+//                branco. É a diferença entre o sistema aparecer e não aparecer.
+//                O dado acima de 26 continua no campo — a rampa satura, o
+//                número não.
 // -----------------------------------------------------------------------------
 const TETO_FISICO = 120;
-const REF_COR = 40;
+const REF_COR = 26;
 const FRAME_CACHE = 3;
 
 // -----------------------------------------------------------------------------
@@ -411,8 +418,19 @@ export class WindGPU {
    * quatro segundos é o que fazia tudo virar cabelo comprido, e o que fazia a
    * calmaria — que repinta o mesmo lugar — encorpar num risco sólido.
    *
-   * 0,975 dá teto 40 e rastro de ~2,3 s. Curto o bastante para o traço seguir
-   * a curvatura do escoamento em vez de acumular vários minutos de história.
+   * 0,975 dá teto 40 e rastro de ~2,3 s.
+   *
+   * TENTEI 0,981 E MEDI O CUSTO. O raciocínio era bom: é a CURVATURA do traço
+   * que revela rotação, e um rastro curto num ciclone vira tracinho reto. Mas
+   * o teto de acúmulo sobe para 53, e aí NÃO EXISTE par de piso e ganho que
+   * mantenha a ordem: busquei sobre a faixa inteira e todo candidato ou
+   * saturava acima de 3 m/s, ou invertia (1 m/s mais brilhante que 5 m/s), ou
+   * deixava o campo inteiro apagado. Comprar curvatura custa saturação.
+   *
+   * Então não compro. A legibilidade da rotação passa a vir de onde ela é
+   * confiável: `server/vorticidade.js` MEDE a circulação e marca o centro, em
+   * vez de esperar que o traço a sugira. Um marcador funciona mesmo quando
+   * ninguém está olhando para aquela parte do globo.
    */
   fade = 0.975;
 

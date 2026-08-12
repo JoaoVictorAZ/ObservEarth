@@ -234,6 +234,46 @@ app.get("/api/wind", async (req, res) => {
 //
 // Com o disjuntor aberto, TODA data cai para 3°, inclusive hoje.
 // ----------------------------------------------------------------------
+// ----------------------------------------------------------------------
+// CENTROS DE CIRCULAÇÃO — onde estão os ciclones neste campo.
+//
+// Existe porque "não é possível identificar o ciclone através dos dados de
+// vento" é um relato sobre IDENTIFICAÇÃO, não sobre renderização. Ciclone não
+// se distingue por velocidade — um jato tem 60 m/s e não é ciclone; o ciclone
+// subtropical da costa do Sudeste tem 20-25 m/s e é. O que separa é a rotação,
+// e rotação se mede.
+// ----------------------------------------------------------------------
+app.get("/api/wind/vortices", async (req, res) => {
+  const dateStr = String(req.query.date ?? new Date().toISOString().slice(0, 10));
+  const hour = Math.max(0, Math.min(23, Number(req.query.hour) || 12));
+  try {
+    const { acharCentros, classificar } = await import("./vorticidade.js");
+    const grid = await cached(windKey(dateStr, hour), 9 * HOUR, () =>
+      buildWindGrid(fetch, dateStr, hour));
+
+    const centros = acharCentros(grid).map((c) => ({
+      ...c, classe: classificar(c.ventoMaxMs),
+    }));
+
+    res.json({
+      ok: true,
+      data: dateStr, hora: hour,
+      grade: `${grid.nx}x${grid.ny}`,
+      passoGraus: grid.stepDeg ?? null,
+      centros,
+      metodo: "vorticidade relativa média em disco de 4°, sinal ciclônico por "
+            + "hemisfério, com centro mais calmo que o anel",
+      aviso: "Circulação detectada no campo de vento do modelo. NÃO é um "
+           + "boletim de ciclone: o modelo não distingue tropical de "
+           + "subtropical de baixa frontal, e a intensidade é a do modelo, não "
+           + "a de observação. Para aviso oficial, consulte o serviço nacional.",
+      fonte: grid.provider ?? null,
+    });
+  } catch (e) {
+    res.status(e.status ?? 502).json({ ok: false, error: e.message, code: e.code });
+  }
+});
+
 app.get("/api/wind/status", async (req, res) => {
   const dateStr = String(req.query.date ?? new Date().toISOString().slice(0, 10));
   const hour = Math.max(0, Math.min(23, Number(req.query.hour) || 12));
