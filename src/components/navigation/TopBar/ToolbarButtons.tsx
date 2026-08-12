@@ -2,10 +2,10 @@ import React, { useState, useRef, useEffect } from "react";
 import { useGlobeStore } from "../../../store/globeStore";
 import { usePerfStore } from "../../../store/perfStore";
 import { TIERS } from "../../../perf";
-import { RefreshCw, Home, Camera, Activity, Sun } from "lucide-react";
+import { RefreshCw, Home, Camera, Activity, Sun, Map, Globe2 } from "lucide-react";
 
 export const ToolbarButtons: React.FC<{ onSearchCoord?: (lat: number, lng: number) => void }> = ({ onSearchCoord }) => {
-  const { rotate, toggleRotate, dayNight, toggleDayNight } = useGlobeStore();
+  const { rotate, toggleRotate, dayNight, toggleDayNight, modo, toggleModo } = useGlobeStore();
   const { stats } = usePerfStore();
   const [aberto, setAberto] = useState(false);
   const cx = useRef<HTMLDivElement>(null);
@@ -38,13 +38,36 @@ export const ToolbarButtons: React.FC<{ onSearchCoord?: (lat: number, lng: numbe
 
   return (
     <div className="ferramentas" ref={cx}>
+      {/* ---- projeção: a escolha mais estrutural, então vem primeiro ------
+          Não é um interruptor comum: troca o motor de renderização inteiro.
+          O ícone mostra PARA ONDE se vai, não onde se está — é o que o dedo
+          espera de um botão que alterna. */}
+      <div className="ferramentas-grupo" role="group" aria-label="Projeção">
+        <button
+          className={`icone-btn ${modo === "mapa" ? "icone-btn-on" : ""}`}
+          onClick={toggleModo}
+          aria-pressed={modo === "mapa"}
+          title={modo === "mapa"
+            ? "Voltar ao globo 3D"
+            : "Abrir o mapa plano (equirretangular)"}
+        >
+          {modo === "mapa"
+            ? <Globe2 size={14} strokeWidth={1.5} />
+            : <Map size={14} strokeWidth={1.5} />}
+        </button>
+      </div>
+
+      <span className="ferramentas-fio" aria-hidden="true" />
+
       {/* ---- interruptores: têm estado, ficam acesos --------------------- */}
       <div className="ferramentas-grupo" role="group" aria-label="Modos de exibição">
         <button
           className={`icone-btn ${rotate ? "icone-btn-on" : ""}`}
           onClick={toggleRotate}
           aria-pressed={rotate}
-          title="Rotação automática do globo"
+          title={modo === "mapa"
+            ? "Deriva automática em longitude"
+            : "Rotação automática do globo"}
         >
           <RefreshCw size={14} strokeWidth={1.5} />
         </button>

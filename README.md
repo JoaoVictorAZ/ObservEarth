@@ -19,6 +19,7 @@ isto.
 - [Instalação em três minutos](#instalação-em-três-minutos)
 - [Seus primeiros cinco minutos no app](#seus-primeiros-cinco-minutos-no-app)
 - [A interface, painel por painel](#a-interface-painel-por-painel)
+- [Os dois modos](#os-dois-modos)
 - [Atalhos](#atalhos)
 - [A stack](#a-stack)
 - [De onde vem cada número](#de-onde-vem-cada-número)
@@ -84,7 +85,7 @@ Outros comandos:
 |---|---|
 | `npm run build` | Checa tipos (`tsc -b`) e gera o bundle de produção em `dist/` |
 | `npm run preview` | Serve o `dist/` para conferir o build |
-| `npm test` | Roda a suíte inteira (~435 verificações) |
+| `npm test` | Roda a suíte inteira (~456 verificações) |
 | `npm run dev:all` | `dev` + o servidor Python de modelo próprio |
 | `npm run ingest` | Ingestão em lote de dados abertos (pipeline Python) |
 
@@ -142,8 +143,9 @@ A busca é **por coordenada**, e aceita quase qualquer forma de escrevê-la:
 virar um ponto errado no oceano. Para ir a uma cidade por nome, use a paleta de
 comandos (`Ctrl/Cmd + K`), que tem uma lista de atalhos de localidade.
 
-À direita, quatro ferramentas:
+À direita, as ferramentas:
 
+- **Globo / mapa plano** — troca a projeção. Ver [Os dois modos](#os-dois-modos).
 - **Rotação automática** do globo (interruptor, fica aceso)
 - **Terminador dia/noite** na posição solar real (interruptor)
 - **Centralizar em 0°, 0°** — o golfo da Guiné, ponto neutro do mapa
@@ -151,6 +153,45 @@ comandos (`Ctrl/Cmd + K`), que tem uma lista de atalhos de localidade.
 - **Estado do motor** — quadros por segundo, tempo de CPU, degrau de qualidade,
   número de partículas, chamadas de desenho. Números medidos a cada quadro, não
   texto fixo.
+
+### Os dois modos
+
+O primeiro botão da barra troca entre o **globo 3D** e o **mapa plano**. Não é
+um efeito visual: são dois motores de renderização distintos, e o botão desmonta
+um e monta o outro. Data, hora, camadas ligadas e a posição das suas janelas
+sobrevivem à troca; a escolha fica salva para a próxima sessão.
+
+O mapa plano usa projeção **equirretangular** (plate carrée), e essa escolha tem
+um motivo técnico antes de ter um motivo estético: é o espaço em que os dados já
+estão. O GFS entrega uma grade igualmente espaçada em grau, o GIBS serve em
+`epsg4326`, e a simulação de partículas do vento já trabalha em UV normalizado.
+No globo, um shader precisa reprojetar tudo isso na esfera. No plano, cola
+direto — **o motor de vento é reaproveitado sem uma linha de mudança.**
+
+Mercator teria sido a escolha familiar, e foi descartada por duas razões: exige
+reprojetar a textura de rastro e pedir as imagens noutro esquema, e infla a
+Groenlândia ao tamanho da África. Num app em que se lê a extensão de um
+fenômeno, isso é uma mentira visual.
+
+O que o plano faz melhor:
+
+- **O antimeridiano deixa de partir o mundo.** O mapa é desenhado três vezes
+  lado a lado e a longitude enrola, então dá para arrastar indefinidamente para
+  o lado e seguir um tufão do Pacífico sem que ele se corte na borda.
+- **Zoom ancorado no cursor.** A roda aproxima no ponto que você está mirando,
+  não no centro da tela.
+- **Comparar áreas distantes** sem girar o planeta — o Ártico e a Antártida
+  aparecem ao mesmo tempo.
+
+O custo, dito na cara: os polos aparecem esticados na horizontal. É a projeção
+sendo honesta sobre o que ela é. No globo há um corte que esconde o leque de
+partículas perto dos polos, porque lá ele é artefato de reprojeção; no mapa
+plano esse corte não existe, porque ali o esticamento é o dado real — e é
+justamente onde a corrente de jato importa.
+
+O terminador dia/noite também muda de implementação: no globo é luz direcional
+sobre a esfera, no plano é calculado por pixel a partir do ângulo zenital solar,
+com o crepúsculo civil na borda da sombra.
 
 ### Barra de tempo (Tier 2)
 
@@ -256,6 +297,7 @@ download só acontece quando você clica; abrir o painel não baixa nada.
 | **Vite 6** | Dev server e build |
 | **Zustand 5** | Estado global, em oito stores pequenas |
 | **globe.gl 2.34** + **three.js 0.185** | O globo e a cena 3D |
+| three.js puro (`src/mapa2d.ts`) | O mapa plano: câmera ortográfica, sem globe.gl |
 | WebGL2 próprio (`src/windGPU.ts`) | Advecção de partículas na GPU |
 | **Radix UI** | Diálogo, popover, tabs, slider, tooltip — primitivos acessíveis |
 | **cmdk** | Paleta de comandos |
@@ -441,7 +483,10 @@ server/
   janela.js        bbox e janelas de imagem arredondadas
 
 src/
-  globe.ts         motor: three.js, globe.gl, shaders
+  globe.ts         motor 3D: three.js, globe.gl, shaders
+  mapa2d.ts        motor 2D: equirretangular, câmera ortográfica
+  projecao.ts      lat/lng <-> plano, enrolamento de longitude, zoom
+  tipos.ts         tipos de dado + a interface MotorGeo que os dois cumprem
   windGPU.ts       advecção de partículas na GPU
   windGrid.ts      leitura da grade no cliente
   arrasto.ts       geometria de arraste das janelas flutuantes
@@ -469,7 +514,7 @@ escolhida ou descartada).
 npm test
 ```
 
-Cerca de **435 verificações** em 30 arquivos, sem framework: só o `assert`
+Cerca de **456 verificações** em 31 arquivos, sem framework: só o `assert`
 nativo do Node. Arquivos que importam TypeScript rodam com
 `--experimental-strip-types`.
 
@@ -480,6 +525,8 @@ uma vez e ninguém quer que ele volte:
   espelhava o mundo e punha um furacão do Japão na costa americana
 - `arrasto.mjs` — `"mover".includes("e")` é `true`, e o arraste de janela caía
   no ramo de redimensionar
+- `projecao.mjs` — `-190 % 360` em JavaScript dá `-190`, não `170`; a versão
+  ingênua passa em todo caso positivo e falha em silêncio no Pacífico
 - `janela.mjs` — arredondar as quatro bordas em vez do centro gerava onze
   janelas distintas num arrasto de 40°, onze requisições onde cabia uma
 - `css-orfas.mjs` — classes usadas no JSX que não existem em nenhuma folha
@@ -508,6 +555,11 @@ aumenta a resolução da textura.
 
 **Qualidade do ar, WBGT e hospitais** estão no painel e no backend, mas são as
 camadas menos exercitadas do conjunto.
+
+**O mapa plano ainda não tem três coisas que o globo tem.** Os nomes de países,
+estados e cidades; os contornos estaduais que o globo baixa ao aproximar (o
+plano desenha só fronteiras nacionais); e as letras **A** e **B** nos centros de
+pressão — as isóbaras aparecem, os centros não estão rotulados.
 
 ---
 

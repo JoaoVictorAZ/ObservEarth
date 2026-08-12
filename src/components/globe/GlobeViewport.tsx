@@ -3,13 +3,15 @@
 // MOTOR DO GLOBO E CONTAINER DE VISUALIZAÇÃO THREE.JS (ZUSTAND & OPEN DATA)
 // -----------------------------------------------------------------------------
 
-import { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
+import { useEffect, useRef, useState, useImperativeHandle, forwardRef } from "react";
 import { useGlobeStore } from "../../store/globeStore";
 import { usePerfStore } from "../../store/perfStore";
 import { useTimelineStore } from "../../store/timelineStore";
 import { useLayerStore } from "../../store/layerStore";
 import { useProbeStore, type Probe } from "../../store/probeStore";
-import { GlobeEngine, type Quake, type Fire, type IsobarSet, type WindGrid } from "../../globe";
+import { GlobeEngine } from "../../globe";
+import { MapEngine } from "../../mapa2d";
+import type { Quake, Fire, IsobarSet, WindGrid, MotorGeo } from "../../tipos";
 
 export interface GlobeViewportRef {
   flyTo: (lat: number, lng: number) => void;
@@ -28,9 +30,11 @@ function isValidWindGrid(g: unknown): g is WindGrid {
 
 export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
   const boxRef = useRef<HTMLDivElement>(null);
-  const engRef = useRef<GlobeEngine | null>(null);
+  const engRef = useRef<MotorGeo | null>(null);
 
-  const { dayNight, rotate, windDensity } = useGlobeStore();
+  const { dayNight, rotate, windDensity, modo } = useGlobeStore();
+  // sobe a cada troca de motor; força todas as camadas a se reaplicarem
+  const [geracao, setGeracao] = useState(0);
   const { day, hour } = useTimelineStore();
   const {
     kind, layer, opacity,
@@ -46,6 +50,10 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
     flyTo: (lat: number, lng: number) => {
       const eng = engRef.current;
       if (!eng) return;
+      // A câmera precisa IR. Isto faltava: a busca e o botão "centralizar em
+      // 0°, 0°" marcavam o ponto e pediam a sonda, mas a vista não saía do
+      // lugar — o botão prometia no rótulo algo que não acontecia.
+      eng.flyTo(lat, lng);
       eng.setClickMarker(lat, lng);
       setProbing(true);
       fetch(`/api/probe?lat=${lat}&lng=${lng}&date=${day}&hour=${hour}`)
@@ -55,11 +63,20 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
     },
   }));
 
-  // Inicialização do GlobeEngine
+  // ---------------------------------------------------------------------
+  // MONTAGEM DO MOTOR — globo ou mapa plano, conforme o modo.
+  //
+  // `geracao` sobe a cada troca. Todo efeito de camada depende dela: sem isso
+  // o motor novo nasceria vazio, porque os efeitos que ligam vento, imagem e
+  // marcadores não têm motivo para rodar de novo — as camadas escolhidas não
+  // mudaram, só quem as desenha. O sintoma seria uma tela preta que "conserta"
+  // sozinha quando o usuário mexe em qualquer coisa.
+  // ---------------------------------------------------------------------
   useEffect(() => {
     if (!boxRef.current) return;
-    const eng = new GlobeEngine();
-    eng.mount(boxRef.current);
+    const caixa = boxRef.current;
+    const eng: MotorGeo = modo === "mapa" ? new MapEngine() : new GlobeEngine();
+    eng.mount(caixa);
     engRef.current = eng;
 
     // Falhas internas do globo (contornos que não baixaram, por exemplo) vão
@@ -93,8 +110,16 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
     // camada é ligada pelo seu próprio efeito, a partir do seu próprio estado —
     // é a única forma de o que está na tela corresponder ao que está marcado.
 
-    return () => { eng.dispose(); engRef.current = null; };
-  }, []);
+    setGeracao((g) => g + 1);
+    return () => {
+      eng.dispose();
+      engRef.current = null;
+      // Container limpo entre motores. Cada um cria a sua própria tela, e o
+      // `_destructor` do globe.gl não promete remover o DOM que montou —
+      // sem isto, alternar de modo empilharia telas mortas por baixo da viva.
+      caixa.replaceChildren();
+    };
+  }, [modo]);
 
   // Evento de clique
   useEffect(() => {
@@ -108,7 +133,7 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
         .then((p: Probe | null) => { setProbe(p); setProbing(false); })
         .catch(() => setProbing(false));
     });
-  }, [day, hour, setProbe, setProbing]);
+  }, [day, hour, setProbe, setProbing, geracao]);
 
   // Vento (Garante setWindVisible(true) e setWind(data))
   useEffect(() => {
@@ -172,7 +197,7 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
         setWindInfo(`vento indisponível: ${String(err)}`);
       });
     return () => { alive = false; };
-  }, [wind, day, hour, setWindInfo]);
+  }, [wind, day, hour, setWindInfo, geracao]);
 
   // Isóbaras (Garante setIsobarsVisible(true) e setIsobars(data))
   useEffect(() => {
@@ -200,7 +225,7 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
         setIsoInfo(`erro: ${String(err)}`);
       });
     return () => { alive = false; };
-  }, [isobarsOn, day, hour, setIsoInfo]);
+  }, [isobarsOn, day, hour, setIsoInfo, geracao]);
 
   // Sismos
   useEffect(() => {
@@ -211,7 +236,7 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
       .then((r) => (r.ok ? r.json() : []))
       .then((qs: Quake[]) => eng.setQuakes(qs))
       .catch(() => eng.setQuakes([]));
-  }, [quakesOn, day]);
+  }, [quakesOn, day, geracao]);
 
   // Focos de Calor
   useEffect(() => {
@@ -236,7 +261,7 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
         );
       })
       .catch((err) => { eng.setFires([]); setFireInfo(`erro: ${String(err)}`); });
-  }, [firesOn, day, setFireInfo]);
+  }, [firesOn, day, setFireInfo, geracao]);
 
   // Qualidade do Ar (OpenAQ POIs)
   useEffect(() => {
@@ -257,7 +282,7 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
         }
       })
       .catch(() => setOpenaqInfo("Falha OpenAQ"));
-  }, [openaqOn, setOpenaqInfo]);
+  }, [openaqOn, setOpenaqInfo, geracao]);
 
   // Estresse Térmico WBGT MetPy (campo derivado separado)
   useEffect(() => {
@@ -269,7 +294,7 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
     }
     // Ativa camada WBGT derivada com ramp de perigo própria (green→yellow→red→black)
     eng.setImagery(`/api/fields/wbgt?date=${day}&hour=${hour}`, new Date(), opacity);
-  }, [wbgtOn, day, hour, opacity, kind]);
+  }, [wbgtOn, day, hour, opacity, kind, geracao]);
 
   // Hospitais OSM (Overpass API)
   useEffect(() => {
@@ -294,7 +319,7 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
       })
       .catch(() => { if (alive) setHospitalInfo("Falha ao carregar hospitais"); });
     return () => { alive = false; };
-  }, [hospitalsOn, setHospitalInfo]);
+  }, [hospitalsOn, setHospitalInfo, geracao]);
 
   // Correntes Oceânicas HYCOM (reutiliza engine de vento GPU)
   useEffect(() => {
@@ -341,13 +366,13 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
         setHycomInfo(err.message);
       });
     return () => { alive = false; };
-  }, [hycomOn, setHycomInfo]);
+  }, [hycomOn, setHycomInfo, geracao]);
 
-  useEffect(() => { engRef.current?.setDayNight(dayNight); }, [dayNight]);
+  useEffect(() => { engRef.current?.setDayNight(dayNight); }, [dayNight, geracao]);
   // A densidade é aplicada tanto na mudança quanto na montagem: o valor vem do
   // localStorage, então precisa alcançar o motor na primeira renderização.
-  useEffect(() => { engRef.current?.setWindDensity(windDensity); }, [windDensity, wind]);
-  useEffect(() => { engRef.current?.setAutoRotate(rotate); }, [rotate]);
+  useEffect(() => { engRef.current?.setWindDensity(windDensity); }, [windDensity, wind, geracao]);
+  useEffect(() => { engRef.current?.setAutoRotate(rotate); }, [rotate, geracao]);
 
   // Camadas ativas
   useEffect(() => {
@@ -361,7 +386,7 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
       ? `/api/fields/${layer}?date=${day}&hour=${hour}`
       : layer;
     eng.setImagery(layerTarget, new Date(`${day}T12:00:00Z`), opacity);
-  }, [kind, layer, opacity, day, hour, wbgtOn]);
+  }, [kind, layer, opacity, day, hour, wbgtOn, geracao]);
 
   return <div className="stage" ref={boxRef} />;
 });

@@ -50,12 +50,11 @@ export const LogoSection: React.FC = () => {
           descritor, que é justamente o que pode cair sem perder a marca. */}
       <h1 className="plaqueta-nome">
         <span className="plaqueta-nome-forte">ObservEarth</span>
-        <span className="plaqueta-nome-fraco">Observação da Terra</span>
       </h1>
 
       {/* Carimbo de versão: monoespaçado, apagado, do tamanho de um metadado.
           É informação de manutenção, não de identidade. */}
-      <span className="plaqueta-versao" title="Versão da plataforma">1.5</span>
+      <span className="plaqueta-versao" title="Versão da plataforma">V1</span>
     </div>
   );
 };

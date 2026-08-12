@@ -16,27 +16,13 @@ const TEX = {
   water: "https://unpkg.com/three-globe/example/img/earth-water.png",
 };
 
-export interface Quake {
-  lat: number; lng: number; mag: number; depth: number; place: string; time: number;
-}
-// u/v aceitam Float32Array: o cliente converte o JSON assim que ele chega, o
-// que corta pela metade a memória de cada campo (ver src/forecastPlayer.ts).
-export interface WindGrid {
-  nx: number; ny: number;
-  u: number[] | Float32Array;
-  v: number[] | Float32Array;
-  valid?: number[] | Uint8Array;
-
-  /** Procedência declarada pelo servidor. A tela tem que LER isto, não supor.
-   *  Havia um literal "NOAA GFS 0.25° · 100% medido" fixo na view, que
-   *  continuava afirmando GFS quando o campo vinha do recuo de 3°. */
-  provider?: string;
-  dataset?: string;
-  /** passo da grade em graus: 0,25 no GFS, 3 no recuo — 144x mais grosso */
-  stepDeg?: number;
-  measuredPct?: number;
-  builtAt?: string;
-}
+// Os tipos de dado moram em `./tipos` desde que o motor 2D nasceu — assim o
+// mapa plano não precisa importar globe.gl só para saber o que é um WindGrid.
+// A reexportação mantém funcionando tudo que já importava daqui.
+import type {
+  Quake, WindGrid, PlaceLabel, LabelSets, IsobarSet, Fire,
+} from "./tipos";
+export type { Quake, WindGrid, PlaceLabel, LabelSets, IsobarSet, Fire };
 
 interface PolyFeature {
   type: string;
@@ -46,7 +32,6 @@ interface PolyFeature {
   _v?: [number, number, number];
 }
 
-export interface PlaceLabel { name: string; lat: number; lng: number; rank?: number; pop?: number; admin?: string }
 /** rotulo pronto para o DOM: `tier` escolhe o estilo em index.css */
 type LabelDatum = PlaceLabel & {
   tier: "country" | "country-dim" | "state" | "state-dim" | "city";
@@ -54,7 +39,6 @@ type LabelDatum = PlaceLabel & {
   /** opacidade por centralidade: 1 no centro da vista, ~0,3 na borda do foco */
   op: number;
 };
-export interface LabelSets { countries: PlaceLabel[]; states: PlaceLabel[]; cities: PlaceLabel[] }
 
 /**
  * NIVEIS DE ZOOM
@@ -64,20 +48,6 @@ const LOD = {
   local: 0.45,
 } as const;
 
-/** isóbaras e centros de pressão, vindos de /api/isobars */
-export interface IsobarSet {
-  step: number;
-  unit: string;
-  min: number;
-  max: number;
-  dataset?: string;
-  forecastHour?: number;
-  points?: number;
-  /** resolução da grade em que o contorno foi traçado, em graus */
-  stepDeg?: number;
-  contours: { hPa: number; major: boolean; points: [number, number][] }[];
-  centers: { lat: number; lng: number; hPa: number; kind: "H" | "L" }[];
-}
 
 
 function llToVec3(lat: number, lng: number, r: number) {
@@ -87,11 +57,6 @@ function llToVec3(lat: number, lng: number, r: number) {
   return new THREE.Vector3(r * c * Math.sin(lo), r * Math.sin(la), r * c * Math.cos(lo));
 }
 
-/** foco de calor do NASA FIRMS. `frp` = Fire Radiative Power em MW. */
-export interface Fire {
-  lat: number; lng: number; frp: number;
-  brightness: number; confidence: string; acqDate: string; daynight: string;
-}
 
 /**
  * FOCOS DE CALOR 
