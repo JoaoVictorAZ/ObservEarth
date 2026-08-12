@@ -7,6 +7,12 @@ export interface Probe {
   humidity: number | null; dewPoint?: number | null;
   precipitation: number | null; pressure: number | null; pressureMmHg?: number | null;
   windSpeed: number | null; windKmH?: number | null; windKnots?: number | null;
+  /** RAJADA: a grandeza que causa dano e a que o noticiário reporta. */
+  windGustMs?: number | null; windGustKmH?: number | null;
+  windScale?: { grau: number; nome: string } | null;
+  windNotice?: string | null;
+  resolutionKm?: number | null;
+  sourceNote?: string | null;
   windDirection: number | null; windCardinal?: string | null;
   cloudCover?: number | null; airDensity?: number | null;
   uvIndex?: number | null; elevationM?: number | null;

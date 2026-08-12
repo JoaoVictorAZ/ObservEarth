@@ -18,6 +18,7 @@ import { buscarSerie } from "./timeseries.js";
 import { buscarSondagem } from "./sounding.js";
 import { compararModelos } from "./compare.js";
 import { buscarCorrentes } from "./currents.js";
+import { escolherFonte, caminhoDe, VARIAVEIS, beaufort, avisoDeVento } from "./arquivo.js";
 import { registerGeoRoutes, placeAt } from "./geo.js";
 import { describeModelLayer, sortModelLayers } from "./modelNames.js";
 import { parseCapabilities, snapTime, coverageOf } from "./gibsTime.js";
@@ -480,10 +481,21 @@ app.get("/api/probe", async (req, res) => {
   const hour = Math.max(0, Math.min(23, Number(req.query.hour) || 12));
 
   try {
-    const isTodayOrFuture = new Date(`${date}T00:00:00Z`).getTime() >= Date.now() - 86400e3;
-    const url = isTodayOrFuture
-      ? `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&hourly=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,wind_direction_10m,surface_pressure,cloud_cover,dew_point_2m&wind_speed_unit=ms&forecast_days=2&timezone=UTC`
-      : `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lng}&hourly=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,wind_direction_10m,surface_pressure,cloud_cover,dew_point_2m&wind_speed_unit=ms&start_date=${date}&end_date=${date}&timezone=UTC`;
+    // A ESCOLHA DE ARQUIVO É PARTE DA RESPOSTA — ver server/arquivo.js.
+    // Datas passadas iam para o ERA5, que a própria Open-Meteo descreve como
+    // otimizado para tendência climática e NÃO para fidelidade a um evento.
+    // Usar o arquivo de análise climática para responder sobre uma frente que
+    // passou é a fonte errada, não um número errado.
+    const fonte = escolherFonte(date);
+    const qsP = new URLSearchParams({
+      latitude: String(lat), longitude: String(lng),
+      hourly: VARIAVEIS.join(","),
+      wind_speed_unit: "ms",
+      timezone: "UTC",
+    });
+    if (fonte.modo === "previsao") qsP.set("forecast_days", "2");
+    else { qsP.set("start_date", date); qsP.set("end_date", date); }
+    const url = `https://${fonte.host}${caminhoDe(fonte)}?${qsP}`;
 
     const [wx, place] = await Promise.all([
       metered("open-meteo", 1, () => fetch(url)).then((r) => (r.ok ? r.json() : null)).catch(() => null),
@@ -494,18 +506,6 @@ app.get("/api/probe", async (req, res) => {
     const k = h ? Math.min(hour, (h.time?.length ?? 1) - 1) : 0;
     const pick = (arr) => (h && Number.isFinite(arr?.[k]) ? arr[k] : null);
 
-    const d = new Date(`${date}T00:00:00Z`);
-    const doy = Math.floor((d.getTime() - Date.UTC(d.getUTCFullYear(), 0, 0)) / 86400e3);
-    const decl = 23.44 * Math.sin((2 * Math.PI / 365) * (doy - 80));
-
-    let thermalBase = 30.0 - Math.abs(lat) * 0.44 + decl * Math.sign(lat) * 0.25;
-    if (lat > 12 && lat < 34 && lng > -16 && lng < 55) thermalBase += 13.0;
-    else if (lat < -10 && lat > -35 && lng > 115 && lng < 145) thermalBase += 8.0;
-    else if (lat > 60) thermalBase -= 8.0;
-    else if (lat < -60) thermalBase -= 36.0;
-
-    const localSolarHour = ((hour + lng / 15.0) % 24 + 24) % 24;
-    const diurnalSwing = Math.sin(((localSolarHour - 6) / 24) * 2 * Math.PI) * 4.5;
 
     // -----------------------------------------------------------------------
     // SEM VALOR INVENTADO. Ausência é `null`, e a tela diz "sem dado".
@@ -551,6 +551,10 @@ app.get("/api/probe", async (req, res) => {
     // está agora na URL. Supor unidade é como supor fuso horário.
     // -----------------------------------------------------------------------
     const windMs = pick(h?.wind_speed_10m) ?? null;
+    // RAJADA: a grandeza que causa dano e a que o noticiário reporta. Sem ela,
+    // comparar a tela com a notícia dá sempre um fator de 1,5 a 2 — e parece
+    // erro de unidade quando é diferença de grandeza.
+    const gustMs = pick(h?.wind_gusts_10m) ?? null;
 
     const r1 = (x) => (x == null ? null : +x.toFixed(1));
     const tempF = tempC == null ? null : +(tempC * 9 / 5 + 32).toFixed(1);
@@ -564,8 +568,17 @@ app.get("/api/probe", async (req, res) => {
     const airDensity = (pressureHpa == null || tempC == null)
       ? null
       : +((pressureHpa * 100) / (287.058 * (tempC + 273.15))).toFixed(3);
-    const solarZenith = Math.max(0, Math.cos((lat * Math.PI) / 180) * Math.sin(((localSolarHour - 6) / 12) * Math.PI));
-    const uvIndex = cloud == null ? null : +(solarZenith * 11.5 * (1 - cloud / 150)).toFixed(1);
+    // ÍNDICE UV MEDIDO, NÃO CALCULADO.
+    //
+    // Aqui havia:
+    //   const solarZenith = max(0, cos(lat) * sin(((horaSolar − 6)/12)·π));
+    //   const uvIndex = solarZenith * 11.5 * (1 − nuvem/150);
+    //
+    // Um índice UV inventado a partir de latitude, hora e nuvem — sem ozônio,
+    // sem aerossol, sem altitude, sem albedo. Exibido como "Índice UV" sem
+    // nenhuma marca de que era fórmula. A Open-Meteo publica `uv_index` de
+    // verdade, na mesma chamada, de graça.
+    const uvIndex = pick(h?.uv_index) ?? null;
     // elevação por barometria só existe se houver pressão medida
     const elevationM = pressureHpa == null ? null
       : Math.max(0, Math.round(44330 * (1 - Math.pow(pressureHpa / 1013.25, 0.1903))));
@@ -576,14 +589,19 @@ app.get("/api/probe", async (req, res) => {
       temperature: tempC, temperatureF: tempF, humidity, dewPoint: dewPt,
       pressure: pressureHpa, pressureMmHg, precipitation: precip,
       windSpeed: windMs, windKmH, windKnots, windDirection: windDir, windCardinal,
+      windGustMs: gustMs, windGustKmH: r1(gustMs == null ? null : gustMs * 3.6),
+      windScale: beaufort(windMs),
+      windNotice: avisoDeVento(fonte),
+      resolutionKm: fonte.resolucaoKm ?? null,
       cloudCover: cloud, airDensity, uvIndex: uvIndex == null ? null : Math.max(0, uvIndex), elevationM,
       // A procedência tem que descrever de onde o número VEIO. Sem resposta da
       // fonte, todos os campos acima são null e a tela diz "sem dado" — mas
       // esta linha ainda declarava "Modelo Climatológico Físico GFS/ERA5",
       // atribuindo a dois centros de dados uma leitura que não existe.
       source: h
-        ? (isTodayOrFuture ? "Open-Meteo · GFS Operacional 0.25°" : "Open-Meteo · ERA5 (reanálise)")
+        ? `Open-Meteo · ${fonte.rotulo}${fonte.resolucaoKm ? ` · ~${fonte.resolucaoKm} km` : ""}`
         : "fonte não respondeu — nenhum valor foi estimado",
+      sourceNote: h ? fonte.nota : null,
     });
   } catch (e) { res.status(502).json({ error: e.message }); }
 });

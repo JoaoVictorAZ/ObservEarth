@@ -1796,3 +1796,15 @@ input[type="range"]::-moz-range-thumb {
   line-height: 1.4;
   color: var(--ink-4);
 }
+
+/* Aviso de leitura do vento. Não é rodapé: é a informação que impede alguém de
+   tomar decisão operacional com um número de modelo, e por isso tem marca de
+   alerta e vem ANTES da procedência. */
+.probe-aviso {
+  margin: var(--s-4) 0 var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  font-size: var(--t-micro); line-height: 1.6; color: var(--ink-2);
+  background: var(--surface);
+  border-left: 2px solid var(--warn);
+  border-radius: 0 var(--r) var(--r) 0;
+}

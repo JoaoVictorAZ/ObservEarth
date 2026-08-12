@@ -75,9 +75,26 @@ export const ProbePanel: React.FC = () => {
 
   if (!probe) return null;
 
+  // -------------------------------------------------------------------------
+  // VENTO SUSTENTADO E RAJADA SÃO GRANDEZAS DIFERENTES.
+  //
+  // A tela mostrava só "Vento (10 m)" com o valor SUSTENTADO — média da hora.
+  // Quando o noticiário diz "ventos de 100 km/h no Rio", está falando de
+  // RAJADA. Sobre terra o fator típico é 1,5 a 2,0, então os dois números nunca
+  // batem, e a diferença parece erro de unidade quando é diferença de grandeza.
+  //
+  // Numa plataforma de monitoramento, a rajada é a variável de segurança: é ela
+  // que derruba árvore, telhado e poste. Ela vem agora em destaque igual.
+  // -------------------------------------------------------------------------
   const vento = fmt(probe.windSpeed, 1, " m/s");
-  const ventoSec = [fmt(probe.windKmH, 0, " km/h"), probe.windCardinal]
-    .filter(Boolean).join(" · ") || null;
+  const ventoSec = [
+    fmt(probe.windKmH, 0, " km/h"),
+    probe.windCardinal,
+    probe.windScale ? `${probe.windScale.nome} (${probe.windScale.grau} Bft)` : null,
+  ].filter(Boolean).join(" · ") || null;
+
+  const rajada = fmt(probe.windGustMs, 1, " m/s");
+  const rajadaSec = fmt(probe.windGustKmH, 0, " km/h");
 
   return (
     <div className="probe" role="region" aria-label={`Condições em ${probe.place}`}>
@@ -102,6 +119,13 @@ export const ProbePanel: React.FC = () => {
         <Linha
           icone={<Wind {...ico} />} rotulo="Vento (10 m)"
           valor={vento} secundario={ventoSec}
+        />
+        {/* A rajada logo abaixo do sustentado, com o mesmo peso: separá-las
+            em lugares diferentes da tela é o que faz alguém ler uma e achar
+            que leu a outra. */}
+        <Linha
+          icone={<Wind {...ico} />} rotulo="Rajada (10 m)"
+          valor={rajada} secundario={rajadaSec}
         />
         <Linha
           icone={<Compass {...ico} />} rotulo="Umidade relativa"
@@ -139,7 +163,21 @@ export const ProbePanel: React.FC = () => {
         <ArrowUpRight size={13} strokeWidth={1.5} aria-hidden="true" />
       </button>
 
+      {/* ---------------------------------------------------------------
+          O AVISO NÃO É RODAPÉ. Ele fica antes da procedência e com marca de
+          alerta porque é a informação que impede alguém de tomar decisão
+          operacional com um número de modelo.
+
+          Nenhuma correção de fonte resolve isto: modelo global não resolve
+          microexplosão, canalização urbana nem efeito de relevo. A estação da
+          praia mede o que a célula de 11 km não pode conter.
+          --------------------------------------------------------------- */}
+      {probe.windNotice && (
+        <p className="probe-aviso" role="note">{probe.windNotice}</p>
+      )}
+
       {probe.source && <p className="probe-fonte">{probe.source}</p>}
+      {probe.sourceNote && <p className="probe-fonte">{probe.sourceNote}</p>}
     </div>
   );
 };
