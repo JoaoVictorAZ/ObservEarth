@@ -46,29 +46,11 @@ export type QualityTier = 0 | 1 | 2;   // 0 alta, 1 equilibrada, 2 desempenho
  *
  * O que desce entre degraus e a RESOLUCAO DE TELA e a contagem de particulas —
  * nunca a nitidez do rastro.
- *
- * ---------------------------------------------------------------------------
- * A CONTAGEM ESTAVA BAIXA DEMAIS PARA A TEXTURA — e era isso que lia como
- * "chunk".
- *
- * No degrau 0 eram 40.000 particulas numa textura de 4096x2048 = 8,4 milhoes
- * de texels. Um fio a cada 210 texels. Nessa densidade nao existe campo de
- * escoamento: existem riscos avulsos, longe uns dos outros, e o olho junta os
- * que por acaso ficaram paralelos e le "pente".
- *
- * O curioso e que particula e BARATA. Cada uma e um ponto num unico desenho; o
- * custo real do quadro esta no passe de decaimento, que percorre os 8,4 milhoes
- * de texels independentemente de quantas particulas existam. Quadruplicar a
- * contagem mexe pouco no tempo de quadro e muda tudo na leitura.
- *
- * Densidade agora: um fio a cada ~52 texels no degrau 0. E o monitor continua
- * derrubando o degrau se o quadro passar de 20 ms, entao maquina fraca se
- * protege sozinha.
  */
 export const TIERS = {
-  0: { label: "Alta", dpr: 2.0, trail: 4096, particles: 160000, fadeEvery: 1, fires: 4000 },
-  1: { label: "Equilibrada", dpr: 1.5, trail: 2048, particles: 90000, fadeEvery: 1, fires: 2000 },
-  2: { label: "Desempenho", dpr: 1.0, trail: 2048, particles: 40000, fadeEvery: 2, fires: 900 },
+  0: { label: "Alta", dpr: 2.0, trail: 4096, particles: 40000, fadeEvery: 1, fires: 4000 },
+  1: { label: "Equilibrada", dpr: 1.5, trail: 2048, particles: 22500, fadeEvery: 1, fires: 2000 },
+  2: { label: "Desempenho", dpr: 1.0, trail: 2048, particles: 12100, fadeEvery: 2, fires: 900 },
 } as const;
 
 const BUDGET_MS = 20;      // acima disso, degrada

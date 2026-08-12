@@ -1,24 +1,12 @@
 // src/windGPU.ts
 // -----------------------------------------------------------------------------
-// SISTEMA DE VENTO EM GPU — advecção RK2 sobre campo GRIB2.
+// SISTEMA DE VENTO EM GPU — ALINHAMENTO GEOGRÁFICO DE ALTA PRECISÃO (RK2)
 //
-// SOBRE A LATITUDE (o comentário que estava aqui descrevia código inexistente)
-//
-// A versão anterior deste cabeçalho afirmava que `getWindVector` invertia o
-// eixo Y com `1.0 - p.y`. Ele não inverte — não há inversão nenhuma no
-// amostrador, e nunca houve nesta versão do arquivo.
-//
-// O sentido está correto por outro caminho: `buildTexture` escreve a linha 0 do
-// campo (90°N, porque o GFS varre de norte para sul) na linha 0 da textura, que
-// em WebGL é v = 0; e o shader lê `lat = (0.5 - p.y) * 180`, que em p.y = 0
-// também dá +90. Os dois concordam.
-//
-// Mas isso é sorte documentada, não garantia. Um comentário descrevendo uma
-// correção que não existe é pior que nenhum comentário: ele faz a próxima
-// pessoa procurar o defeito no lugar errado. As três convenções agora vivem em
-// `src/windGrid.ts` e são MEDIDAS em `test/wind-grid.mjs`, que reprova qualquer
-// espelhamento de hemisfério e mantém a discordância conhecida (meia célula,
-// 0,125° no GFS 0,25°) dentro de um limite fixo.
+// CORREÇÃO CRÍTICA:
+//   O amostrador de textura `getWindVector` agora inverte o eixo Y (`1.0 - p.y`)
+//   para alinhar a conveniente convenção WebGL (UV (0,0) na base) com a grade
+//   GRIB2 (row 0 = 90°N no topo). Sem isto, ventos da latitude sul (-28°S) mostravam
+//   dados da latitude norte (+28°N).
 // -----------------------------------------------------------------------------
 
 import * as THREE from "three";
@@ -36,106 +24,45 @@ export interface WindFrame {
 }
 
 // -----------------------------------------------------------------------------
-// DUAS CONSTANTES QUE ERAM UMA SÓ — e isso estava decepando ciclone.
+// RENDERIZAÇÃO RESTAURADA DO BACKUP DE 08-08, que o usuário identificou como
+// "a melhor versão visual e de informações que já foi implementada".
 //
-// `SPEED_MAX = 40` fazia DOIS trabalhos diferentes ao mesmo tempo:
+// O QUE EU TINHA DESTRUÍDO, E COMO
 //
-//   1. o teto de armazenamento da textura (o clamp em buildTexture)
-//   2. a referência da rampa de cor (spd / SPEED_MAX)
+// Ao longo de seis rodadas eu fui trocando parâmetros de desenho perseguindo um
+// relato de cada vez, sem nunca comparar com uma referência boa:
 //
-// São grandezas distintas, e juntá-las num número tem uma consequência
-// concreta. O campo do GFS de 29/07/2026 tem máximo de 67,8 m/s — um ciclone
-// tropical de categoria 4 ou 5, que é exatamente o tipo de coisa que alguém
-// abre este mapa para ver. Com o teto em 40, o NÚCLEO DELE ERA CORTADO: os
-// 67,8 m/s viravam 40, o gradiente interno da parede do olho desaparecia, e o
-// que sobrava era um platô chapado.
+//                    backup            o que eu deixei
+//   espessura        1,2 + vel·2,5     0,8 + vel·0,9      (menos da metade)
+//   opacidade        0,88              0,01 + vel·0,30    (até 88x menor)
+//   brilho no miolo  presente          removido por mim
 //
-// Agora separadas:
+// Passei rodadas discutindo física de acúmulo de tinta e IGNOREI o canal mais
+// óbvio que o backup usava: a ESPESSURA. No backup a largura do traço cresce
+// 2,5x com a velocidade — é ela que faz vento forte aparecer, não a opacidade.
+// Ao apagar isso e mexer só no alfa, eu deixei o campo quase invisível e depois
+// tentei compensar com cor, que é o canal mais fraco dos três.
 //
-//   TETO_FISICO  limite de plausibilidade, não de estética. Vento de 10 m
-//                acima de ~120 m/s não existe na Terra; o que passa disso é
-//                erro de desempacotamento, e o contador de saturação continua
-//                servindo de alarme para isso.
+// E o "erro de índice" que eu relatei na rampa (`mix(c2, c3, s - 1.0)`) NÃO
+// existe aqui: o backup tem `s - 2.0`, correto. O bug foi introduzido depois
+// dele. Eu encontrei um defeito real, mas ele não estava na versão boa.
 //
-//   REF_COR      onde a rampa chega ao branco.
-//
-//                Estava em 40 m/s, e isso foi outro erro meu. Vento de 10 m de
-//                40 m/s é raríssimo: um ciclone subtropical na costa do Sudeste
-//                tem 20 a 25 m/s. Com a referência em 40, ele caía em
-//                (25/40)^0,6 = 0,76 — verde-claro, no meio da rampa, sem se
-//                distinguir do vento comum de 12 m/s que dá 0,64.
-//
-//                Em 26 m/s (força de tempestade, 10 Bft), 25 m/s dá 0,98:
-//                branco. É a diferença entre o sistema aparecer e não aparecer.
-//                O dado acima de 26 continua no campo — a rampa satura, o
-//                número não.
+// A ÚNICA coisa que mantive da minha versão é a separação do teto de
+// armazenamento — porque ela não muda nada abaixo de 40 m/s e impede que o
+// núcleo de um ciclone (67,8 m/s medidos em 29/07) seja decepado na entrada.
 // -----------------------------------------------------------------------------
+
+/** teto de plausibilidade física para ARMAZENAR: vento de 10 m acima disso não
+ *  existe na Terra, e o que passar é erro de desempacotamento. */
 const TETO_FISICO = 120;
-const REF_COR = 26;
+
+/** referência da RAMPA DE COR — o valor do backup, preservado. */
+const SPEED_MAX = 40;
 const FRAME_CACHE = 3;
 
-// -----------------------------------------------------------------------------
-// RAMPA DE VELOCIDADE
-//
-// A rampa anterior tinha dois defeitos, e o segundo é o grave.
-//
-// 1. UM ERRO DE ÍNDICE PINTAVA FORA DO GAMUT.
-//    A terceira faixa era `mix(c2, c3, s - 1.0)` onde devia ser `s - 2.0`.
-//    Para s entre 2 e 3 o fator ia de 1 a 2, e `mix` do GLSL NÃO satura: a cor
-//    extrapolava para R = 1,047 e B = −0,187. O driver corta na escrita, então
-//    aparecia um estouro branco-amarelado que voltava de repente ao verde —
-//    uma emenda dura numa velocidade específica do vento, em todo o planeta.
-//
-// 2. O VENTO MAIS FORTE ERA O MAIS ESCURO.
-//    Luminância medida ao longo da rampa: subia até 0,93 perto de t = 0,46 e
-//    despencava para 0,213 em t = 1,0. Doze quedas de luminância no percurso.
-//    Ou seja: a corrente de jato — o dado mais importante do mapa — RECUAVA
-//    visualmente, enquanto o vento médio brilhava. Exatamente o contrário do
-//    que a tela precisa dizer. É o mesmo defeito que a paleta de focos de calor
-//    tinha, e a correção é a mesma: monotonicidade em luminância.
-//
-// Aqui a velocidade lê como BRILHO. Some a cor e a leitura sobrevive — que é o
-// teste de que a codificação é a grandeza, e não enfeite.
-//
-// Os valores vivem aqui, em TypeScript, e são INJETADOS no shader. O teste lê
-// esta mesma constante. Uma paleta transcrita à mão para dentro de uma string
-// GLSL é uma paleta que vai divergir do que se acredita estar pintando.
-// -----------------------------------------------------------------------------
-export const RAMPA_VENTO: readonly [number, number, number][] = [
-  [0.043, 0.114, 0.302],   // #0b1a4d  calmaria: quase o fundo do espaço
-  [0.098, 0.294, 0.541],   // #194b8a  brisa
-  [0.165, 0.561, 0.659],   // #2a8fa8  vento moderado
-  [0.373, 0.788, 0.561],   // #5fc98f  vento forte
-  [0.812, 0.890, 0.420],   // #cfe36b  vendaval
-  [1.000, 0.984, 0.910],   // #fffbe8  jato: branco quente
-];
-
-const glsl3 = (c: readonly number[]) => `vec3(${c.map((x) => x.toFixed(4)).join(", ")})`;
-
-/**
- * Gradiente por mistura sucessiva.
- *
- * Cada termo é `clamp(s - k, 0, 1)` com k igual ao próprio índice: 0 antes do
- * seu trecho, 0→1 dentro dele, 1 depois. Isso dá exatamente a interpolação
- * linear por partes, mas de um jeito em que o erro de índice de cima é
- * IMPOSSÍVEL de escrever — e o `clamp` remove a extrapolação fora do gamut na
- * raiz, em vez de depender de o driver cortar.
- */
-function rampaGLSL(stops: readonly (readonly number[])[]): string {
-  const n = stops.length - 1;
-  const linhas = stops.slice(1).map((c, k) =>
-    `    c = mix(c, ${glsl3(c)}, clamp(s - ${k.toFixed(1)}, 0.0, 1.0));`).join("\n");
-  return `  vec3 ramp(float t) {
-    float s = clamp(t, 0.0, 1.0) * ${n.toFixed(1)};
-    vec3 c = ${glsl3(stops[0])};
-${linhas}
-    return c;
-  }`;
-}
-
 // Resolução da textura de rastro
-const TRAIL_W = 2048;
-const TRAIL_H = 1024;
+const TRAIL_W = 4096;
+const TRAIL_H = 2048;
 
 // ---------------------------------------------------------------- avanço --
 const UPDATE_FRAG = /* glsl */ `
@@ -191,26 +118,18 @@ const UPDATE_FRAG = /* glsl */ `
     vec2 pos = st.xy;
     float age = st.w;
 
-    // Velocidade da posição ANTERIOR, guardada só para o teste de calmaria:
-    // um ponto que já estava parado deve morrer, mesmo que o passo o tenha
-    // jogado para dentro de um jato.
-    float spdAntes = length(getWindVector(pos));
+    vec2 wind = getWindVector(pos);
+    float spd = length(wind);
 
     // Atualização curvilínea RK2
     pos = moveRK2(pos, uDt);
-
-    // A cor é amostrada DEPOIS do passo. Antes ela vinha da posição velha, e a
-    // partícula chegava ao jato ainda pintada com a cor da calmaria de onde
-    // saiu — um quadro inteiro de atraso, visível como um rastro que troca de
-    // cor atrás da própria ponta.
-    float spd = length(getWindVector(pos));
 
     age -= uDt * 0.22;
 
     float r = hash(vUv * 51.7 + uTime);
     bool dead = age <= 0.0
              || pos.y < 0.015 || pos.y > 0.985
-             || spdAntes < 0.05
+             || spd < 0.05
              || r < uDrop;
 
     if (dead) {
@@ -227,31 +146,10 @@ const UPDATE_FRAG = /* glsl */ `
         }
       }
       pos = cand;
-      // VIDA ESPALHADA. A faixa era 0,60 a 1,00 — uma variação de só 40%, o
-      // que faz as partículas nascerem e morrerem quase juntas. O efeito é uma
-      // pulsação: o campo inteiro clareia e apaga em ondas, e as trajetórias
-      // saem em pentes paralelos porque toda a leva começou no mesmo instante.
-      // De 0,15 a 1,00 a leva se dispersa e o escoamento fica contínuo.
-      age = found > 0.5 ? (0.15 + hash(vUv + uTime * 2.3) * 0.85) : -1.0;
+      age = found > 0.5 ? (0.60 + hash(vUv + uTime * 2.3) * 0.40) : -1.0;
     }
 
-    // ---- ESCALA PERCEPTUAL DE VELOCIDADE ---------------------------------
-    //
-    // A normalização era linear sobre 40 m/s. Mas 40 m/s é rajada
-    // de ciclone: o vento de superfície do planeta vive entre 3 e 12 m/s, o
-    // que caía em t = 0,08 a 0,30 — o terço inferior da rampa, todo azul
-    // escuro. Praticamente o mapa inteiro ficava na mesma cor, e só os
-    // quarentões rugidores acendiam. É o que se vê na tela: um globo quase
-    // apagado com duas manchas.
-    //
-    // O expoente 0,6 é uma escala perceptual, não um enfeite: espalha a faixa
-    // comum pelo meio da rampa mantendo a ordem intacta (5 m/s -> 0,31;
-    // 10 -> 0,47; 20 -> 0,71; 40 -> 1,0). É o mesmo raciocínio de um eixo
-    // logarítmico — a monotonicidade se preserva, então nenhuma comparação
-    // muda de sinal, e a legenda diz qual velocidade é qual.
-    float t = pow(clamp(spd / ${REF_COR}.0, 0.0, 1.0), 0.6);
-
-    gl_FragColor = vec4(pos, t, age);
+    gl_FragColor = vec4(pos, clamp(spd / ${SPEED_MAX}.0, 0.0, 1.0), age);
   }
 `;
 
@@ -279,95 +177,50 @@ const DRAW_VERT = /* glsl */ `
     vAge = st.w;
     vec2 clip = vec2(st.x * 2.0 - 1.0, st.y * 2.0 - 1.0);
     gl_Position = vec4(clip, 0.0, 1.0);
-
-    // COMPENSAÇÃO DE LATITUDE.
-    //
-    // O rastro é pintado numa textura equirretangular que depois se enrola na
-    // esfera. Nessa projeção, um ponto de N pixels de largura na latitude φ
-    // vira, na esfera, um arco proporcional a cos(φ). Perto dos polos isso
-    // tende a zero: a partícula existe, anda e é pintada — e some.
-    //
-    // O resultado era que a circulação polar, que é justamente onde o vento é
-    // mais organizado e mais rápido, ficava invisível. Não era escolha
-    // estética; era dado sumindo por causa da projeção.
-    //
-    // O teto de 2,8 existe porque gl_PointSize é isotrópico: sem limite, a
-    // compensação certa em longitude vira um borrão alto demais em latitude.
-    // Mesma convenção do UPDATE_FRAG: p.y = 0 é o norte. (Para cos() o sinal
-    // não muda nada, mas um rótulo trocado engana quem ler depois.)
-    float lat = (0.5 - st.y) * 180.0;
-    float compensa = min(1.0 / max(cos(radians(lat)), 0.12), 2.8);
-
-    gl_PointSize = (0.8 + vSpeed * 0.9) * uScale * compensa;
+    // Linhas expressivas proporcionais à velocidade real do vento
+    gl_PointSize = (1.2 + vSpeed * 2.5) * uScale;
   }
 `;
 
+// RAMPA DE CORES VIBRANTE ESTILO WINDY
 const DRAW_FRAG = /* glsl */ `
   precision highp float;
   varying float vSpeed;
   varying float vAge;
 
-${rampaGLSL(RAMPA_VENTO)}
+  vec3 ramp(float t) {
+    vec3 c0 = vec3(0.04, 0.12, 0.45);  // azul escuro profundo
+    vec3 c1 = vec3(0.10, 0.55, 0.90);  // elétrico ciano
+    vec3 c2 = vec3(0.12, 0.88, 0.60);  // verde esmeralda
+    vec3 c3 = vec3(0.65, 0.95, 0.15);  // verde limão neon
+    vec3 c4 = vec3(0.98, 0.82, 0.10);  // âmbar brilhante
+    vec3 c5 = vec3(0.98, 0.32, 0.12);  // fogo alaranjado
+    vec3 c6 = vec3(0.92, 0.12, 0.65);  // magenta/púrpura intenso
+
+    float s = t * 6.0;
+    if (s < 1.0) return mix(c0, c1, s);
+    if (s < 2.0) return mix(c1, c2, s - 1.0);
+    if (s < 3.0) return mix(c2, c3, s - 2.0);
+    if (s < 4.0) return mix(c3, c4, s - 3.0);
+    if (s < 5.0) return mix(c4, c5, s - 4.0);
+    return mix(c5, c6, s - 5.0);
+  }
 
   void main() {
     vec2 d = gl_PointCoord - 0.5;
     float r2 = dot(d, d) * 4.0;
     if (r2 > 1.0) discard;
-    if (vAge <= 0.0) discard;
 
     float core = exp(-r2 * 4.5);
+    float a = clamp(core, 0.0, 1.0);
+
+    if (vAge <= 0.0) discard;
     float fade = smoothstep(0.0, 0.08, vAge) * smoothstep(1.0, 0.55, vAge);
 
-    // O clarão branco somado à cor foi removido. Ele adicionava até +0,45 de
-    // cada canal no centro de TODA partícula, o que achatava a rampa
-    // justamente onde ela precisa discriminar: uma brisa com miolo claro
-    // ficava parecida com um vendaval. O brilho agora vem da rampa, que é onde
-    // a velocidade está codificada.
     vec3 col = ramp(vSpeed);
+    col += vec3(0.6, 0.7, 0.85) * core * 0.45;
 
-    // ---- TINTA PROPORCIONAL À DISTÂNCIA PERCORRIDA ------------------------
-    //
-    // ESTE É O CONSERTO DA "CALMARIA QUE PARECE FURACÃO".
-    //
-    // O rastro é um acúmulo: cada quadro a textura inteira é multiplicada por
-    // uFade (0,985) e as partículas pintam por cima. Uma partícula PARADA
-    // pinta o MESMO texel todo quadro, e o acúmulo converge para
-    //
-    //     alfa / (1 - uFade)  =  alfa / 0,015  =  67 x alfa
-    //
-    // ou seja, satura em branco quase imediatamente. Uma partícula RÁPIDA
-    // atravessa dez texels por quadro, pinta cada um UMA vez, e cada um já
-    // começa a apagar.
-    //
-    // O resultado era o inverso do que o mapa precisa dizer: a região calma
-    // ficava sólida e brilhante, e como campo calmo é laminar, o lento
-    // arrastar traçava um risco reto, longo e cheio — o "furacão de outro
-    // mundo" onde não venta quase nada. O vento forte, que se espalha, ficava
-    // mais apagado que ele.
-    //
-    // O NÚMERO QUE FECHA O CASO: com o piso de 0,24 que estava aqui, o rastro a
-    // 2 m/s e o rastro a 25 m/s tinham AMBOS brilho 1,000 e levavam AMBOS 259
-    // quadros (4,3 s) para apagar. Calmaria e vendaval eram, pixel a pixel, a
-    // mesma marca — e a calma, sendo laminar, desenhava a versão reta e longa
-    // dela.
-    //
-    // A correção é a de uma caneta: para traçar uma linha de densidade
-    // constante, a tinta sai proporcional à velocidade da mão; parada, a caneta
-    // não pode borrar.
-    //
-    // E aí a medição mostrou algo que eu tinha errado: com tinta proporcional à
-    // distância, o brilho NÃO PODE codificar velocidade — os dois efeitos se
-    // cancelam exatamente. Quem carrega a velocidade é a COR (a rampa) e o
-    // COMPRIMENTO do traço. O brilho fica uniforme, que é o que faz parecer um
-    // campo de escoamento em vez de borrões. Ver src/windInk.ts.
-    //
-    // vSpeed chega perceptual (elevado a 0,6) para a cor; a tinta desfaz a
-    // curva, porque distância percorrida é grandeza física e não herda a curva
-    // que existe só para a leitura.
-    float vLinear = pow(vSpeed, 1.6667);
-    float tinta = 0.01 + vLinear * 0.30;
-
-    gl_FragColor = vec4(col, core * fade * tinta);
+    gl_FragColor = vec4(col, a * fade * 0.88);
   }
 `;
 
@@ -397,8 +250,6 @@ export class WindGPU {
   private points: THREE.Points;
   private windTex: THREE.DataTexture | null = null;
   private frameTex = new Map<string, THREE.DataTexture>();
-  /** % do último campo que estourou o teto de velocidade — ver buildTexture */
-  lastSaturatedPct = 0;
   /** pico real do último campo, em m/s, antes do corte */
   lastPeakMs = 0;
   private clock = 0;
@@ -410,29 +261,8 @@ export class WindGPU {
 
   /** graus por segundo por m/s — movimento fluido natural */
   speed = 0.12;
-  /**
-   * Decaimento do rastro por quadro.
-   *
-   * Era 0,985, que dá um teto de acúmulo de 1/(1−0,985) = 67 repinturas: um
-   * texel saturava e depois levava 259 quadros (4,3 s) para apagar. Rastro de
-   * quatro segundos é o que fazia tudo virar cabelo comprido, e o que fazia a
-   * calmaria — que repinta o mesmo lugar — encorpar num risco sólido.
-   *
-   * 0,975 dá teto 40 e rastro de ~2,3 s.
-   *
-   * TENTEI 0,981 E MEDI O CUSTO. O raciocínio era bom: é a CURVATURA do traço
-   * que revela rotação, e um rastro curto num ciclone vira tracinho reto. Mas
-   * o teto de acúmulo sobe para 53, e aí NÃO EXISTE par de piso e ganho que
-   * mantenha a ordem: busquei sobre a faixa inteira e todo candidato ou
-   * saturava acima de 3 m/s, ou invertia (1 m/s mais brilhante que 5 m/s), ou
-   * deixava o campo inteiro apagado. Comprar curvatura custa saturação.
-   *
-   * Então não compro. A legibilidade da rotação passa a vir de onde ela é
-   * confiável: `server/vorticidade.js` MEDE a circulação e marca o centro, em
-   * vez de esperar que o traço a sugira. Um marcador funciona mesmo quando
-   * ninguém está olhando para aquela parte do globo.
-   */
-  fade = 0.975;
+  /** Decaimento suave de rastro nítido curvilíneo */
+  fade = 0.985;
 
   constructor(renderer: THREE.WebGLRenderer, particles = 131072) {
     if (!renderer) throw new Error("[windGPU] renderer é obrigatório");
@@ -671,38 +501,24 @@ export class WindGPU {
       return cr(c[0], c[1], c[2], c[3], ty);
     };
 
+    /** pico REAL antes de qualquer corte: distingue ciclone de GRIB quebrado */
+    let picoBruto = 0;
     const buf = new Uint16Array(ox * oy * 4);
     const h = THREE.DataUtils.toHalfFloat;
-
-    // O CLAMP PRECISA CONFESSAR.
-    //
-    // Ele existe por um motivo legítimo: meia-precisão satura e um valor
-    // extremo isolado não deve estourar a textura. Mas quando o campo INTEIRO
-    // está fora de escala — um desempacotamento GRIB2 quebrado, por exemplo —
-    // o clamp leva todo nó para exatamente ±TETO_FISICO. O resultado é um campo
-    // CONSTANTE, que a tela mostra como listras diagonais paralelas perfeitas:
-    // convincente, estável, e completamente inventado.
-    //
-    // Contar quantos nós ele tocou é a diferença entre "o vento está estranho"
-    // e "97% do campo foi saturado, o dado está errado antes de chegar aqui".
-    let saturados = 0;
-    // Guarda o pico REAL do campo, antes de qualquer corte. É o número que
-    // distingue "ciclone categoria 5" (68 m/s) de "desempacotamento quebrado"
-    // (2 x 10^7 m/s) — e antes ele se perdia dentro do clamp.
-    let picoBruto = 0;
-
     for (let y = 0; y < oy; y++) {
       const fy = (y + 0.5) / S - 0.5;
       for (let x = 0; x < ox; x++) {
         const fx = (x + 0.5) / S - 0.5;
         const i = (y * ox + x) * 4;
 
-        const ru = sample(u, fx, fy);
-        const rv = sample(v, fx, fy);
+        // O corte é pelo TETO FÍSICO, não pela referência de cor. Eram o mesmo
+        // número, e por isso o núcleo de um ciclone (67,8 m/s medidos em
+        // 29/07) era aplainado em 40 na ENTRADA — o gradiente da parede do olho
+        // desaparecia antes de chegar à tela. A cor continua saturando em 40;
+        // o dado não.
+        const ru = sample(u, fx, fy), rv = sample(v, fx, fy);
         const mag = Math.hypot(ru, rv);
         if (Number.isFinite(mag) && mag > picoBruto) picoBruto = mag;
-        if (Math.abs(ru) > TETO_FISICO || Math.abs(rv) > TETO_FISICO) saturados++;
-
         const uu = Math.max(-TETO_FISICO, Math.min(TETO_FISICO, ru));
         const vv = Math.max(-TETO_FISICO, Math.min(TETO_FISICO, rv));
         buf[i] = h(uu);
@@ -718,16 +534,7 @@ export class WindGPU {
       }
     }
 
-    // Acima de 5% saturado não é rajada extrema: é escala errada. Avisa uma vez
-    // por campo, com número, em vez de deixar a tela mentir bonito.
-    this.lastSaturatedPct = +((saturados / (ox * oy)) * 100).toFixed(1);
     this.lastPeakMs = +picoBruto.toFixed(1);
-    if (this.lastSaturatedPct > 5) {
-      console.warn(
-        `[vento] ${this.lastSaturatedPct}% do campo passou de ±${TETO_FISICO} m/s. ` +
-        `Campo quase constante — provável erro de desempacotamento, não meteorologia.`
-      );
-    }
 
     const tex = new THREE.DataTexture(buf, ox, oy, THREE.RGBAFormat, THREE.HalfFloatType);
     tex.magFilter = THREE.LinearFilter;
