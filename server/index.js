@@ -17,6 +17,7 @@ import { buildIsobars } from "./isobars.js";
 import { buscarSerie } from "./timeseries.js";
 import { buscarSondagem } from "./sounding.js";
 import { compararModelos } from "./compare.js";
+import { buscarCorrentes } from "./currents.js";
 import { registerGeoRoutes, placeAt } from "./geo.js";
 import { describeModelLayer, sortModelLayers } from "./modelNames.js";
 import { parseCapabilities, snapTime, coverageOf } from "./gibsTime.js";
@@ -793,40 +794,29 @@ app.get("/api/hospitals", async (req, res) => {
 // ======================================================================
 // CORRENTES OCEÂNICAS — physics-based synthetic + turbulence
 // ======================================================================
-app.get("/api/hycom", async (_req, res) => {
-  // ---------------------------------------------------------------------
-  // CORRENTES MARÍTIMAS — DESLIGADAS ATÉ HAVER DADO.
-  //
-  // O que havia aqui eram 195 linhas gerando o oceano INTEIRO por fórmula:
-  //
-  //   - giros subtropicais como gaussianas em caixas de lat/lng escritas à mão
-  //   - Corrente do Golfo como `0.8 * Math.exp(-dist*dist / 15)`
-  //   - Kuroshio como `0.65 * Math.exp(-dist*dist / 12)`
-  //   - Circumpolar Antártica como um cosseno de latitude
-  //   - "turbulência" por movimento browniano fracionário
-  //   - sete vórtices de mesoescala com posição cravada numa lista
-  //
-  // Nenhuma requisição. Nenhum dado. Um campo físico inteiro, ~65 mil vetores,
-  // servido de uma rota chamada `/api/hycom` — o nome de um modelo oceânico
-  // real da Marinha americana que a função não tocava em lugar nenhum.
-  //
-  // Era a maior fabricação do projeto, e explicava a reclamação de que "as
-  // correntes estão em chunks retas": blobs gaussianos e caixas de coordenada
-  // produzem exatamente isso.
-  //
-  // A substituição em curso é o RTOFS Global do NCEP — que É o HYCOM da
-  // Marinha rodado operacionalmente, em 1/12°, GRIB2, no mesmo NOMADS do GFS e
-  // sem chave. Até ele estar ligado e conferido, esta rota diz que não tem
-  // dado, em vez de desenhar um oceano plausível.
-  // ---------------------------------------------------------------------
-  res.status(503).json({
-    ok: false,
-    code: "SEM_FONTE",
-    error: "Correntes marítimas ainda não estão ligadas a uma fonte de dados.",
-    detalhe: "O campo anterior era gerado por fórmula analítica, não medido. "
-           + "Foi removido em vez de continuar sendo exibido como observação.",
-    substituto: "NCEP RTOFS Global (HYCOM operacional) 1/12°, GRIB2 via NOMADS",
-  });
+// ----------------------------------------------------------------------
+// CORRENTES MARÍTIMAS.
+//
+// A rota mantém o nome `/api/hycom` por compatibilidade com o cliente, mas a
+// fonte NÃO é HYCOM — e é por isso que `provider` vem da resposta e não de um
+// literal. O que havia antes eram 170 linhas gerando o oceano por fórmula sob
+// esse mesmo nome; o mínimo agora é que a origem verdadeira apareça na tela.
+//
+// Caminho até aqui, para quem for revisitar: OSCAR via ERDDAP tem os espelhos
+// livres congelados (2012 e 2014); o GRIB2 do RTOFS é só regional e o global
+// dele sai em NetCDF de 9,3 milhões de pontos com o OPeNDAP fora do ar. A
+// Open-Meteo Marine serve o SMOC do Copernicus a 0,08° sem chave.
+// ----------------------------------------------------------------------
+app.get("/api/hycom", async (req, res) => {
+  const hora = req.query.hour != null ? Math.max(0, Math.min(23, Number(req.query.hour))) : null;
+  try {
+    const grid = await cached(`corr:${hora ?? "meio"}`, 6 * HOUR, () =>
+      buscarCorrentes(fetch, { hora, medir: (n, f) => metered("open-meteo", n, f) })
+    );
+    res.json({ ok: true, ...grid });
+  } catch (e) {
+    res.status(e.status ?? 502).json({ ok: false, error: e.message, code: e.code });
+  }
 });
 
 app.get("/api/openaq", async (_req, res) => {
