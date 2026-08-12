@@ -37,7 +37,7 @@ export function paraCSV(d: SerieDiaria, contexto: { place: string; lat: number; 
   // Preâmbulo comentado: quem abrir o arquivo daqui a um ano precisa saber de
   // onde ele veio sem ter o aplicativo à mão.
   const preambulo = [
-    `# Observatório da Terra — série histórica diária`,
+    `# ObservEarth — série histórica diária`,
     `# Local: ${contexto.place}`,
     `# Coordenadas: ${hemi(contexto.lat, "N", "S")} ${hemi(contexto.lng, "L", "O")}`,
     `# Intervalo: ${d.intervalo.start} a ${d.intervalo.end} (${d.intervalo.dias} dias)`,

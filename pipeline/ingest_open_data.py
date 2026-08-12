@@ -90,7 +90,7 @@ def process_gdelt():
     print(f"[aviso] Feed GDELT: {e}")
 
 def main():
-  parser = argparse.ArgumentParser(description="Script Mestre de Ingestão Open Data Observatório Earth")
+  parser = argparse.ArgumentParser(description="Script Mestre de Ingestão Open Data ObservEarth")
   parser.add_argument("--all", action="store_true", help="Processar todas as camadas restantes")
   parser.add_argument("--layer", type=str, choices=["powerlines", "worldpop", "gdelt"], help="Processar camada específica")
   args = parser.parse_args()

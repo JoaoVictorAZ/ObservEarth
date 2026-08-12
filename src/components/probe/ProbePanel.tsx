@@ -284,7 +284,7 @@ export const ProbePanel: React.FC<ProbePanelProps> = ({ onToggleChat, chatAberto
                 className={`probe-analise ${chatAberto ? "probe-analise-ativo" : ""}`}
                 onClick={onToggleChat}
               >
-                <span>{chatAberto ? "Ocultar Terminal 8B" : "Terminal LLM 8B"}</span>
+                <span>{chatAberto ? "Ocultar Terminal LLM" : "Terminal LLM"}</span>
               </button>
             )}
             <button

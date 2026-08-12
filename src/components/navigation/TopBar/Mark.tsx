@@ -11,7 +11,7 @@ export const Mark: React.FC<{ size?: number }> = ({ size = 22 }) => {
       viewBox="-12 -12 24 24"
       className="marca"
       role="img"
-      aria-label="Observatório da Terra"
+      aria-label="ObservEarth"
     >
       {/* limbo */}
       <circle r={R} className="marca-limbo" />

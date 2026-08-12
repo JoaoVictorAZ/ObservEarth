@@ -1,5 +1,5 @@
 # DOCUMENTAÇÃO TÉCNICA COMPLETA & PIPELINE DE OPEN DATA
-## Observatório Earth Platform 2.0 — Sistema GIS, Clima & Análise Socioambiental
+## ObservEarth 2.0 — Sistema GIS, Clima & Análise Socioambiental
 ### Arquitetura de Dados Apenas Open Data, Shaders WebGL e Catálogo Exclusivo de Dataviz
 
 ---

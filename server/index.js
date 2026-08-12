@@ -1,6 +1,6 @@
 // server/index.js
 // -----------------------------------------------------------------------------
-// Observatorio da Terra: backend completo, num arquivo so.
+// ObservEarth: backend completo, num arquivo so.
 // -----------------------------------------------------------------------------
 
 
@@ -1025,7 +1025,7 @@ app.get("/api/health", (_req, res) => res.json({ ok: true }));
 console.log("[boot] iniciando servidor...");
 
 const server = app.listen(PORT, () => {
-  console.log(`\n  Observatório da Terra — backend em http://localhost:${PORT}\n`);
+  console.log(`\n  ObservEarth — backend em http://localhost:${PORT}\n`);
   openStore();
   const pruned = cachePrune();
   const stale = cacheDropStale(WIND_KEY_PREFIX, WIND_KEY_CURRENT);

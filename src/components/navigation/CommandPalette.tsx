@@ -69,7 +69,7 @@ export const CommandPalette: React.FC<{ onFlyTo?: (lat: number, lng: number) => 
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <Command label="Observatório Earth Platform Command Palette">
+        <Command label="ObservEarth — paleta de comandos">
           <div
             style={{
               display: "flex",

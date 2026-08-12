@@ -1,4 +1,4 @@
-# Observatório da Terra
+# ObservEarth
 
 Um globo terrestre que mostra o que está realmente acontecendo na atmosfera —
 imagem de satélite da NASA, vento animado a partir do GRIB2 bruto do GFS,
@@ -119,8 +119,8 @@ se movem juntas. O botão de play anima a linha do tempo sozinho.
 
 **6. Peça a análise completa.** No rodapé da sonda, *Análise completa* abre um
 modal com três abas: série histórica de até dez anos, perfil vertical da
-atmosfera naquele ponto e a dispersão entre três modelos globais. Dá para baixar
-qualquer uma em CSV.
+atmosfera naquele ponto e a dispersão entre três modelos globais. A série
+histórica pode ser baixada em CSV.
 
 **7. Converse com os dados.** *Terminal LLM 8B* abre um console que baixa um
 modelo de linguagem para a sua GPU e responde perguntas sobre o dossiê daquele

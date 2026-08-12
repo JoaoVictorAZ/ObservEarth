@@ -43,9 +43,14 @@ export const LogoSection: React.FC = () => {
         <StatusDot />
       </div>
 
+      {/* O nome inteiro fica no span FORTE, e não partido entre os dois.
+          O span fraco é caixa-alta com entreletra larga e some abaixo de
+          900px — partir "ObservEarth" nele renderizaria "Observ  E A R T H"
+          na tela cheia e só "Observ" no notebook. O fraco carrega o
+          descritor, que é justamente o que pode cair sem perder a marca. */}
       <h1 className="plaqueta-nome">
-        <span className="plaqueta-nome-forte">Observatório</span>
-        <span className="plaqueta-nome-fraco">da Terra</span>
+        <span className="plaqueta-nome-forte">ObservEarth</span>
+        <span className="plaqueta-nome-fraco">Observação da Terra</span>
       </h1>
 
       {/* Carimbo de versão: monoespaçado, apagado, do tamanho de um metadado.

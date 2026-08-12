@@ -1,6 +1,6 @@
 # Sistema de design — "Instrumento"
 
-Linguagem visual do Observatório. Existe para que qualquer tela nova nasça
+Linguagem visual do ObservEarth. Existe para que qualquer tela nova nasça
 coerente sem precisar de julgamento estético a cada decisão.
 
 **Princípio único:** a Terra é a imagem. A interface é instrumento, não decoração.

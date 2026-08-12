@@ -28,7 +28,7 @@ export const ToolbarButtons: React.FC<{ onSearchCoord?: (lat: number, lng: numbe
     const canvas = document.querySelector("canvas");
     if (!canvas) return;
     const a = document.createElement("a");
-    a.download = `observatorio-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "")}.png`;
+    a.download = `observearth-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "")}.png`;
     a.href = canvas.toDataURL("image/png");
     a.click();
   };

@@ -98,7 +98,7 @@ export default function AnalysisModal({ lat, lng, place, onClose }: AnalysisProp
     if (!serie.dado) return;
     baixar(
       paraCSV(serie.dado, { place, lat, lng }),
-      `observatorio_${janela}_${lat.toFixed(2)}_${lng.toFixed(2)}.csv`
+      `observearth_${janela}_${lat.toFixed(2)}_${lng.toFixed(2)}.csv`
     );
   };
 

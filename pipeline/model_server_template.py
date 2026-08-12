@@ -3,7 +3,7 @@
 pipeline/model_server_template.py
 -----------------------------------------------------------------------------
 Servidor de Inferência FastAPI + ONNX Runtime para Modelos Meteorológicos de IA.
-100% Gratuito, leve e compatível com o Observatório da Terra.
+100% Gratuito, leve e compatível com o ObservEarth.
 
 Modelos de Referência:
   - GraphCast (DeepMind)
