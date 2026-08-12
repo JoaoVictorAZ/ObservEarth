@@ -1,10 +1,79 @@
+# =============================================================================
+# ObservEarth — o que NÃO entra no repositório
+# =============================================================================
+# Três perguntas decidem tudo aqui:
+#   1. Se regenera sozinho?      → fora (node_modules, dist, cache)
+#   2. É segredo?                → fora, sem exceção (.env)
+#   3. É da máquina, não do app? → fora (editor, SO, ferramentas de agente)
+# =============================================================================
+
+# ─── dependências e build ────────────────────────────────────────────────────
 node_modules/
 dist/
-.lixo-redesign/
+dist-ssr/
+.vite/
+*.tsbuildinfo
+
+# ─── segredos ────────────────────────────────────────────────────────────────
+# `.env.*` cobre as variantes (.env.local, .env.production) que a regra antiga
+# deixava passar — bastava um `.env.local` para a chave ir junto no commit.
+# `.env.example` é reincluído de propósito: ele é a LISTA do que precisa
+# existir, com todos os valores vazios. Some com ele e ninguém mais sabe o que
+# configurar.
+.env
+.env.*
+!.env.example
+
+# ─── dados locais ────────────────────────────────────────────────────────────
+# O SQLite é contador de cota e cache. Regenera sozinho e é por máquina:
+# versioná-lo faria o consumo de API de uma pessoa contar para a outra.
 data/*.db
 data/*.db-shm
 data/*.db-wal
-.env
-*.log
-tsconfig.tsbuildinfo
+
+# Downloads brutos de modelo. Um único GRIB do GFS passa de 500 MB, e o índice
+# `.idx` que o acompanha não vale nada sem ele.
+*.grib
+*.grib2
+*.idx
+*.nc
+*.nc4
+*.hdf5
+
+# Saídas de depuração de campo (PNG de grade, recortes de teste). Ficam na raiz
+# quando alguém está investigando alguma coisa; não são do produto.
+/*.png
+!public/*.png
+
+# ─── pipeline Python ─────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+pipeline/saida/
+pipeline/modelos/
+
+# ─── ferramentas de agente e rascunho ────────────────────────────────────────
+# Tooling de quem escreve o código, não o código. `.agents/` acompanha
+# `.claude/` aqui: os arquivos continuam no disco de quem os usa.
 .claude/
+.agents/
+.lixo-redesign/
+
+# ─── logs e temporários ──────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.pid
+
+# ─── editor e sistema operacional ────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
