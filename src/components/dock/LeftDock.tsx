@@ -32,6 +32,7 @@ import {
 import { useUIStore } from "../../store/uiStore";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { FAMILIES, ruleOf, OVERLAY_LAYERS, FIELD_FAMILY, type Family } from "../../design/taxonomy";
+import { DensidadeVento } from "./DensidadeVento";
 
 /** um item de raster: campo do GFS, camada de modelo ou de satélite */
 interface ItemRaster {
@@ -237,6 +238,10 @@ export const LeftDock: React.FC = () => {
                       {/* Procedência e cobertura só aparecem quando a camada está
                           ligada: metadado de coisa desligada é ruído. */}
                       {on && info && <p className="cam-info">{info}</p>}
+                      {/* O controle de densidade pertence à camada de vento e
+                          só aparece com ela ligada: controle de coisa desligada
+                          é ruído, e pior, sugere que faz algo agora. */}
+                      {on && o.id === "wind" && <DensidadeVento />}
                     </div>
                   );
                 })}

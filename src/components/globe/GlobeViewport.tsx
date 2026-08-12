@@ -30,7 +30,7 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const engRef = useRef<GlobeEngine | null>(null);
 
-  const { dayNight, rotate } = useGlobeStore();
+  const { dayNight, rotate, windDensity } = useGlobeStore();
   const { day, hour } = useTimelineStore();
   const {
     kind, layer, opacity,
@@ -344,6 +344,9 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
   }, [hycomOn, setHycomInfo]);
 
   useEffect(() => { engRef.current?.setDayNight(dayNight); }, [dayNight]);
+  // A densidade é aplicada tanto na mudança quanto na montagem: o valor vem do
+  // localStorage, então precisa alcançar o motor na primeira renderização.
+  useEffect(() => { engRef.current?.setWindDensity(windDensity); }, [windDensity, wind]);
   useEffect(() => { engRef.current?.setAutoRotate(rotate); }, [rotate]);
 
   // Camadas ativas

@@ -357,6 +357,8 @@ export class GlobeEngine {
 
   // desempenho
   readonly perf = new PerfMonitor();
+  /** fração de partículas escolhida pelo usuário; sobrevive à troca de degrau */
+  private densidadeVento = 1;
   private idle = 0;                 // quadros sem nada para animar
   private paused = false;
   private interacting = false;
@@ -553,7 +555,8 @@ export class GlobeEngine {
     if (!q) { console.warn(`[globe] tier inválido: ${t}`); return; }
     const rnd = this.g?.renderer?.();
     if (rnd) rnd.setPixelRatio(Math.min(this.baseDpr, q.dpr));
-    this.windGPU?.resize(q.trail, q.particles, q.fadeEvery);
+    // Respeita a densidade escolhida: o degrau muda o TETO, não a escolha.
+    this.windGPU?.resize(q.trail, this.particulasAlvo(q.particles), q.fadeEvery);
     if (this.rawFiresAll.length) this.setFires(this.rawFiresAll);
     this.wake();
   }
@@ -1275,13 +1278,26 @@ export class GlobeEngine {
     this.wake();
   }
 
-  /** densidade: fracao das particulas do degrau atual (0,15 a 1) */
+  /**
+   * Densidade: fração das partículas do degrau atual.
+   *
+   * O valor é GUARDADO, não só aplicado. Sem isso, a primeira vez que o monitor
+   * de desempenho trocasse de degrau, `applyTier` chamaria `resize` com
+   * `q.particles` cheio e a escolha do usuário sumiria — sem aviso, e no meio
+   * de uma queda de quadro, que é exatamente quando ele menos entenderia por
+   * que a tela mudou sozinha.
+   */
   setWindDensity(frac: number) {
+    this.densidadeVento = Math.max(0.1, Math.min(1, frac));
     if (!this.windGPU) return;
     const q = TIERS[this.perf.tier];
-    const n = Math.max(4096, Math.round(q.particles * Math.max(0.15, Math.min(1, frac))));
-    this.windGPU.resize(q.trail, n, q.fadeEvery);
+    this.windGPU.resize(q.trail, this.particulasAlvo(q.particles), q.fadeEvery);
     this.wake();
+  }
+
+  /** piso de 3.000: abaixo disso não é "menos denso", é um campo vazio */
+  private particulasAlvo(base: number) {
+    return Math.max(3000, Math.round(base * this.densidadeVento));
   }
 
   private tickWind(dt: number) {
