@@ -223,7 +223,7 @@ export function acharCentros(grid, {
 
       achados.push({
         lat: +lat.toFixed(2),
-        lng: +(((i * dLng + 180) % 360) - 180).toFixed(2),
+        lng: +((grid.lon0 ?? -180) + i * dLng).toFixed(2),
         zeta: +zb.toExponential(2),
         giro: lat >= 0 ? "anti-horário" : "horário",
         ventoMaxMs: +ventoMax.toFixed(1),

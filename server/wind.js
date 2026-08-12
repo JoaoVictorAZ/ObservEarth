@@ -198,10 +198,52 @@ async function buildWindGridGfs(fetchImpl, dateStr, hour) {
     );
   }
 
+  // -------------------------------------------------------------------------
+  // ROTAÇÃO DE MEIA VOLTA — o campo estava 180° FORA DO LUGAR.
+  //
+  // O GFS é pedido com `leftlon=0, rightlon=360`: a coluna 0 é 0°E.
+  // O shader que pinta o vento na esfera faz `uv.x = lng/(2π) + 0.5`, ou seja,
+  // u = 0 é −180°.
+  //
+  // Resultado: o campo inteiro aparecia meia volta deslocado. O vento do
+  // Pacífico central era desenhado sobre a África, o do Atlântico sobre a
+  // Indonésia. E como vento deslocado continua PARECENDO vento — escoamento
+  // suave, jatos, redemoinhos —, nada parecia quebrado. Só estava no lugar
+  // errado.
+  //
+  // É exatamente o sintoma relatado: "partículas correndo em altíssima
+  // velocidade num lugar que marca 5 km/h, e partícula parada indicando
+  // 100 km/h". A animação vem do campo deslocado; o número da sonda vem da
+  // posição verdadeira. Os dois discordam porque um dos dois está a meio mundo
+  // de distância.
+  //
+  // E explica por que uma versão ANTIGA estava certa: quando o GFS falhava, o
+  // recuo da Open-Meteo montava a grade de −180 para +180 (ver
+  // buildWindGridOpenMeteo), que É a convenção do shader. O campo grosso estava
+  // no lugar certo; o campo fino estava deslocado. Consertar o acesso ao GFS
+  // fez o mapa passar a usar o campo errado com mais resolução.
+  //
+  // A mesma linha de shader é CORRETA para as imagens de satélite, que vêm com
+  // BBOX de −180 a 180. É assim que um erro destes sobrevive: o código é o
+  // mesmo, e só uma das camadas o alimenta com a convenção errada.
+  // -------------------------------------------------------------------------
+  const meia = Math.floor(nx / 2);
+  const uR = new Float32Array(nPoints), vR = new Float32Array(nPoints);
+  const validR = new Uint8Array(nPoints);
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      const de = j * nx + ((i + meia) % nx);
+      const para = j * nx + i;
+      uR[para] = u[de]; vR[para] = v[de]; validR[para] = valid[de];
+    }
+  }
+
   return {
     nx, ny,
-    u, v,
-    valid: Array.from(valid),
+    u: Array.from(uR), v: Array.from(vR),
+    valid: Array.from(validR),
+    /** longitude da coluna 0, para nenhum consumidor precisar adivinhar */
+    lon0: -180,
     measuredPct: +((measured / nPoints) * 100).toFixed(1),
     validPct: 100.0,
     /** diagnóstico: quanto do campo é fisicamente impossível, sem recusá-lo */
@@ -354,6 +396,9 @@ async function buildWindGridOpenMeteo(fetchImpl, dateStr, hour) {
     valid: Array.from(valid),
     measuredPct: +((measured / (nx * ny)) * 100).toFixed(1),
     validPct: +((valid.reduce((a, b2) => a + b2, 0) / (nx * ny)) * 100).toFixed(1),
+    // Este caminho SEMPRE montou de −180 a +180 (ver o laço de `lngs` acima),
+    // que é a convenção do shader. Era o campo grosso que estava certo.
+    lon0: -180,
     provider: "Open-Meteo",
     dataset: isPast ? "ERA5 (reanálise)" : "ECMWF/GFS (previsão)",
     stepDeg: 3,

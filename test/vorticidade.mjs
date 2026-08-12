@@ -47,7 +47,8 @@ function campoComVortice({
     const lat = 90 - j * dLat;
     const cosLat = Math.max(Math.cos((lat * Math.PI) / 180), 0.05);
     for (let i = 0; i < nx; i++) {
-      const lng = ((i * dLng + 180) % 360) - 180;
+      // MESMA convenção do servidor: coluna 0 é −180°, que é u=0 no shader.
+      const lng = -180 + i * dLng;
       const k = j * nx + i;
       u[k] = fundo;
       // distância em graus, com a longitude encolhida pelo cosseno
@@ -64,7 +65,7 @@ function campoComVortice({
       v[k] += sentido * (dx / r) * mag;
     }
   }
-  return { nx, ny, u, v };
+  return { nx, ny, u, v, lon0: -180 };
 }
 
 /**
@@ -79,7 +80,7 @@ function campoComVortice({
 function idxDe(lat, lng, nx, ny) {
   const dLat = 180 / (ny - 1), dLng = 360 / nx;
   const j = Math.round((90 - lat) / dLat);
-  const i = Math.round((((lng % 360) + 360) % 360) / dLng) % nx;
+  const i = Math.round((lng + 180) / dLng) % nx;   // lon0 = −180
   return { i, j, k: j * nx + i };
 }
 
@@ -128,7 +129,7 @@ ok("escoamento uniforme tem vorticidade praticamente nula", () => {
   // Vento de oeste constante não gira. Se der vorticidade, o termo de cos φ
   // está errado e o detector vai achar ciclone em vento reto.
   const nx = 360, ny = 181;
-  const g = { nx, ny, u: new Float32Array(nx * ny).fill(12), v: new Float32Array(nx * ny) };
+  const g = { nx, ny, lon0: -180, u: new Float32Array(nx * ny).fill(12), v: new Float32Array(nx * ny) };
   const z = vorticidade(g);
   for (let j = 30; j < ny - 30; j++) {
     const lat = 90 - j * (180 / (ny - 1));
@@ -193,7 +194,7 @@ ok("uma circulação devolve UM centro, não uma mancha", () => {
 
 ok("campo sem rotação não produz centro nenhum", () => {
   const nx = 360, ny = 181;
-  const g = { nx, ny, u: new Float32Array(nx * ny).fill(15), v: new Float32Array(nx * ny).fill(3) };
+  const g = { nx, ny, lon0: -180, u: new Float32Array(nx * ny).fill(15), v: new Float32Array(nx * ny).fill(3) };
   assert.equal(acharCentros(g).length, 0, "achou ciclone em vento reto");
 });
 
