@@ -26,6 +26,7 @@ isto.
 - [O orçamento de API](#o-orçamento-de-api)
 - [Chaves e variáveis de ambiente](#chaves-e-variáveis-de-ambiente)
 - [A API do servidor](#a-api-do-servidor)
+- [Licença e atribuição](#licença-e-atribuição)
 - [Estrutura do repositório](#estrutura-do-repositório)
 - [Testes](#testes)
 - [Limites conhecidos](#limites-conhecidos)
@@ -518,6 +519,17 @@ GET  /api/store                       uso de cota por provedor
 Um endpoint que dá erro **devolve erro**. Não existe rota que responda com valor
 plausível quando a fonte está fora do ar: `502` com o motivo é mais útil, e
 infinitamente mais honesto, do que uma linha reta bonita no gráfico.
+
+---
+
+## Licença e atribuição
+
+O **código** está sob licença MIT — ver `LICENSE`.
+
+Os **dados** não. Cada fonte tem termos próprios, e a Mapzen (relevo) e a
+Open-Meteo (CC BY 4.0) **exigem atribuição visível** de quem publica algo feito
+com elas. A lista completa está em `ATTRIBUTION.md`, e é leitura obrigatória
+antes de hospedar este app em qualquer lugar público.
 
 ---
 
