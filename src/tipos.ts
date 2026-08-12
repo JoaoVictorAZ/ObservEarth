@@ -120,3 +120,25 @@ export interface MotorGeo {
   setHospitals(list: unknown[]): void;
   setClickMarker(lat: number | null, lng: number | null): void;
 }
+
+// -----------------------------------------------------------------------------
+// CAPACIDADE OPCIONAL
+// -----------------------------------------------------------------------------
+// O relevo NÃO entrou no MotorGeo, e isso é deliberado. O comentário acima diz
+// que um contrato com buraco é pior que contrato nenhum, porque o segundo
+// motor implementa o buraco com um corpo vazio e ninguém percebe. O globo
+// realmente não sabe desenhar o atlas de elevação — declarar `setRelevo` lá
+// para satisfazer o tipo seria exatamente esse buraco.
+//
+// Então a capacidade fica de fora e é testada em tempo de execução. A interface
+// continua sendo a verdade sobre o que os DOIS motores fazem.
+
+export interface MotorComRelevo {
+  setRelevo(on: boolean): void;
+  /** altitude ou profundidade em metros, do mesmo raster que está na tela */
+  alturaEm(lat: number, lng: number): number | null;
+}
+
+export function temRelevo(m: MotorGeo | null): m is MotorGeo & MotorComRelevo {
+  return !!m && typeof (m as Partial<MotorComRelevo>).setRelevo === "function";
+}

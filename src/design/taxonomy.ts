@@ -100,6 +100,7 @@ export const OVERLAY_LAYERS: LayerEntry[] = [
   { id: "fires", label: "Focos de calor", family: "ocorrencia", unit: "MW", source: "VIIRS 375 m" },
   { id: "openaq", label: "Qualidade do ar", family: "ocorrencia", unit: "µg/m³", source: "OpenAQ" },
   { id: "hospitals", label: "Hospitais", family: "ocorrencia", source: "OSM" },
+  { id: "relevo", label: "Relevo e batimetria", family: "estrutura", unit: "m", source: "Mapzen · SRTM/GEBCO" },
 ];
 
 /** campos escalares do GFS, repartidos pela codificação que o servidor usa */

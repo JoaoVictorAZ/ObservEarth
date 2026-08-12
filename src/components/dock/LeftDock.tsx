@@ -3,6 +3,7 @@ import {
   useLayerStore,
   type FieldLayer, type ModelLayer, type SatLayer,
 } from "../../store/layerStore";
+import { useGlobeStore } from "../../store/globeStore";
 import { useUIStore } from "../../store/uiStore";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { FAMILIES, ruleOf, OVERLAY_LAYERS, FIELD_FAMILY, type Family } from "../../design/taxonomy";
@@ -27,9 +28,11 @@ export const LeftDock: React.FC = () => {
     firesOn, setFiresOn,
     openaqOn, setOpenaqOn,
     hospitalsOn, setHospitalsOn,
+    relevoOn, setRelevoOn,
     hycomOn, setHycomOn,
     windInfo, isoInfo, fireInfo, geoInfo,
   } = useLayerStore();
+  const { modo } = useGlobeStore();
 
   const { sidebarOpen } = useUIStore();
   const [busca, setBusca] = useState("");
@@ -89,6 +92,12 @@ export const LeftDock: React.FC = () => {
     fires: [firesOn, setFiresOn, fireInfo],
     openaq: [openaqOn, setOpenaqOn, null],
     hospitals: [hospitalsOn, setHospitalsOn, null],
+    // O relevo é a única camada que ainda depende do modo: o atlas de
+    // elevação é reprojetado num plano, e o globo não tem onde recebê-lo.
+    // Dizer isso na linha da camada é melhor que um interruptor que liga e
+    // não faz nada.
+    relevo: [relevoOn, setRelevoOn,
+      modo === "mapa" ? null : "disponível no modo mapa plano"],
   };
 
   const alterna = (id: string) => setFechadas((f) => ({ ...f, [id]: !f[id] }));

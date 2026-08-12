@@ -28,6 +28,10 @@ import {
   aplicarZoom, travarVista, larguraGraus, daTela, enrolarLng, cruzaEmenda,
   type Vista,
 } from "./projecao";
+import {
+  planoDeTiles, tilesEm, tilesMercator, nivelRelevo, mercY, alturaTerrarium,
+  LAT_MERC, type Tile,
+} from "./tiles";
 
 const TEX_BASE = "https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg";
 const TEX_NOITE = "https://unpkg.com/three-globe/example/img/earth-night.jpg";
@@ -63,6 +67,82 @@ const RASTER_FRAG = /* glsl */ `
     vec4 c = texture2D(uMap, vec2(vUv.x, 1.0 - vUv.y));
     if (c.a < 0.05) discard;
     gl_FragColor = vec4(c.rgb, c.a * uOpacity * uFade);
+  }
+`;
+
+/**
+ * RELEVO E BATIMETRIA — o dado, sombreado.
+ *
+ * A textura é um atlas de tiles `terrarium`: cada pixel guarda a altitude real
+ * em metros, codificada em RGB com deslocamento de 32.768. Isso é o que separa
+ * este shader de uma imagem de relevo pronta — aqui o número existe, e por
+ * isso dá para pintar o oceano por PROFUNDIDADE e a terra por ALTITUDE com a
+ * mesma fonte, e responder "-4.128 m" quando alguém perguntar.
+ *
+ * A REPROJEÇÃO. Os tiles só existem em Mercator; o mapa é equirretangular. A
+ * conversão é feita aqui, por pixel: a latitude do fragmento vira y de
+ * Mercator e é isso que indexa o atlas. Fazer no shader evita reamostrar o
+ * dado duas vezes — reprojetar na CPU e depois deixar a GPU interpolar
+ * borraria detalhe que custou requisição.
+ */
+const RELEVO_FRAG = /* glsl */ `
+  precision highp float;
+  uniform sampler2D uMap;
+  uniform float uOpacity;
+  uniform vec4 uAtlas;      // latN, latS, lngO, lngL cobertos pelo atlas
+  uniform vec2 uPasso;      // tamanho de um texel, para o gradiente
+  uniform float uExagero;   // exagero vertical do sombreamento
+  varying vec2 vUv;
+  const float PI = 3.14159265359;
+
+  float mercY(float latGraus) {
+    float l = clamp(latGraus, -85.0511, 85.0511);
+    return 0.5 - log(tan(PI / 4.0 + radians(l) / 2.0)) / (2.0 * PI);
+  }
+
+  /** metros = (R·256 + G + B/256) − 32768 */
+  float metros(vec2 uv) {
+    vec3 c = texture2D(uMap, uv).rgb * 255.0;
+    return (c.r * 256.0 + c.g + c.b / 256.0) - 32768.0;
+  }
+
+  void main() {
+    // vUv está no plano equirretangular; vira lat/lng reais
+    float lat = mix(uAtlas.y, uAtlas.x, vUv.y);
+    float lng = mix(uAtlas.z, uAtlas.w, vUv.x);
+
+    // ... e a latitude vira linha de Mercator dentro do atlas
+    float y0 = mercY(uAtlas.x);
+    float y1 = mercY(uAtlas.y);
+    float v = (mercY(lat) - y0) / max(1e-9, y1 - y0);
+    if (v < 0.0 || v > 1.0) discard;
+
+    vec2 uv = vec2(vUv.x, v);
+    float h = metros(uv);
+
+    // Sombreamento por gradiente, luz do noroeste — a convenção cartográfica.
+    // Vem depois da reprojeção de propósito: o gradiente é medido no atlas, que
+    // é onde os texels são quadrados.
+    float hx = metros(uv + vec2(uPasso.x, 0.0)) - metros(uv - vec2(uPasso.x, 0.0));
+    float hy = metros(uv + vec2(0.0, uPasso.y)) - metros(uv - vec2(0.0, uPasso.y));
+    vec3 n = normalize(vec3(-hx * uExagero, -hy * uExagero, 220.0));
+    float luz = clamp(dot(n, normalize(vec3(-0.6, 0.6, 0.55))), 0.0, 1.0);
+
+    vec3 cor;
+    if (h < 0.0) {
+      // BATIMETRIA. Faixa útil até ~-6.000 m; a raiz comprime o abissal, que é
+      // quase todo o fundo do mar, e abre a plataforma continental — que é onde
+      // a profundidade muda depressa e importa.
+      float p = clamp(sqrt(min(-h, 6000.0) / 6000.0), 0.0, 1.0);
+      cor = mix(vec3(0.42, 0.62, 0.74), vec3(0.02, 0.06, 0.16), p);
+    } else {
+      float p = clamp(h / 4500.0, 0.0, 1.0);
+      cor = mix(vec3(0.20, 0.29, 0.22), vec3(0.52, 0.47, 0.40), sqrt(p));
+      cor = mix(cor, vec3(0.93, 0.94, 0.96), smoothstep(0.62, 1.0, p));  // neve
+    }
+
+    cor *= 0.55 + luz * 0.75;
+    gl_FragColor = vec4(cor, uOpacity);
   }
 `;
 
@@ -194,6 +274,13 @@ interface CamadaRaster {
   visivel(on: boolean): void;
 }
 
+interface ItemTile {
+  z: number;
+  malhas: THREE.Mesh[];
+  material: THREE.ShaderMaterial;
+  tex: THREE.Texture | null;
+}
+
 const EMBER: [number, [number, number, number]][] = [
   [0.00, [176, 42, 16]],
   [0.35, [236, 108, 24]],
@@ -241,6 +328,27 @@ export class MapEngine implements MotorGeo {
   private imgTex: THREE.Texture | null = null;
   private imgFade = 0;
   private imgToken = 0;
+  private imgOpacidade = 0.9;
+
+  // pirâmide de tiles
+  private geoTile = new THREE.PlaneGeometry(1, 1, 1, 1);
+  private tiles = new Map<string, ItemTile>();
+  private camadaTile: string | null = null;
+  private nivelAtual = -1;
+  private nivelAnterior = -1;
+  private assentar: number | null = null;
+
+  // relevo e batimetria
+  private relevo: CamadaRaster | null = null;
+  private relevoOn = false;
+  private relevoTex: THREE.Texture | null = null;
+  private relevoChave = "";
+  private relevoToken = 0;
+  /** amostras de altitude do atlas atual, para responder em metros */
+  private relevoAmostra: {
+    dados: Uint8ClampedArray; w: number; h: number;
+    latN: number; latS: number; lngO: number; lngL: number;
+  } | null = null;
 
   private windGPU: WindGPU | null = null;
   private windGrid: WindGrid | null = null;
@@ -389,6 +497,61 @@ export class MapEngine implements MotorGeo {
     for (const p of [this.pontos, this.aneis, this.marcador]) {
       if (p) (p.material as THREE.ShaderMaterial).uniforms.uEscala.value = escala;
     }
+
+    this.agendarAssentamento();
+  }
+
+  /**
+   * Tiles, relevo e janela do vento só são refeitos quando a vista PARA.
+   *
+   * Refazer durante o arrasto pediria uma pilha de tiles por quadro e
+   * apagaria o rastro do vento continuamente. Durante o movimento tudo que
+   * está na tela continua correto — o que já foi carregado está ancorado em
+   * coordenada de mundo e acompanha o mapa. O que muda ao parar é só a
+   * RESOLUÇÃO.
+   */
+  private agendarAssentamento() {
+    if (this.assentar != null) window.clearTimeout(this.assentar);
+    this.assentar = window.setTimeout(() => {
+      this.assentar = null;
+      if (this.disposed) return;
+      this.atualizarTiles();
+      this.atualizarJanelaVento();
+      if (this.relevoOn) void this.atualizarRelevo();
+    }, 180);
+  }
+
+  /**
+   * Amarra a simulação de partículas à região visível.
+   *
+   * Com uma folga de 15% em volta: sem ela, uma partícula que entra pela borda
+   * nasceria exatamente ali, visivelmente, em vez de já chegar em movimento.
+   */
+  private atualizarJanelaVento() {
+    if (!this.windGPU) return;
+
+    const aspecto = this.largura / Math.max(1, this.altura);
+    const gw = larguraGraus(this.vista.alturaGraus, aspecto);
+    const gh = this.vista.alturaGraus;
+
+    const folgaW = Math.min(360, gw * 1.15);
+    const folgaH = Math.min(180, gh * 1.15);
+
+    if (folgaW >= 359 && folgaH >= 179) {
+      this.windGPU.setJanela(0, 0, 1, 1);
+    } else {
+      const oeste = (this.vista.lng - folgaW / 2 + 180) / 360;
+      const norte = 90 - this.vista.lat - folgaH / 2;   // y global cresce para o sul
+      this.windGPU.setJanela(oeste, norte / 180, folgaW / 360, folgaH / 180);
+    }
+
+    // O TAMANHO DA PARTÍCULA ACOMPANHA O ZOOM.
+    //
+    // Só a janela já resolve o borrão — o rastro deixa de ser ampliado. Mas de
+    // perto, com o rastro em escala 1:1, uma partícula do tamanho de "vento
+    // planetário" vira um traço grosso demais para ler estrutura local. Encolhe
+    // suavemente: 1,0 vendo o mundo, ~0,55 numa vista de poucos graus.
+    this.windGPU.escalaPonto = 0.55 + 0.45 * Math.pow(Math.min(1, gh / 180), 0.35);
   }
 
   flyTo(lat: number, lng: number, altitude?: number) {
@@ -520,10 +683,48 @@ export class MapEngine implements MotorGeo {
       (tex) => { this.base!.material.uniforms.uMap.value = tex; });
   }
 
+  /**
+   * DOIS CAMINHOS, e a diferença não é arbitrária.
+   *
+   * Camadas do GIBS (`sst`, `MODIS_...`) vêm por TILES: o servidor recorta a
+   * região pedida e a resolução acompanha o zoom. Campos do GFS chegam como
+   * URL pronta (`/api/fields/...`) e são uma imagem global calculada de uma
+   * vez — não há pirâmide do outro lado para pedir, e recortá-los não
+   * acrescentaria detalhe nenhum, porque a grade de origem é de 0,25°.
+   *
+   * Tratar os dois igual seria gastar 12 requisições para reconstruir a mesma
+   * imagem que uma requisição já entrega.
+   */
   setImagery(id: string | null, date: Date, opacity = 0.9) {
     this.imgToken++;
-    if (!id) { this.imagem?.visivel(false); this.imgFade = 0; return; }
+    this.imgOpacidade = opacity;
 
+    if (!id) {
+      this.imagem?.visivel(false);
+      this.imgFade = 0;
+      this.camadaTile = null;
+      this.limparTiles();
+      return;
+    }
+
+    if (id.startsWith("/")) {
+      this.camadaTile = null;
+      this.limparTiles();
+      this.imagemUnica(id, opacity);
+      return;
+    }
+
+    this.imagem?.visivel(false);
+    const dia = date.toISOString().slice(0, 10);
+    const nova = `${id}|${dia}`;
+    if (nova !== this.camadaTile) {
+      this.camadaTile = nova;
+      this.limparTiles();
+    }
+    this.atualizarTiles();
+  }
+
+  private imagemUnica(url: string, opacity: number) {
     if (!this.imagem) {
       const mat = new THREE.ShaderMaterial({
         uniforms: { uMap: { value: null }, uOpacity: { value: opacity }, uFade: { value: 0 } },
@@ -536,9 +737,6 @@ export class MapEngine implements MotorGeo {
     this.imagem.material.uniforms.uOpacity.value = opacity;
 
     const meu = this.imgToken;
-    const dia = date.toISOString().slice(0, 10);
-    const url = id.startsWith("/") ? id : `/api/imagery/${id}?date=${dia}&width=4096`;
-
     this.carregarTextura(url, (tex) => {
       if (meu !== this.imgToken || !this.imagem) { tex.dispose(); return; }
       this.imgTex?.dispose();
@@ -550,7 +748,101 @@ export class MapEngine implements MotorGeo {
   }
 
   setImageryOpacity(o: number) {
+    this.imgOpacidade = o;
     if (this.imagem) this.imagem.material.uniforms.uOpacity.value = o;
+    for (const t of this.tiles.values()) t.material.uniforms.uOpacity.value = o;
+  }
+
+  // -------------------------------------------------------------- pirâmide
+
+  /**
+   * Pede os tiles do nível certo para a vista atual.
+   *
+   * O NÍVEL 0 FICA SEMPRE CARREGADO. São dois tiles, e eles são o piso: sem
+   * eles, cada mudança de zoom abriria buracos pretos até o nível novo chegar.
+   * Dois tiles permanentes custam menos que o susto.
+   *
+   * O nível anterior também sobrevive até o novo estar completo. Trocar de
+   * nível é a operação mais visível de um mapa por tiles, e a diferença entre
+   * "carregou" e "piscou" está aqui.
+   */
+  private atualizarTiles() {
+    if (!this.camadaTile) return;
+
+    const aspecto = this.largura / Math.max(1, this.altura);
+    const gw = larguraGraus(this.vista.alturaGraus, aspecto);
+    const meia = this.vista.alturaGraus / 2;
+
+    const { z, lista } = planoDeTiles(
+      this.vista.lng - gw / 2, this.vista.lat - meia,
+      this.vista.lng + gw / 2, this.vista.lat + meia,
+      gw, this.largura, this.renderer?.getPixelRatio() ?? 1,
+    );
+    const alvo = [...tilesEm(-180, -90, 180, 90, 0), ...lista];
+
+    const querido = new Set(alvo.map((t) => t.chave));
+    for (const t of alvo) if (!this.tiles.has(t.chave)) this.pedirTile(t);
+
+    // Descarta o que saiu de vista, menos o nível 0 e o nível anterior, que
+    // seguram a imagem enquanto o novo carrega.
+    const guardar = new Set([0, z, this.nivelAnterior]);
+    for (const [chave, item] of this.tiles) {
+      if (querido.has(chave)) continue;
+      if (guardar.has(item.z) && item.z !== z) continue;
+      this.descartarTile(chave);
+    }
+    if (z !== this.nivelAtual) { this.nivelAnterior = this.nivelAtual; this.nivelAtual = z; }
+  }
+
+  private pedirTile(t: Tile) {
+    const camada = this.camadaTile;
+    if (!camada) return;
+    const [id, dia] = camada.split("|");
+
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { uMap: { value: null }, uOpacity: { value: this.imgOpacidade }, uFade: { value: 0 } },
+      vertexShader: PLANO_VERT, fragmentShader: RASTER_FRAG,
+      transparent: true, depthWrite: false, depthTest: false,
+    });
+
+    const lado = t.leste - t.oeste;
+    const malhas = COPIAS.map((dx) => {
+      const m = new THREE.Mesh(this.geoTile, mat);
+      m.scale.set(lado, t.norte - t.sul, 1);
+      m.position.set((t.oeste + t.leste) / 2 + dx, (t.sul + t.norte) / 2, 2);
+      // Nível mais fino desenha por cima do mais grosso. Sem esta ordem, o
+      // nível 0 poderia cobrir o detalhe que acabou de chegar.
+      m.renderOrder = 2 + t.z * 0.01;
+      m.visible = false;
+      this.scene.add(m);
+      return m;
+    });
+
+    const item: ItemTile = { z: t.z, malhas, material: mat, tex: null };
+    this.tiles.set(t.chave, item);
+
+    this.carregarTextura(`/api/tile/${id}/${t.z}/${t.y}/${t.x}?date=${dia}`, (tex) => {
+      if (this.tiles.get(t.chave) !== item || camada !== this.camadaTile) { tex.dispose(); return; }
+      item.tex = tex;
+      mat.uniforms.uMap.value = tex;
+      mat.uniforms.uFade.value = 1;
+      for (const m of item.malhas) m.visible = true;
+    });
+  }
+
+  private descartarTile(chave: string) {
+    const item = this.tiles.get(chave);
+    if (!item) return;
+    for (const m of item.malhas) this.scene.remove(m);
+    item.material.dispose();
+    item.tex?.dispose();
+    this.tiles.delete(chave);
+  }
+
+  private limparTiles() {
+    for (const chave of [...this.tiles.keys()]) this.descartarTile(chave);
+    this.nivelAtual = -1;
+    this.nivelAnterior = -1;
   }
 
   // ------------------------------------------------------------------ vento
@@ -623,6 +915,161 @@ export class MapEngine implements MotorGeo {
     });
     this.correntes = this.criarRaster(mat, 4);
     this.correntes.visivel(false);
+  }
+
+  // ------------------------------------------------------ relevo e batimetria
+
+  setRelevo(on: boolean) {
+    this.relevoOn = on;
+    if (!on) { this.relevo?.visivel(false); return; }
+    if (!this.relevo) {
+      const mat = new THREE.ShaderMaterial({
+        uniforms: {
+          uMap: { value: null },
+          uOpacity: { value: 1 },
+          uAtlas: { value: new THREE.Vector4(90, -90, -180, 180) },
+          uPasso: { value: new THREE.Vector2(1 / 1024, 1 / 1024) },
+          uExagero: { value: 1.6 },
+        },
+        vertexShader: PLANO_VERT, fragmentShader: RELEVO_FRAG,
+        transparent: true, depthWrite: false, depthTest: false,
+      });
+      this.relevo = this.criarRaster(mat, 1.5);
+    }
+    this.relevo.visivel(!!this.relevoTex);
+    void this.atualizarRelevo();
+  }
+
+  /**
+   * Monta um atlas de tiles de elevação cobrindo a vista.
+   *
+   * Os tiles são Web Mercator e chegam separados; o shader precisa de uma
+   * textura só. Eles são desenhados lado a lado num canvas, na mesma disposição
+   * da grade, e o retângulo resultante — em Mercator — vira os limites que o
+   * shader usa para reprojetar.
+   */
+  private async atualizarRelevo() {
+    if (!this.relevoOn || this.disposed || !this.relevo) return;
+
+    const aspecto = this.largura / Math.max(1, this.altura);
+    const gw = larguraGraus(this.vista.alturaGraus, aspecto);
+    const gh = this.vista.alturaGraus;
+    let z = nivelRelevo(gw, this.largura);
+
+    const oeste = this.vista.lng - gw / 2;
+    const leste = this.vista.lng + gw / 2;
+    const sul = Math.max(-LAT_MERC, this.vista.lat - gh / 2);
+    const norte = Math.min(LAT_MERC, this.vista.lat + gh / 2);
+
+    // Teto de tiles por atlas. Cada um é uma requisição, e o relevo é o fundo,
+    // não o dado que se está lendo — cair um nível é invisível sob o vento e
+    // corta o custo em quatro.
+    let lista = tilesMercator(oeste, sul, leste, norte, z);
+    while (lista.length > 24 && z > 0) { z--; lista = tilesMercator(oeste, sul, leste, norte, z); }
+    if (!lista.length) return;
+
+    const chave = lista.map((t) => t.chave).join(";");
+    if (chave === this.relevoChave) return;
+    this.relevoChave = chave;
+    const meu = ++this.relevoToken;
+
+    const cols = [...new Set(lista.map((t) => t.oeste))].sort((a, b) => a - b);
+    const rows = [...new Set(lista.map((t) => t.norte))].sort((a, b) => b - a);
+    const LADO = 256;
+
+    const cv = document.createElement("canvas");
+    cv.width = cols.length * LADO;
+    cv.height = rows.length * LADO;
+    const ctx = cv.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return;
+
+    const carregar = (t: Tile) => new Promise<void>((pronto) => {
+      const im = new Image();
+      im.crossOrigin = "anonymous";
+      im.onload = () => {
+        const cx = cols.indexOf(t.oeste), cy = rows.indexOf(t.norte);
+        if (cx >= 0 && cy >= 0) ctx.drawImage(im, cx * LADO, cy * LADO, LADO, LADO);
+        pronto();
+      };
+      // Um buraco de cobertura deixa o quadrado preto, que decodifica para
+      // -32.768 m. É absurdo o bastante para não ser confundido com dado.
+      im.onerror = () => pronto();
+      im.src = `/api/terrain/${t.z}/${t.y}/${t.x}`;
+    });
+
+    await Promise.all(lista.map(carregar));
+    if (meu !== this.relevoToken || this.disposed || !this.relevo) return;
+
+    const tex = new THREE.CanvasTexture(cv);
+    // NEAREST, OBRIGATORIAMENTE.
+    //
+    // A altitude está codificada em três canais: o vermelho vale 256 m por
+    // unidade. Interpolar linearmente entre dois texels mistura os canais e
+    // produz altitudes que não existem — numa borda onde o vermelho passa de
+    // 137 para 138, a interpolação inventa uma rampa de 256 m. Com NEAREST o
+    // valor lido é sempre um valor medido.
+    tex.minFilter = THREE.NearestFilter;
+    tex.magFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false;
+    tex.colorSpace = THREE.NoColorSpace;
+    tex.flipY = false;
+    tex.needsUpdate = true;
+
+    const latN = rows[0];
+    const latS = lista.find((t) => t.norte === rows[rows.length - 1])!.sul;
+    const lngO = cols[0];
+    const lngL = lista.find((t) => t.oeste === cols[cols.length - 1])!.leste;
+
+    this.relevoTex?.dispose();
+    this.relevoTex = tex;
+
+    const u = this.relevo.material.uniforms;
+    u.uMap.value = tex;
+    (u.uAtlas.value as THREE.Vector4).set(latN, latS, lngO, lngL);
+    (u.uPasso.value as THREE.Vector2).set(1 / cv.width, 1 / cv.height);
+
+    // O plano cobre exatamente o atlas, nem mais nem menos.
+    for (let i = 0; i < this.relevo.malhas.length; i++) {
+      const m = this.relevo.malhas[i];
+      m.scale.set(lngL - lngO, latN - latS, 1);
+      m.position.set((lngO + lngL) / 2 + COPIAS[i], (latS + latN) / 2, 1.5);
+    }
+    this.relevo.visivel(true);
+
+    // Guarda os pixels: é o que transforma isto de sombreamento em DADO.
+    try {
+      const img = ctx.getImageData(0, 0, cv.width, cv.height);
+      this.relevoAmostra = {
+        dados: img.data, w: cv.width, h: cv.height, latN, latS, lngO, lngL,
+      };
+    } catch { this.relevoAmostra = null; }
+  }
+
+  /**
+   * Altitude ou profundidade de um ponto, em metros, lida do MESMO raster que
+   * está sombreado na tela.
+   *
+   * Devolve null fora do atlas carregado — nunca zero. Zero é o nível do mar,
+   * e um oceano inteiro respondendo "0 m" pareceria dado.
+   */
+  alturaEm(lat: number, lng: number): number | null {
+    const a = this.relevoAmostra;
+    if (!a) return null;
+
+    let x = lng;
+    while (x < a.lngO - 180) x += 360;
+    while (x > a.lngL + 180) x -= 360;
+    if (x < a.lngO || x > a.lngL || lat < a.latS || lat > a.latN) return null;
+
+    const yN = mercY(a.latN), yS = mercY(a.latS);
+    const px = Math.floor(((x - a.lngO) / (a.lngL - a.lngO)) * a.w);
+    const py = Math.floor(((mercY(lat) - yN) / (yS - yN)) * a.h);
+    if (px < 0 || px >= a.w || py < 0 || py >= a.h) return null;
+
+    const i = (py * a.w + px) * 4;
+    if (a.dados[i + 3] === 0) return null;      // tile que não carregou
+    const m = alturaTerrarium(a.dados[i], a.dados[i + 1], a.dados[i + 2]);
+    return m < -32000 ? null : m;
   }
 
   // --------------------------------------------------------------- vetorial
@@ -891,6 +1338,11 @@ export class MapEngine implements MotorGeo {
   dispose() {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
+    if (this.assentar != null) window.clearTimeout(this.assentar);
+    this.limparTiles();
+    this.relevoTex?.dispose();
+    this.relevoAmostra = null;
+    this.geoTile.dispose();
     this.ro?.disconnect();
     if (this.aoRedimensionar) window.removeEventListener("resize", this.aoRedimensionar);
 

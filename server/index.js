@@ -23,6 +23,7 @@ import { registerGeoRoutes, placeAt } from "./geo.js";
 import { describeModelLayer, sortModelLayers } from "./modelNames.js";
 import { parseCapabilities, snapTime, coverageOf } from "./gibsTime.js";
 import { lerBBox, alturaDe, janelaEm } from "./janela.js";
+import { bboxDoTile, tileMercatorValido, TILE_PX } from "./tiles.js";
 import cors from "cors";
 
 const app = express();
@@ -183,6 +184,105 @@ app.get("/api/imagery/:id", async (req, res) => {
     const code = isNoData ? "NO_DATA" : "GIBS_ERROR";
     console.warn(`[imagery] ${id}: ${msg} (${isNoData ? "sem dados" : "erro de rede"})`);
     res.status(status).json({ error: msg, code, layer: built.layer, time: built.time });
+  }
+});
+
+// ======================================================================
+// 1b. TILES — a mesma imagem, recortada por nível de zoom
+// ======================================================================
+//
+// POR QUE WMS COM BBOX ALINHADA À GRADE, E NÃO WMTS
+//
+// O GIBS tem um serviço WMTS de verdade, com tiles pré-renderizados, e ele
+// seria mais rápido e mais leve para a NASA. O problema é que cada camada só
+// existe em determinados TileMatrixSets — `250m`, `500m`, `1km`, `2km` — e
+// descobrir qual vale para cada uma exige ler um GetCapabilities de vários
+// megabytes, ou chutar e receber erro em produção.
+//
+// A bbox alinhada à grade dá exatamente o mesmo resultado geométrico, funciona
+// para TODA camada sem tabela nenhuma, e reaproveita o `imageryUrl` que já
+// estava testado. Trocar para WMTS depois é mudar a URL: a matemática da
+// pirâmide, que é a parte que erra, fica igual.
+//
+// O custo é honesto: são ~12 renderizações WMS por vista em vez de 1. Por isso
+// cada tile passa pelo `metered` e tem cache de 6 h em memória e em disco.
+
+app.get("/api/tile/:id/:z/:y/:x", async (req, res) => {
+  const { id } = req.params;
+  const bbox = bboxDoTile(req.params.z, req.params.y, req.params.x);
+  if (!bbox) {
+    return res.status(400).json({ error: "tile fora da grade", code: "TILE_RANGE" });
+  }
+
+  const date = String(req.query.date ?? new Date().toISOString().slice(0, 10));
+  await ensureGibsTime();
+  const built = imageryUrl(id, date, TILE_PX, bbox, TILE_PX);
+  if (!built) return res.status(404).json({ error: `camada desconhecida: ${id}` });
+
+  try {
+    const chave = `tile:${id}:${built.time}:${req.params.z}/${req.params.y}/${req.params.x}`;
+    const img = await cached(chave, 6 * HOUR, async () => {
+      const r = await metered("nasa-gibs", 1, () => fetch(built.url));
+      if (!r.ok) throw new Error(`GIBS HTTP ${r.status}`);
+      const buf = Buffer.from(await r.arrayBuffer());
+      // O GIBS responde 200 com XML quando a data não existe para a camada.
+      // Sem esta checagem o cliente tentaria decodificar texto como imagem e
+      // veria um tile vazio, indistinguível de oceano sem dado.
+      if (buf.subarray(0, 5).toString() === "<?xml") throw new Error(`sem imagem em ${built.time}`);
+      return buf;
+    });
+    res.set("Content-Type", "image/png");
+    res.set("Cache-Control", "public, max-age=21600");
+    res.set("X-Imagery-Time", built.time);
+    res.send(img);
+  } catch (e) {
+    const msg = String(e.message ?? e);
+    const semDado = msg.includes("sem imagem");
+    res.status(semDado ? 404 : 502).json({
+      error: msg, code: semDado ? "NO_DATA" : "GIBS_ERROR", time: built.time,
+    });
+  }
+});
+
+// ----------------------------------------------------------------------
+// RELEVO E BATIMETRIA — elevação em metros, não imagem sombreada
+// ----------------------------------------------------------------------
+// Tiles `terrarium` da Mapzen, hospedados pela AWS Open Data. Cada pixel
+// carrega a altitude REAL codificada em RGB, com deslocamento de 32.768 — o
+// que permite representar profundidade oceânica junto com altitude terrestre
+// no mesmo raster.
+//
+// Isto é dado, não enfeite: o mesmo tile que sombreia a montanha responde
+// "-4.128 m" quando se pergunta a profundidade daquele ponto do Atlântico.
+// Uma imagem de relevo sombreado bonita não responde nada.
+//
+// ATENÇÃO À PROJEÇÃO: estes tiles são Web Mercator (EPSG:3857) e o nosso mapa
+// é equirretangular. A reprojeção acontece no shader do cliente.
+
+const TERRENO = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium";
+
+app.get("/api/terrain/:z/:y/:x", async (req, res) => {
+  const { z, y, x } = req.params;
+  if (!tileMercatorValido(z, y, x)) {
+    return res.status(400).json({ error: "tile fora da grade", code: "TILE_RANGE" });
+  }
+
+  try {
+    // O relevo não muda: uma semana de cache é conservador, e o disco guarda
+    // entre reinícios. É a camada mais barata do app depois do primeiro uso.
+    const img = await cached(`terreno:${z}/${y}/${x}`, 7 * 24 * HOUR, async () => {
+      const r = await metered("mapzen-terrain", 1,
+        () => fetch(`${TERRENO}/${z}/${x}/${y}.png`));
+      if (r.status === 404) throw new Error("sem cobertura");
+      if (!r.ok) throw new Error(`terreno HTTP ${r.status}`);
+      return Buffer.from(await r.arrayBuffer());
+    });
+    res.set("Content-Type", "image/png");
+    res.set("Cache-Control", "public, max-age=604800");
+    res.send(img);
+  } catch (e) {
+    const msg = String(e.message ?? e);
+    res.status(msg.includes("sem cobertura") ? 404 : 502).json({ error: msg });
   }
 });
 

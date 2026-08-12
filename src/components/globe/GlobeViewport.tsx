@@ -11,6 +11,7 @@ import { useLayerStore } from "../../store/layerStore";
 import { useProbeStore, type Probe } from "../../store/probeStore";
 import { GlobeEngine } from "../../globe";
 import { MapEngine } from "../../mapa2d";
+import { temRelevo } from "../../tipos";
 import type { Quake, Fire, IsobarSet, WindGrid, MotorGeo } from "../../tipos";
 
 export interface GlobeViewportRef {
@@ -39,7 +40,7 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
   const {
     kind, layer, opacity,
     wind, isobarsOn, quakesOn, firesOn, openaqOn, wbgtOn,
-    hospitalsOn, hycomOn,
+    hospitalsOn, hycomOn, relevoOn,
     setWindInfo, setIsoInfo, setFireInfo, setOpenaqInfo,
     setHospitalInfo, setHycomInfo, setGeoInfo,
   } = useLayerStore();
@@ -369,6 +370,14 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
   }, [hycomOn, setHycomInfo, geracao]);
 
   useEffect(() => { engRef.current?.setDayNight(dayNight); }, [dayNight, geracao]);
+
+  // Relevo: capacidade que só o mapa plano tem. O globo simplesmente não
+  // recebe a chamada — e o painel diz por quê, em vez de oferecer um
+  // interruptor que não faz nada.
+  useEffect(() => {
+    const eng = engRef.current;
+    if (temRelevo(eng)) eng.setRelevo(relevoOn);
+  }, [relevoOn, geracao]);
   // A densidade é aplicada tanto na mudança quanto na montagem: o valor vem do
   // localStorage, então precisa alcançar o motor na primeira renderização.
   useEffect(() => { engRef.current?.setWindDensity(windDensity); }, [windDensity, wind, geracao]);

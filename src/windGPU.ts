@@ -40,10 +40,27 @@ const UPDATE_FRAG = /* glsl */ `
   uniform float uSpeed;
   uniform float uTime;
   uniform float uDrop;
+  uniform vec4 uJanela;   // x0, y0, largura, altura — em UV GLOBAL
   varying vec2 vUv;
 
   float hash(vec2 p) {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+  }
+
+  // As partículas continuam guardando posição em UV GLOBAL, mesmo quando a
+  // janela é um recorte. É de propósito: a amostragem do campo de vento e a
+  // conta de latitude ficam idênticas ao caso do mundo inteiro, e a janela vira
+  // um detalhe de onde nascer, onde morrer e onde desenhar.
+  bool mundoInteiro() { return uJanela.z > 0.999 && uJanela.w > 0.999; }
+
+  /** Distância para leste desde a borda oeste da janela, com a volta do mundo. */
+  float dxNaJanela(float x) { return fract(x - uJanela.x + 1.0); }
+
+  bool foraDaJanela(vec2 p) {
+    if (mundoInteiro()) return false;
+    return dxNaJanela(p.x) > uJanela.z
+        || p.y < uJanela.y
+        || p.y > uJanela.y + uJanela.w;
   }
 
   vec2 getWindVector(vec2 p) {
@@ -95,7 +112,12 @@ const UPDATE_FRAG = /* glsl */ `
     bool dead = age <= 0.0
              || pos.y < 0.015 || pos.y > 0.985
              || spd < 0.05
-             || r < uDrop;
+             || r < uDrop
+             // Saiu do recorte: continuar simulando seria gastar partícula em
+             // lugar que ninguém está vendo. Renascer dentro da janela mantém
+             // TODAS as N partículas úteis, e é o que faz a densidade crescer
+             // sozinha ao aproximar em vez de rarear.
+             || foraDaJanela(pos);
 
     if (dead) {
       vec2 cand = vec2(0.5);
@@ -104,7 +126,16 @@ const UPDATE_FRAG = /* glsl */ `
         float fk = float(k);
         float a1 = hash(vUv * 13.3 + uTime * 1.7 + fk * 7.1);
         float a2 = hash(vUv * 71.9 - uTime * 0.9 + fk * 3.7);
-        vec2 tryPos = vec2(a1, acos(clamp(1.0 - 2.0 * a2, -1.0, 1.0)) / 3.14159265);
+
+        // No mundo inteiro o y vem de um arco-cosseno: sorteio uniforme em UV
+        // amontoaria partículas nos polos, onde a projeção comprime a área.
+        // Dentro de um recorte pequeno essa distorção é desprezível e o
+        // sorteio uniforme é o certo — usar o arco-cosseno ali empurraria tudo
+        // para a borda superior da janela.
+        vec2 tryPos = mundoInteiro()
+          ? vec2(a1, acos(clamp(1.0 - 2.0 * a2, -1.0, 1.0)) / 3.14159265)
+          : vec2(fract(uJanela.x + a1 * uJanela.z), uJanela.y + a2 * uJanela.w);
+
         if (found < 0.5 && length(getWindVector(tryPos)) > 0.05) {
           cand = tryPos;
           found = 1.0;
@@ -132,6 +163,8 @@ const DRAW_VERT = /* glsl */ `
   precision highp float;
   uniform sampler2D uState;
   uniform float uScale;
+  uniform float uPonto;    // escala extra por zoom, decidida pelo motor
+  uniform vec4 uJanela;
   attribute vec2 aRef;
   varying float vSpeed;
   varying float vAge;
@@ -140,10 +173,18 @@ const DRAW_VERT = /* glsl */ `
     vec4 st = texture2D(uState, aRef);
     vSpeed = st.z;
     vAge = st.w;
-    vec2 clip = vec2(st.x * 2.0 - 1.0, st.y * 2.0 - 1.0);
-    gl_Position = vec4(clip, 0.0, 1.0);
+
+    // A posição é global; o rastro cobre só a janela. Esta divisão é a razão
+    // de o zoom deixar de produzir borrão: antes, uma textura de 4096 px do
+    // mundo inteiro era ampliada 17x para caber numa vista de 10° e cada
+    // partícula virava um quadrado parado na tela. Agora o rastro tem sempre a
+    // resolução da vista, e a partícula continua do tamanho de uma partícula.
+    float nx = fract(st.x - uJanela.x + 1.0) / uJanela.z;
+    float ny = (st.y - uJanela.y) / uJanela.w;
+
+    gl_Position = vec4(nx * 2.0 - 1.0, ny * 2.0 - 1.0, 0.0, 1.0);
     // Linhas expressivas proporcionais à velocidade real do vento
-    gl_PointSize = (1.2 + vSpeed * 2.5) * uScale;
+    gl_PointSize = (1.2 + vSpeed * 2.5) * uScale * uPonto;
   }
 `;
 
@@ -251,6 +292,7 @@ export class WindGPU {
         uSpeed: { value: this.speed },
         uTime: { value: 0 },
         uDrop: { value: 0.002 },
+        uJanela: { value: new THREE.Vector4(0, 0, 1, 1) },
       },
       depthTest: false,
       depthWrite: false,
@@ -272,7 +314,12 @@ export class WindGPU {
     this.drawMat = new THREE.ShaderMaterial({
       vertexShader: DRAW_VERT,
       fragmentShader: DRAW_FRAG,
-      uniforms: { uState: { value: null }, uScale: { value: 1 } },
+      uniforms: {
+        uState: { value: null },
+        uScale: { value: 1 },
+        uPonto: { value: 1 },
+        uJanela: { value: new THREE.Vector4(0, 0, 1, 1) },
+      },
       transparent: true,
       depthTest: false,
       depthWrite: false,
@@ -367,6 +414,53 @@ export class WindGPU {
     tex.dispose();
     mat.dispose();
     q.geometry.dispose();
+  }
+
+  /**
+   * Recorta a simulação a uma janela do mundo, em UV global.
+   *
+   * `x0` pode ser qualquer número: ele é trazido para [0,1) e a janela pode
+   * atravessar a emenda do antimeridiano — é o caso normal quando se olha o
+   * Pacífico. Passar (0, 0, 1, 1) volta ao mundo inteiro, que é o que o globo
+   * usa e por onde tudo isto continua idêntico ao que era.
+   *
+   * O RASTRO É APAGADO a cada mudança. Ele é uma acumulação amarrada a uma
+   * região: mantê-lo ao trocar de janela arrastaria os riscos do lugar antigo
+   * por cima do novo. Por isso quem chama deve esperar a vista PARAR antes de
+   * rejanelar — durante o movimento, o plano do vento acompanha o mapa em
+   * coordenada de mundo e continua correto.
+   */
+  setJanela(x0: number, y0: number, w: number, h: number) {
+    const largura = Math.max(0.002, Math.min(1, w));
+    const altura = Math.max(0.002, Math.min(1, h));
+    const oeste = ((x0 % 1) + 1) % 1;
+    const sul = Math.max(0, Math.min(1 - altura, y0));
+
+    const atual = this.updateMat.uniforms.uJanela.value as THREE.Vector4;
+    if (atual.x === oeste && atual.y === sul && atual.z === largura && atual.w === altura) return;
+
+    atual.set(oeste, sul, largura, altura);
+    (this.drawMat.uniforms.uJanela.value as THREE.Vector4).set(oeste, sul, largura, altura);
+    this.limparRastro();
+  }
+
+  /** Escala extra do ponto, para o motor encolher a partícula ao aproximar. */
+  set escalaPonto(v: number) {
+    this.drawMat.uniforms.uPonto.value = Math.max(0.2, Math.min(3, v));
+  }
+
+  private limparRastro() {
+    const prev = this.renderer.getRenderTarget();
+    const cor = new THREE.Color();
+    this.renderer.getClearColor(cor);
+    const alfa = this.renderer.getClearAlpha();
+
+    this.renderer.setRenderTarget(this.trail);
+    this.renderer.setClearColor(0x000000, 0);
+    this.renderer.clear(true, false, false);
+
+    this.renderer.setRenderTarget(prev);
+    this.renderer.setClearColor(cor, alfa);
   }
 
   setField(field: WindField | null, key = "único") {

@@ -85,7 +85,7 @@ Outros comandos:
 |---|---|
 | `npm run build` | Checa tipos (`tsc -b`) e gera o bundle de produção em `dist/` |
 | `npm run preview` | Serve o `dist/` para conferir o build |
-| `npm test` | Roda a suíte inteira (~456 verificações) |
+| `npm test` | Roda a suíte inteira (~484 verificações) |
 | `npm run dev:all` | `dev` + o servidor Python de modelo próprio |
 | `npm run ingest` | Ingestão em lote de dados abertos (pipeline Python) |
 
@@ -166,12 +166,35 @@ um motivo técnico antes de ter um motivo estético: é o espaço em que os dado
 estão. O GFS entrega uma grade igualmente espaçada em grau, o GIBS serve em
 `epsg4326`, e a simulação de partículas do vento já trabalha em UV normalizado.
 No globo, um shader precisa reprojetar tudo isso na esfera. No plano, cola
-direto — **o motor de vento é reaproveitado sem uma linha de mudança.**
+direto — o motor de partículas é o mesmo arquivo.
+
+**As partículas são simuladas só na região visível.** Antes, o rastro era uma
+textura do mundo inteiro: aproximar em 10° a ampliava 17 vezes e cada partícula
+virava um quadrado parado na tela. Agora a simulação é recortada pela vista, a
+textura de rastro tem sempre a resolução do que se está vendo, e o tamanho do
+ponto ainda encolhe um pouco com o zoom. De brinde, as partículas ficam mais
+densas ao aproximar em vez de rarearem — as mesmas N partículas passam a cobrir
+uma área menor.
 
 Mercator teria sido a escolha familiar, e foi descartada por duas razões: exige
 reprojetar a textura de rastro e pedir as imagens noutro esquema, e infla a
 Groenlândia ao tamanho da África. Num app em que se lê a extensão de um
 fenômeno, isso é uma mentira visual.
+
+**A resolução acompanha o zoom.** As imagens do GIBS chegam em tiles, e o nível
+é escolhido pela resolução da tela. Antes era uma imagem só, do mundo inteiro,
+com 4096 px de largura — 9,8 km por pixel, fixo, por mais que se aproximasse.
+
+| Vista | Nível | Tiles | Resolução |
+|---|---|---|---|
+| 180° | 2 | 32 | 9,8 km/px |
+| 90° | 3 | 32 | 4,9 km/px |
+| 40° | 4 | 32 | 2,4 km/px |
+| 10° | 6 | 32 | 0,61 km/px |
+| 3° | 7 | 16 | 0,30 km/px |
+
+Trinta e duas vezes mais fino no zoom fechado, com teto de 40 tiles por vista
+para o orçamento continuar de pé.
 
 O que o plano faz melhor:
 
@@ -192,6 +215,33 @@ justamente onde a corrente de jato importa.
 O terminador dia/noite também muda de implementação: no globo é luz direcional
 sobre a esfera, no plano é calculado por pixel a partir do ângulo zenital solar,
 com o crepúsculo civil na borda da sombra.
+
+### Relevo e batimetria
+
+Camada opcional, no painel esquerdo, disponível no modo mapa. Não é uma imagem
+de relevo sombreado: são tiles `terrarium` da Mapzen, em que **cada pixel
+carrega a altitude real em metros** codificada em RGB —
+
+```
+metros = (R·256 + G + B/256) − 32768
+```
+
+O deslocamento de 32.768 é o que permite guardar **profundidade** junto com
+altitude no mesmo raster: a fossa das Marianas fica em −11.000 m e continua
+sendo um número positivo dentro do PNG. Por isso o oceano é pintado por
+profundidade e a terra por altitude a partir da mesma fonte, e por isso o mapa
+consegue responder "−4.128 m" quando se pergunta a profundidade de um ponto do
+Atlântico. Uma imagem bonita de relevo não responde nada.
+
+Duas consequências técnicas que valem registro:
+
+- **Estes tiles só existem em Web Mercator**, e o mapa é equirretangular. A
+  reprojeção é feita por pixel no shader, não na CPU — reprojetar antes e deixar
+  a GPU interpolar depois borraria detalhe que custou requisição.
+- **A textura usa filtro NEAREST, obrigatoriamente.** A altitude está em três
+  canais, e o vermelho vale 256 m por unidade. Interpolar linearmente entre dois
+  texels inventa uma rampa de 256 m numa borda onde o vermelho passa de 137 para
+  138.
 
 ### Barra de tempo (Tier 2)
 
@@ -303,6 +353,7 @@ download só acontece quando você clica; abrir o painel não baixa nada.
 | **cmdk** | Paleta de comandos |
 | **lucide-react** | Ícones |
 | **@mlc-ai/web-llm** | LLM no navegador via WebGPU |
+| Pirâmide de tiles própria | `src/tiles.ts` + `server/tiles.js`, sem biblioteca de mapa |
 | CSS à mão | Sistema de design próprio, sem framework de componentes |
 
 O motor do globo encapsula todo o contato com three.js e globe.gl. A interface
@@ -363,6 +414,7 @@ inferência de modelo próprio, ingestão em lote e um servidor TiTiler. Nada di
 | Perfil vertical | **Open-Meteo**, níveis de pressão reais | |
 | Comparação de modelos | **GFS**, **ICON**, **ECMWF IFS 0.25°** | Uma requisição, três modelos |
 | Correntes oceânicas | **Copernicus SMOC** 0,08° via Open-Meteo Marine | Convenção oceanográfica (aponta *para onde* vai) |
+| Relevo e batimetria | **Mapzen Terrain Tiles** (SRTM, GEBCO e outros) via AWS Open Data | Elevação em metros, Web Mercator. Atribuição exigida |
 | Terremotos | **USGS** | Ao vivo |
 | Incêndios | **NASA FIRMS** | Exige chave gratuita |
 | Qualidade do ar | **OpenAQ** | |
@@ -395,6 +447,7 @@ provedor. O `server/budget.js` implementa isso a sério.
 | NASA GIBS | 10.000 |
 | USGS | 5.000 |
 | NASA FIRMS | 1.080 |
+| Mapzen Terrain (AWS) | 10.000 |
 
 E não é só o dia. A Open-Meteo limita em **três janelas** — dia, hora e minuto —
 e contar apenas o total diário deixa passar a rajada: percorrer a linha do tempo
@@ -441,7 +494,9 @@ Tudo em `http://localhost:3001`. Os principais:
 ```
 GET  /api/health                      estado do servidor
 GET  /api/imagery                     camadas GIBS disponíveis (lidas do GetCapabilities)
-GET  /api/imagery/:id                 tile/imagem de uma camada
+GET  /api/imagery/:id                 imagem única de uma camada (mundo ou bbox)
+GET  /api/tile/:id/:z/:y/:x           tile da pirâmide, nível por zoom
+GET  /api/terrain/:z/:y/:x            elevação em metros (PNG terrarium)
 GET  /api/imagery/:id/time            datas disponíveis para a camada
 GET  /api/wind?date=&hour=            grade de vento u/v
 GET  /api/wind/status                 fonte usada, estado do disjuntor do GFS
@@ -490,6 +545,7 @@ src/
   windGPU.ts       advecção de partículas na GPU
   windGrid.ts      leitura da grade no cliente
   arrasto.ts       geometria de arraste das janelas flutuantes
+  tiles.ts         pirâmide equirretangular + grade Mercator do relevo
   perf.ts          medição de quadro e degraus de qualidade
   coord.ts         leitura de coordenada em texto livre
   components/      React, por área (globe, dock, probe, chat, analysis…)
@@ -514,7 +570,7 @@ escolhida ou descartada).
 npm test
 ```
 
-Cerca de **456 verificações** em 31 arquivos, sem framework: só o `assert`
+Cerca de **484 verificações** em 32 arquivos, sem framework: só o `assert`
 nativo do Node. Arquivos que importam TypeScript rodam com
 `--experimental-strip-types`.
 
@@ -527,6 +583,11 @@ uma vez e ninguém quer que ele volte:
   no ramo de redimensionar
 - `projecao.mjs` — `-190 % 360` em JavaScript dá `-190`, não `170`; a versão
   ingênua passa em todo caso positivo e falha em silêncio no Pacífico
+- `tiles.mjs` — pegou dois bugs de verdade: graus de *altura* pareados com
+  pixels de *largura*, que pedia 128 tiles para ver meio planeta; e `mercY(90)`
+  devolvendo −1,1e−16, uma coordenada de textura negativa. Também compara a
+  aritmética do cliente com a do servidor, que são duas implementações da mesma
+  grade
 - `janela.mjs` — arredondar as quatro bordas em vez do centro gerava onze
   janelas distintas num arrasto de 40°, onze requisições onde cabia uma
 - `css-orfas.mjs` — classes usadas no JSX que não existem em nenhuma folha
@@ -555,6 +616,10 @@ aumenta a resolução da textura.
 
 **Qualidade do ar, WBGT e hospitais** estão no painel e no backend, mas são as
 camadas menos exercitadas do conjunto.
+
+**Os tiles e o relevo são só do mapa plano.** O globo continua com uma textura
+global única: tiles numa esfera exigem malha em quadtree com nível de detalhe, e
+o globe.gl aceita uma imagem só. É o próximo passo natural.
 
 **O mapa plano ainda não tem três coisas que o globo tem.** Os nomes de países,
 estados e cidades; os contornos estaduais que o globo baixa ao aproximar (o

@@ -31,6 +31,12 @@ export const PROVIDERS = {
     freeMinute: 500,
     note: "Exige MAP_KEY gratuita. Limite por janela de 10 minutos.",
   },
+  "mapzen-terrain": {
+    label: "Mapzen Terrain Tiles (AWS Open Data)",
+    free: 40000,          // sem teto publicado; teto conservador proprio
+    share: 0.25,          // -> 10.000 tiles/dia
+    note: "Sem chave. Elevacao e batimetria em PNG terrarium. Cache de 7 dias: o relevo nao muda. Atribuicao exigida.",
+  },
   "nasa-power": {
     label: "NASA POWER",
     free: 5000,

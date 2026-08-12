@@ -72,6 +72,7 @@ interface LayerState {
   wbgtOn: boolean;
   hospitalsOn: boolean;
   hycomOn: boolean;
+  relevoOn: boolean;
 
   windInfo: string | null;
   isoInfo: string | null;
@@ -99,6 +100,7 @@ interface LayerState {
   setWbgtOn: (on: boolean) => void;
   setHospitalsOn: (on: boolean) => void;
   setHycomOn: (on: boolean) => void;
+  setRelevoOn: (on: boolean) => void;
 
   setWindInfo: (info: string | null) => void;
   setIsoInfo: (info: string | null) => void;
@@ -126,6 +128,7 @@ export const useLayerStore = create<LayerState>((set, get) => ({
   openaqOn: true,
   wbgtOn: false,
   hospitalsOn: false,
+  relevoOn: false,
   hycomOn: false,
 
   windInfo: null,
@@ -159,6 +162,7 @@ export const useLayerStore = create<LayerState>((set, get) => ({
   setOpenaqOn: (openaqOn) => set({ openaqOn }),
   setWbgtOn: (wbgtOn) => set({ wbgtOn }),
   setHospitalsOn: (hospitalsOn) => set({ hospitalsOn }),
+  setRelevoOn: (relevoOn) => set({ relevoOn }),
   setHycomOn: (hycomOn) => set({ hycomOn }),
 
   setWindInfo: (windInfo) => set({ windInfo }),
