@@ -26,7 +26,8 @@ import type { Quake, WindGrid, IsobarSet, Fire, MotorGeo } from "./tipos";
 import {
   MUNDO_W, MUNDO_H, COPIAS,
   aplicarZoom, travarVista, larguraGraus, daTela, enrolarLng, cruzaEmenda,
-  type Vista,
+  janelaDaVista, mudouBastante,
+  type Vista, type Janela,
 } from "./projecao";
 import {
   planoDeTiles, tilesEm, tilesMercator, nivelRelevo, mercY, alturaTerrarium,
@@ -354,6 +355,8 @@ export class MapEngine implements MotorGeo {
   private windGrid: WindGrid | null = null;
   private windOn = false;
   private densidadeVento = 1;
+  /** recorte atual da simulação; começa no mundo inteiro */
+  private janelaVento: Janela = { x: 0, y: 0, w: 1, h: 1 };
 
   private currentGPU: WindGPU | null = null;
   private currentGrid: WindGrid | null = null;
@@ -531,27 +534,25 @@ export class MapEngine implements MotorGeo {
     if (!this.windGPU) return;
 
     const aspecto = this.largura / Math.max(1, this.altura);
-    const gw = larguraGraus(this.vista.alturaGraus, aspecto);
-    const gh = this.vista.alturaGraus;
+    const nova = janelaDaVista(this.vista, aspecto);
 
-    const folgaW = Math.min(360, gw * 1.15);
-    const folgaH = Math.min(180, gh * 1.15);
+    // Só rejanela quando vale a pena: trocar apaga o rastro, e o plano do vento
+    // está ancorado em coordenada de mundo, então um ajuste pequeno de câmera
+    // não torna a janela atual errada. Sem este teste, cada passo de roda
+    // limpava o rastro e a tela piscava durante todo o zoom.
+    if (!mudouBastante(this.janelaVento, nova)) return;
 
-    if (folgaW >= 359 && folgaH >= 179) {
-      this.windGPU.setJanela(0, 0, 1, 1);
-    } else {
-      const oeste = (this.vista.lng - folgaW / 2 + 180) / 360;
-      const norte = 90 - this.vista.lat - folgaH / 2;   // y global cresce para o sul
-      this.windGPU.setJanela(oeste, norte / 180, folgaW / 360, folgaH / 180);
-    }
+    this.janelaVento = nova;
+    this.windGPU.setJanela(nova.x, nova.y, nova.w, nova.h);
 
-    // O TAMANHO DA PARTÍCULA ACOMPANHA O ZOOM.
+    // O TAMANHO DO PONTO NÃO DEPENDE MAIS DO ZOOM.
     //
-    // Só a janela já resolve o borrão — o rastro deixa de ser ampliado. Mas de
-    // perto, com o rastro em escala 1:1, uma partícula do tamanho de "vento
-    // planetário" vira um traço grosso demais para ler estrutura local. Encolhe
-    // suavemente: 1,0 vendo o mundo, ~0,55 numa vista de poucos graus.
-    this.windGPU.escalaPonto = 0.55 + 0.45 * Math.pow(Math.min(1, gh / 180), 0.35);
+    // Havia aqui um encolhimento progressivo, pedido quando a partícula virava
+    // um quadrado gigante ao aproximar. Aquilo era sintoma da textura de rastro
+    // do mundo inteiro sendo ampliada 17 vezes — a janela resolveu na raiz, e
+    // manter o encolhimento passou a ser justamente o contrário do que se quer:
+    // a partícula tem que ter a mesma cara em qualquer zoom.
+    this.windGPU.escalaPonto = 1;
   }
 
   flyTo(lat: number, lng: number, altitude?: number) {

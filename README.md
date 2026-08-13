@@ -86,7 +86,7 @@ Outros comandos:
 |---|---|
 | `npm run build` | Checa tipos (`tsc -b`) e gera o bundle de produção em `dist/` |
 | `npm run preview` | Serve o `dist/` para conferir o build |
-| `npm test` | Roda a suíte inteira (~484 verificações) |
+| `npm test` | Roda a suíte inteira (~494 verificações) |
 | `npm run dev:all` | `dev` + o servidor Python de modelo próprio |
 | `npm run ingest` | Ingestão em lote de dados abertos (pipeline Python) |
 
@@ -169,13 +169,24 @@ estão. O GFS entrega uma grade igualmente espaçada em grau, o GIBS serve em
 No globo, um shader precisa reprojetar tudo isso na esfera. No plano, cola
 direto — o motor de partículas é o mesmo arquivo.
 
-**As partículas são simuladas só na região visível.** Antes, o rastro era uma
-textura do mundo inteiro: aproximar em 10° a ampliava 17 vezes e cada partícula
-virava um quadrado parado na tela. Agora a simulação é recortada pela vista, a
-textura de rastro tem sempre a resolução do que se está vendo, e o tamanho do
-ponto ainda encolhe um pouco com o zoom. De brinde, as partículas ficam mais
-densas ao aproximar em vez de rarearem — as mesmas N partículas passam a cobrir
-uma área menor.
+**As partículas são simuladas só na região visível, e a aparência delas não
+depende do zoom.** Antes, o rastro era uma textura do mundo inteiro: aproximar
+em 10° a ampliava 17 vezes e cada partícula virava um quadrado parado na tela.
+
+Recortar a simulação resolveu o borrão e criou outro problema, mais sutil: as
+partículas guardam posição em coordenada global mas são desenhadas dentro da
+janela, então a fração de tela percorrida por segundo é o deslocamento global
+dividido pelo tamanho da janela. Numa vista de 3°, a janela é 1/58 do mundo — e
+as partículas atravessavam a tela **58 vezes mais rápido**. Como o rastro
+esmaece a uma taxa fixa, os riscos também ficavam 58 vezes mais longos. Era isso
+que virava sopa ao aproximar.
+
+Hoje o deslocamento é multiplicado pelo tamanho da janela, por eixo, o que
+cancela exatamente essa divisão. Velocidade, tamanho, densidade e comprimento
+de rastro na tela ficam idênticos em qualquer zoom, e `test/projecao.mjs` trava
+essa invariância. O que se perde: a velocidade aparente deixa de ser comparável
+*entre* zooms diferentes — dentro de uma mesma vista continua exata, e a
+velocidade absoluta se lê na cor e na espessura.
 
 Mercator teria sido a escolha familiar, e foi descartada por duas razões: exige
 reprojetar a textura de rastro e pedir as imagens noutro esquema, e infla a
@@ -582,7 +593,7 @@ escolhida ou descartada).
 npm test
 ```
 
-Cerca de **484 verificações** em 32 arquivos, sem framework: só o `assert`
+Cerca de **494 verificações** em 32 arquivos, sem framework: só o `assert`
 nativo do Node. Arquivos que importam TypeScript rodam com
 `--experimental-strip-types`.
 

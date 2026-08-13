@@ -4,6 +4,7 @@ import {
   paraMundo, paraGeo, enrolarLng, travarLat, deltaLng, cruzaEmenda,
   travarVista, larguraGraus, aplicarZoom, daTela,
   ALTURA_MIN, ALTURA_MAX,
+  janelaDaVista, mudouBastante,
 } from "../src/projecao.ts";
 
 let n = 0, mal = 0;
@@ -166,6 +167,111 @@ ok("clicar alem do antimeridiano devolve longitude valida", () => {
 ok("tela de tamanho zero nao produz NaN", () => {
   const g = daTela(0, 0, 0, 0, { lng: 0, lat: 0, alturaGraus: 40 });
   assert.ok(Number.isFinite(g.lat) && Number.isFinite(g.lng));
+});
+
+console.log("\njanela do vento");
+
+const ASP = 16 / 9;
+
+ok("vista do mundo inteiro usa o mundo inteiro", () => {
+  const j = janelaDaVista({ lng: 0, lat: 0, alturaGraus: 180 }, ASP);
+  assert.deepEqual(j, { x: 0, y: 0, w: 1, h: 1 });
+});
+
+ok("a janela encolhe junto com a vista", () => {
+  const a = janelaDaVista({ lng: 0, lat: 0, alturaGraus: 90 }, ASP);
+  const b = janelaDaVista({ lng: 0, lat: 0, alturaGraus: 10 }, ASP);
+  assert.ok(b.w < a.w && b.h < a.h, "nao encolheu");
+  assert.ok(b.w > 0 && b.h > 0);
+});
+
+ok("a janela fica dentro da faixa valida", () => {
+  for (const v of [
+    { lng: 0, lat: 0, alturaGraus: 40 },
+    { lng: 179, lat: 80, alturaGraus: 10 },
+    { lng: -179, lat: -80, alturaGraus: 10 },
+    { lng: 200, lat: 0, alturaGraus: 3 },
+  ]) {
+    const j = janelaDaVista(v, ASP);
+    assert.ok(j.x >= 0 && j.x < 1, "x " + j.x);
+    assert.ok(j.y >= 0, "y " + j.y);
+    assert.ok(j.y + j.h <= 1 + 1e-9, "passou do polo: " + (j.y + j.h));
+    assert.ok(j.w > 0 && j.w <= 1 && j.h > 0 && j.h <= 1);
+  }
+});
+
+// -------------------------------------------------------------------------
+// A INVARIANCIA QUE ESTE BLOCO EXISTE PARA GARANTIR
+//
+// As particulas guardam posicao em UV GLOBAL e sao desenhadas dentro da
+// janela, entao a fracao de TELA percorrida por segundo e o deslocamento
+// global dividido pelo tamanho da janela. Sem compensar, uma vista de 3 graus
+// fazia as particulas atravessarem a tela 58x mais rapido — e como o rastro
+// esmaece a taxa fixa, os riscos ficavam 58x mais longos. Era isso que virava
+// sopa ao aproximar.
+//
+// O shader multiplica o deslocamento por uJanela.zw, cancelando a divisao.
+// Aqui reproduzimos a conta para travar a propriedade.
+// -------------------------------------------------------------------------
+const velocidadeNaTela = (alturaGraus) => {
+  const j = janelaDaVista({ lng: 0, lat: 0, alturaGraus }, ASP);
+  // deslocamento global por segundo, ja com a compensacao do shader
+  const dx = (1 / 360) * j.w;
+  const dy = (1 / 180) * j.h;
+  return [dx / j.w, dy / j.h];   // fracao de tela por segundo
+};
+
+ok("velocidade na tela e a MESMA em qualquer zoom", () => {
+  const base = velocidadeNaTela(180);
+  for (const g of [90, 40, 10, 3, ALTURA_MIN]) {
+    const v = velocidadeNaTela(g);
+    assert.ok(perto(v[0], base[0], 1e-12), `x em ${g} graus: ${v[0]} vs ${base[0]}`);
+    assert.ok(perto(v[1], base[1], 1e-12), `y em ${g} graus: ${v[1]} vs ${base[1]}`);
+  }
+});
+
+ok("sem a compensacao, o zoom acelerava dezenas de vezes", () => {
+  // a versao antiga: deslocamento global fixo, dividido pela janela
+  const antiga = (alturaGraus) => {
+    const j = janelaDaVista({ lng: 0, lat: 0, alturaGraus }, ASP);
+    return (1 / 360) / j.w;
+  };
+  const fator = antiga(3) / antiga(180);
+  assert.ok(fator > 40, "o teste nao esta medindo o problema certo: " + fator);
+});
+
+console.log("\ntroca de janela");
+
+ok("mexer pouco NAO troca a janela (senao o rastro pisca)", () => {
+  const a = janelaDaVista({ lng: 0, lat: 0, alturaGraus: 40 }, ASP);
+  const b = janelaDaVista({ lng: 0.4, lat: 0.2, alturaGraus: 41 }, ASP);
+  assert.equal(mudouBastante(a, b), false);
+});
+
+ok("mudanca real de escala troca", () => {
+  const a = janelaDaVista({ lng: 0, lat: 0, alturaGraus: 40 }, ASP);
+  const b = janelaDaVista({ lng: 0, lat: 0, alturaGraus: 20 }, ASP);
+  assert.equal(mudouBastante(a, b), true);
+});
+
+ok("arrastar para longe troca", () => {
+  const a = janelaDaVista({ lng: 0, lat: 0, alturaGraus: 20 }, ASP);
+  const b = janelaDaVista({ lng: 40, lat: 0, alturaGraus: 20 }, ASP);
+  assert.equal(mudouBastante(a, b), true);
+});
+
+ok("entrar e sair do mundo inteiro sempre troca", () => {
+  const mundo = janelaDaVista({ lng: 0, lat: 0, alturaGraus: 180 }, ASP);
+  const perto40 = janelaDaVista({ lng: 0, lat: 0, alturaGraus: 40 }, ASP);
+  assert.equal(mudouBastante(mundo, perto40), true);
+  assert.equal(mudouBastante(perto40, mundo), true);
+  assert.equal(mudouBastante(mundo, mundo), false);
+});
+
+ok("atravessar o antimeridiano nao conta como salto gigante", () => {
+  const a = janelaDaVista({ lng: 179, lat: 0, alturaGraus: 20 }, ASP);
+  const b = janelaDaVista({ lng: -179.5, lat: 0, alturaGraus: 20 }, ASP);
+  assert.equal(mudouBastante(a, b), false, "a volta do mundo virou deslocamento de 358 graus");
 });
 
 console.log(mal ? `\n  ${mal} FALHA(S)\n` : `\n  ${n} verificacoes\n`);

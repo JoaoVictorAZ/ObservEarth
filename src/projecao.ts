@@ -155,6 +155,66 @@ export function daTela(
     lat: travarLat(v.lat - fy * v.alturaGraus),
   };
 }
+// -----------------------------------------------------------------------------
+// JANELA DA SIMULAÇÃO DE VENTO
+// -----------------------------------------------------------------------------
+
+/** Recorte do mundo em UV global: x0/y0 no canto noroeste, largura e altura. */
+export interface Janela { x: number; y: number; w: number; h: number; }
+
+/** Folga em volta da vista, para partícula não nascer visivelmente na borda. */
+const FOLGA = 1.15;
+
+/**
+ * A janela de simulação que corresponde a uma vista.
+ *
+ * Devolve o mundo inteiro quando a vista já cobre quase tudo — abaixo disso o
+ * recorte só acrescentaria conta.
+ */
+export function janelaDaVista(v: Vista, aspecto: number): Janela {
+  const gw = Math.min(360, larguraGraus(v.alturaGraus, aspecto) * FOLGA);
+  const gh = Math.min(180, v.alturaGraus * FOLGA);
+
+  if (gw >= 359 && gh >= 179) return { x: 0, y: 0, w: 1, h: 1 };
+
+  const oeste = (enrolarLng(v.lng - gw / 2) + 180) / 360;
+  // y global cresce para o SUL: o topo da vista é a menor coordenada
+  const norte = (90 - v.lat - gh / 2) / 180;
+
+  return {
+    x: ((oeste % 1) + 1) % 1,
+    y: Math.max(0, Math.min(1 - gh / 180, norte)),
+    w: gw / 360,
+    h: gh / 180,
+  };
+}
+
+/**
+ * Vale a pena trocar a janela?
+ *
+ * Trocar APAGA o rastro acumulado — ele pertence a uma região, e mantê-lo
+ * arrastaria os riscos do lugar antigo por cima do novo. Como o plano do vento
+ * está ancorado em coordenada de mundo, um ajuste pequeno de câmera não torna a
+ * janela atual errada, só levemente fora de centro. Sem este limiar, cada
+ * passo de roda limparia o rastro e a tela piscaria durante todo o zoom.
+ *
+ * Os números: 25% de mudança de escala, ou um deslocamento de mais de 35% da
+ * própria janela.
+ */
+export function mudouBastante(a: Janela, b: Janela): boolean {
+  const mundo = (j: Janela) => j.w >= 0.999 && j.h >= 0.999;
+  if (mundo(a) !== mundo(b)) return true;
+  if (mundo(a) && mundo(b)) return false;
+
+  const escala = Math.max(b.w / a.w, a.w / b.w, b.h / a.h, a.h / b.h);
+  if (escala > 1.25) return true;
+
+  // deslocamento do canto, com a volta do mundo em x
+  const dx = Math.abs(((b.x - a.x + 1.5) % 1) - 0.5);
+  const dy = Math.abs(b.y - a.y);
+  return dx > a.w * 0.35 || dy > a.h * 0.35;
+}
+
 /**
  * Deslocamentos em x das cópias do mundo, em unidades de mundo.
  *
