@@ -1,0 +1,34 @@
+# =============================================================================
+# FIM DE LINHA — por que este arquivo existe
+# =============================================================================
+# Sem ele, um `git status` logo depois de clonar no Windows acusou 138 arquivos
+# modificados, com 29.840 inserções e 29.840 remoções. O número idêntico dos
+# dois lados já entrega o que era: nenhuma linha mudou de conteúdo, só o
+# terminador de LF para CRLF.
+#
+# O estrago não é cosmético. Um commit nesse estado reescreve o repositório
+# inteiro, e a partir daí `git log`, `git blame` e qualquer revisão passam a
+# apontar para esse commit em vez de para quem realmente escreveu cada linha.
+# A alteração de verdade fica enterrada no meio de trinta mil linhas de ruído.
+#
+# `text=auto eol=lf` guarda tudo em LF no repositório e entrega LF no disco,
+# em qualquer sistema. Editores modernos no Windows lidam com isso sem
+# reclamar, e é o que o resto do ecossistema Node espera.
+# =============================================================================
+
+* text=auto eol=lf
+
+# Binários não passam por conversão nenhuma: uma "correção" de fim de linha
+# dentro de um PNG corrompe o arquivo.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.woff  binary
+*.woff2 binary
+*.db   binary
+*.grib binary
+*.grib2 binary
+*.nc   binary
+*.hgt  binary

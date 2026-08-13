@@ -97,6 +97,21 @@ export interface MotorGeo {
   /** centraliza a vista num ponto */
   flyTo(lat: number, lng: number, altitude?: number): void;
 
+  /**
+   * Cede a GPU.
+   *
+   * O terminal LLM roda o modelo por WebGPU na MESMA placa que desenha o
+   * planeta. Com 40 mil partículas e uma textura de rastro de 4096x2048 em
+   * ping-pong a 60 Hz, sobra pouco para gerar token: o console ficava lento a
+   * ponto de parecer travado, e o navegador enchia o log de "requestAnimation
+   * Frame handler took <N>ms".
+   *
+   * Pausado, o motor para de simular partículas e desenha só o suficiente para
+   * continuar respondendo ao mouse. Os dois motores sabem fazer isso de
+   * verdade — por isso está no contrato, e não como capacidade opcional.
+   */
+  setPausado(on: boolean): void;
+
   setAutoRotate(on: boolean): void;
   setDayNight(on: boolean): void;
   setTime(d: Date): void;

@@ -247,6 +247,8 @@ export class GlobeEngine {
   /** fração de partículas escolhida pelo usuário; sobrevive à troca de degrau */
   private densidadeVento = 1;
   private idle = 0;                 // quadros sem nada para animar
+  /** pausa PEDIDA de fora: o LLM precisa da GPU (ver setPausado) */
+  private cedendoGpu = false;
   private paused = false;
   private interacting = false;
   private baseDpr = 1;
@@ -370,6 +372,14 @@ export class GlobeEngine {
       const dt = prev ? Math.min((t - prev) / 1000, 0.05) : 0;
       prev = t;
 
+      // GPU cedida ao modelo de linguagem: nada de partículas, e o globe.gl
+      // fica com a própria animação suspensa. Ver `setPausado` em tipos.ts.
+      if (this.cedendoGpu) {
+        this.perf.end(t, this.g?.renderer?.());
+        this.raf = requestAnimationFrame(step);
+        return;
+      }
+
       this.tickImagery(dt);
       this.tickWind(dt);
       this.tickCurrents(dt);
@@ -391,11 +401,18 @@ export class GlobeEngine {
   }
 
   private wake() {
+    if (this.cedendoGpu) return;   // pedido externo vence o despertar
     this.idle = 0;
     if (this.paused) { this.g?.resumeAnimation?.(); this.paused = false; }
   }
 
   onStats(fn: (s: FrameStats) => void) { this.statsFn = fn; }
+
+  setPausado(on: boolean) {
+    this.cedendoGpu = on;
+    if (on) { this.g?.pauseAnimation?.(); this.paused = true; }
+    else { this.g?.resumeAnimation?.(); this.paused = false; this.idle = 0; }
+  }
 
   /** null volta ao automatico */
   setQuality(t: QualityTier | null) { this.perf.lock(t); }

@@ -69,7 +69,26 @@ const UPDATE_FRAG = /* glsl */ `
     return mix(a.xy, b.xy, uMix);
   }
 
-  // Integrador Runge-Kutta de 2ª Ordem (RK2 / Midpoint)
+  // A APARÊNCIA NÃO PODE DEPENDER DO ZOOM.
+  //
+  // As partículas guardam posição em UV GLOBAL, mas são desenhadas dentro da
+  // janela: a fração de TELA percorrida por segundo é o deslocamento global
+  // dividido pelo tamanho da janela. Numa vista de 3°, a janela é 1/58 do
+  // mundo — e as partículas atravessavam a tela 58 vezes mais rápido. Como o
+  // rastro esmaece a uma taxa fixa por quadro, os riscos também ficavam 58
+  // vezes mais longos. Era exatamente isso que virava sopa ao aproximar.
+  //
+  // Multiplicar o deslocamento pelo tamanho da janela cancela a divisão. Por
+  // eixo, e não por um fator único: a janela é mais larga que alta em relação
+  // ao mundo (o mundo é 2:1, a tela é 16:9), e um fator só deixaria o
+  // movimento vertical ~11% fora.
+  //
+  // Com a janela no mundo inteiro, uJanela.zw = (1,1) e nada disto muda —
+  // é por isso que o globo continua idêntico.
+  //
+  // O que se perde: a velocidade na tela deixa de ser comparável ENTRE zooms
+  // diferentes. Dentro de uma mesma vista continua exata, e a velocidade
+  // absoluta é lida na cor e na espessura, que não mexemos.
   vec2 moveRK2(vec2 p, float dt) {
     vec2 v1 = getWindVector(p);
     float lat1 = (0.5 - p.y) * 180.0;
@@ -77,8 +96,8 @@ const UPDATE_FRAG = /* glsl */ `
 
     // Meio passo (midpoint)
     vec2 d1 = vec2(
-      (v1.x * uSpeed * dt * 0.5) / (360.0 * cosLat1),
-      -(v1.y * uSpeed * dt * 0.5) / 180.0
+      (v1.x * uSpeed * dt * 0.5) / (360.0 * cosLat1) * uJanela.z,
+      -(v1.y * uSpeed * dt * 0.5) / 180.0 * uJanela.w
     );
     vec2 mid = vec2(fract(p.x + d1.x + 1.0), clamp(p.y + d1.y, 0.001, 0.999));
 
@@ -88,8 +107,8 @@ const UPDATE_FRAG = /* glsl */ `
     float cosLat2 = max(cos(radians(lat2)), 0.15);
 
     vec2 d2 = vec2(
-      (v2.x * uSpeed * dt) / (360.0 * cosLat2),
-      -(v2.y * uSpeed * dt) / 180.0
+      (v2.x * uSpeed * dt) / (360.0 * cosLat2) * uJanela.z,
+      -(v2.y * uSpeed * dt) / 180.0 * uJanela.w
     );
 
     return vec2(fract(p.x + d2.x + 1.0), clamp(p.y + d2.y, 0.001, 0.999));

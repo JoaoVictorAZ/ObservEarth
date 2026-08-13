@@ -21,6 +21,9 @@ interface ChatState {
   /** modelo escolhido no seletor, ainda não necessariamente carregado */
   modeloEscolhido: ModeloLLM | null;
   msgs: MsgChat[];
+  /** true enquanto o modelo baixa ou gera: o motor gráfico cede a GPU */
+  ocupado: boolean;
+  setOcupado: (v: boolean) => void;
   /** ponto a que a conversa se refere, para detectar troca de ponto */
   pontoChave: string | null;
 
@@ -45,8 +48,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   modeloCarregado: null,
   modeloEscolhido: null,
   msgs: [],
+  ocupado: false,
   pontoChave: null,
 
+  setOcupado: (ocupado) => set({ ocupado }),
   abrir: () => set({ aberto: true }),
   fechar: () => set({ aberto: false }),
   setLargura: (px) =>
