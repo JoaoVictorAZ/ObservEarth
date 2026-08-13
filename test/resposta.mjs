@@ -50,6 +50,36 @@ ok("terminou sem escrever nada sugere o que fazer", () => {
   assert.ok(f.texto.length > 40, "aviso curto demais para ajudar");
 });
 
+// A primeira versao afirmava "contexto grande demais, tente um modelo maior".
+// As duas metades estavam erradas: o usuario ja estava no maior modelo, e o
+// dossie medido dava ~1.100 tokens numa janela de 4.096. Palpite vestido de
+// diagnostico manda a pessoa perseguir a causa errada.
+ok("o aviso NAO chuta causa nem manda trocar de modelo", () => {
+  const f = fecharResposta("", false);
+  assert.ok(!/modelo maior|contexto grande/i.test(f.texto), "voltou a chutar: " + f.texto);
+});
+
+ok("o aviso REPETE o que se mediu, quando ha medida", () => {
+  const f = fecharResposta("", false, { tokensEnviados: 1081, motivo: "stop" });
+  assert.ok(f.texto.includes("1081"), "nao disse quantos tokens foram");
+  assert.ok(f.texto.includes("stop"), "nao disse o motivo relatado");
+});
+
+// A causa real, descoberta so depois de varias rodadas: "Device was lost".
+// Do nosso lado ela chega como silencio, nao como erro — entao o aviso tem de
+// apontar onde a mensagem existe e qual botao resolve.
+ok("o aviso aponta o console e o botao de trocar modelo", () => {
+  const f = fecharResposta("", false);
+  assert.ok(/Device was lost/i.test(f.texto), "nao citou a mensagem do console");
+  assert.ok(/trocar modelo/i.test(f.texto), "nao disse o que fazer");
+});
+
+ok("sem medida, nao inventa numero", () => {
+  const f = fecharResposta("", false);
+  assert.ok(!/~\d+ tokens/.test(f.texto), "inventou contagem: " + f.texto);
+  assert.ok(!/Motivo relatado/.test(f.texto), "inventou motivo");
+});
+
 ok("os dois finais vazios nao dizem a mesma coisa", () => {
   assert.notEqual(fecharResposta("", true).texto, fecharResposta("", false).texto);
 });

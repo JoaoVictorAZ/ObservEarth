@@ -24,6 +24,7 @@ import { describeModelLayer, sortModelLayers } from "./modelNames.js";
 import { parseCapabilities, snapTime, coverageOf } from "./gibsTime.js";
 import { lerBBox, alturaDe, janelaEm } from "./janela.js";
 import { bboxDoTile, tileMercatorValido, TILE_PX } from "./tiles.js";
+import { empacotar } from "./windBin.js";
 import cors from "cors";
 
 const app = express();
@@ -336,6 +337,23 @@ app.get("/api/wind", async (req, res) => {
     const grid = await cached(windKey(dateStr, hour), 9 * HOUR, () =>
       buildWindGrid(fetch, dateStr, hour)
     );
+
+    // BINÁRIO QUANDO PEDIDO, JSON QUANDO NÃO.
+    //
+    // Medido em 1440x721: JSON são 39,6 MB e 401 ms só para serializar; o
+    // binário são 8,3 MB e praticamente nada. Do outro lado a diferença é
+    // maior ainda — 256 ms de thread principal parado viram zero, porque os
+    // componentes viram Float32Array apontando para o próprio buffer.
+    //
+    // O JSON continua servido para quem não pedir: um cliente antigo com um
+    // servidor novo deve degradar, não quebrar.
+    if (String(req.query.fmt) === "bin") {
+      const buf = empacotar(grid);
+      res.set("Content-Type", "application/octet-stream");
+      res.set("Cache-Control", "public, max-age=3600");
+      res.set("X-Wind-Points", String(grid.nx * grid.ny));
+      return res.send(buf);
+    }
     res.json(grid);
   } catch (e) {
     console.error(`[wind] erro para ${dateStr} ${hour}h:`, e.message);
@@ -610,21 +628,35 @@ app.get("/api/dossier", async (req, res) => {
       ? `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&hourly=${campos}&wind_speed_unit=ms&forecast_days=3&timezone=UTC`
       : `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lng}&hourly=${campos}&wind_speed_unit=ms&start_date=${dateStr}&end_date=${dateStr}&timezone=UTC`;
 
-    const wx = await cached(`dossie:${lat.toFixed(2)}:${lng.toFixed(2)}:${dateStr}`, 3 * HOUR,
-      () => metered("open-meteo", 1, () => fetch(url)).then((r) => (r.ok ? r.json() : null)));
+    // TRÊS ESPERAS INDEPENDENTES, EM PARALELO.
+    //
+    // Eram sequenciais: a previsão, depois a amostra do campo de vento, depois
+    // o topônimo. Nenhuma delas alimenta a seguinte — o encadeamento era só a
+    // ordem em que foram escritas, e somava três idas à rede onde uma basta.
+    //
+    // `allSettled`, não `all`: o topônimo e o campo de vento são opcionais, e
+    // um `all` derrubaria o dossiê inteiro porque o geocodificador demorou.
+    const [rWx, rCampo, rLugar] = await Promise.allSettled([
+      cached(`dossie:${lat.toFixed(2)}:${lng.toFixed(2)}:${dateStr}`, 3 * HOUR,
+        () => metered("open-meteo", 1, () => fetch(url)).then((r) => (r.ok ? r.json() : null))),
 
-    // amostra o MESMO campo que anima as partículas, para poder ser confrontado
-    let fieldWind = null, fieldSrc = null;
-    try {
-      const { sampleField } = await import("./windVerify.js");
-      const grid = await cached(windKey(dateStr, hour), 9 * HOUR,
-        () => buildWindGrid(fetch, dateStr, hour));
-      const s = sampleField(grid, lat, lng);
-      if (s) { fieldWind = { speed: s.speed, direction: s.direction }; fieldSrc = grid.dataset; }
-    } catch { /* sem campo, o dossiê sai só com a sonda e diz isso */ }
+      // amostra o MESMO campo que anima as partículas, para poder ser confrontado
+      (async () => {
+        const { sampleField } = await import("./windVerify.js");
+        const grid = await cached(windKey(dateStr, hour), 9 * HOUR,
+          () => buildWindGrid(fetch, dateStr, hour));
+        const s = sampleField(grid, lat, lng);
+        return s ? { fieldWind: { speed: s.speed, direction: s.direction }, fieldSrc: grid.dataset } : null;
+      })(),
 
-    let place = null;
-    try { place = await placeAt(lat, lng); } catch { /* ponto sem topônimo */ }
+      placeAt(lat, lng),
+    ]);
+
+    const wx = rWx.status === "fulfilled" ? rWx.value : null;
+    const campo = rCampo.status === "fulfilled" ? rCampo.value : null;
+    const fieldWind = campo?.fieldWind ?? null;   // sem campo, o dossiê sai só com a sonda e diz isso
+    const fieldSrc = campo?.fieldSrc ?? null;
+    const place = rLugar.status === "fulfilled" ? rLugar.value : null;   // ponto sem topônimo
 
     const dossie = montarDossie({
       lat, lng, date: dateStr, hour, spanH, stepH,

@@ -161,16 +161,33 @@ export function montarDossie(o) {
  */
 export function promptSistema() {
   return [
-    "Você lê um dossiê JSON de um ponto geográfico e responde perguntas sobre ele.",
+    "Você lê um dossiê de medições de um ponto geográfico e responde perguntas sobre ele.",
     "",
     "REGRAS ABSOLUTAS:",
-    "1. Use SOMENTE números presentes no JSON. Nunca calcule, estime ou arredonde de cabeça.",
-    "2. Diferenças e tendências já estão em `resumo`. Cite-as; não as recalcule.",
-    "3. Valor `null` significa SEM DADO. Diga 'sem dado', nunca 'zero' nem 'estável'.",
-    "4. Sempre cite a unidade e a fonte, que estão em `esquema`.",
-    "5. Não explique causas meteorológicas nem preveja o que não está no JSON.",
-    "   Se perguntarem o porquê, responda que o dossiê traz medições, não diagnóstico.",
-    "6. Se a informação não estiver no JSON, diga que não está. Não deduza.",
+    "1. Use SOMENTE números presentes no dossiê. Nunca calcule, estime ou arredonde de cabeça.",
+    "2. Mínimos, máximos, médias e variações já estão em RESUMO. Cite-os; não os recalcule.",
+    "3. 'sem dado' significa ausência real. Diga 'sem dado', nunca 'zero' nem 'estável'.",
+    "4. Sempre cite a unidade, que acompanha cada número.",
+    "5. Não explique causas meteorológicas nem preveja o que não está no dossiê.",
+    "6. Se a informação não estiver no dossiê, diga que não está. Não deduza.",
+    "",
+    // ---------------------------------------------------------------------
+    // A REGRA 7 EXISTE POR UM SILÊNCIO OBSERVADO.
+    //
+    // Perguntado sobre "insights de clima", o modelo devolvia ZERO tokens. Não
+    // era falta de memória nem contexto grande: as regras 5 e 6 proíbem
+    // interpretar, deduzir, explicar causa e prever — que é exatamente o que
+    // "insights" pede. Sem uma saída permitida, o modelo emite fim de texto na
+    // primeira posição, e a tela mostra uma bolha vazia.
+    //
+    // Um conjunto de regras que só diz o que NÃO fazer precisa terminar
+    // dizendo o que fazer quando nada é permitido.
+    // ---------------------------------------------------------------------
+    "7. NUNCA responda vazio. Se a pergunta pede interpretação, causa, previsão",
+    "   ou opinião, responda em uma frase que este terminal descreve medições e",
+    "   não faz diagnóstico — e ofereça o que ele PODE fazer com este dossiê:",
+    "   informar valores, comparar instantes, apontar máximos e mínimos, dizer",
+    "   o quanto algo variou na janela e onde faltou dado.",
     "",
     "Responda em português do Brasil, de forma direta e curta.",
   ].join("\n");

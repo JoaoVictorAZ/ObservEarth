@@ -7,6 +7,7 @@ import Globe from "globe.gl";
 import * as THREE from "three";
 import { WindGPU } from "./windGPU";
 import { PerfMonitor, TIERS, type QualityTier, type FrameStats } from "./perf";
+import { EstadoAnimacao } from "./pausa";
 
 const TEX = {
   day: "https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg",
@@ -246,10 +247,18 @@ export class GlobeEngine {
   readonly perf = new PerfMonitor();
   /** fração de partículas escolhida pelo usuário; sobrevive à troca de degrau */
   private densidadeVento = 1;
-  private idle = 0;                 // quadros sem nada para animar
-  /** pausa PEDIDA de fora: o LLM precisa da GPU (ver setPausado) */
-  private cedendoGpu = false;
-  private paused = false;
+  /**
+   * Dormir, acordar e ceder a GPU — em `./pausa`, com teste próprio.
+   *
+   * Eram três booleanos soltos aqui, e a ordem entre eles derrubou a aplicação
+   * inteira com estouro de pilha: `resumeAnimation` do globe.gl reentra pelo
+   * evento "change" do OrbitControls. O mesmo defeito existia em DOIS lugares
+   * deste arquivo, escrito de duas formas diferentes.
+   */
+  private readonly anim = new EstadoAnimacao({
+    retomar: () => this.g?.resumeAnimation?.(),
+    pausar: () => this.g?.pauseAnimation?.(),
+  });
   private interacting = false;
   private baseDpr = 1;
   private statsFn: ((s: FrameStats) => void) | null = null;
@@ -374,7 +383,7 @@ export class GlobeEngine {
 
       // GPU cedida ao modelo de linguagem: nada de partículas, e o globe.gl
       // fica com a própria animação suspensa. Ver `setPausado` em tipos.ts.
-      if (this.cedendoGpu) {
+      if (this.anim.cedendoGpu) {
         this.perf.end(t, this.g?.renderer?.());
         this.raf = requestAnimationFrame(step);
         return;
@@ -385,13 +394,8 @@ export class GlobeEngine {
       this.tickCurrents(dt);
 
       const animating = this.windOn || this.currentsOn || this.imgFade < 1 || this.interacting;
-      if (animating) {
-        this.idle = 0;
-        if (this.paused) { this.g?.resumeAnimation?.(); this.paused = false; }
-      } else if (++this.idle > 90 && !this.paused) {
-        this.g?.pauseAnimation?.();
-        this.paused = true;
-      }
+      if (animating) this.anim.animando();
+      else this.anim.ocioseou(90);
 
       this.perf.end(t, this.g?.renderer?.());
       if (this.statsFn) this.statsFn(this.perf.stats);
@@ -400,19 +404,12 @@ export class GlobeEngine {
     this.raf = requestAnimationFrame(step);
   }
 
-  private wake() {
-    if (this.cedendoGpu) return;   // pedido externo vence o despertar
-    this.idle = 0;
-    if (this.paused) { this.g?.resumeAnimation?.(); this.paused = false; }
-  }
+  /** Dormir e acordar moram em `./pausa`, com teste próprio. */
+  private wake() { this.anim.despertar(); }
 
   onStats(fn: (s: FrameStats) => void) { this.statsFn = fn; }
 
-  setPausado(on: boolean) {
-    this.cedendoGpu = on;
-    if (on) { this.g?.pauseAnimation?.(); this.paused = true; }
-    else { this.g?.resumeAnimation?.(); this.paused = false; this.idle = 0; }
-  }
+  setPausado(on: boolean) { this.anim.cederGpu(on); }
 
   /** null volta ao automatico */
   setQuality(t: QualityTier | null) { this.perf.lock(t); }

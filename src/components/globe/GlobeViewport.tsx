@@ -13,21 +13,34 @@ import { useChatStore } from "../../store/chatStore";
 import { GlobeEngine } from "../../globe";
 import { MapEngine } from "../../mapa2d";
 import { temRelevo } from "../../tipos";
+import { buscarGrade } from "../../windBin";
 import type { Quake, Fire, IsobarSet, WindGrid, MotorGeo } from "../../tipos";
 
 export interface GlobeViewportRef {
   flyTo: (lat: number, lng: number) => void;
 }
 
+/**
+ * `Array.isArray` NÃO aceita Float32Array.
+ *
+ * Com a grade binária os componentes chegam como Float32Array, e a versão
+ * anterior deste teste os rejeitava — a tela ficaria sem vento, com a mensagem
+ * "objeto de vento malformado", para um objeto perfeitamente válido. O que
+ * importa aqui é ser indexável e ter comprimento, não ser um Array literal.
+ */
+function temPontos(x: unknown, n: number): boolean {
+  if (Array.isArray(x)) return x.length >= n;
+  if (!ArrayBuffer.isView(x) || x instanceof DataView) return false;
+  return (x as unknown as { length: number }).length >= n;
+}
+
 function isValidWindGrid(g: unknown): g is WindGrid {
   if (!g || typeof g !== "object") return false;
   const w = g as Record<string, unknown>;
-  return (
-    typeof w.nx === "number" && w.nx > 0 &&
-    typeof w.ny === "number" && w.ny > 0 &&
-    Array.isArray(w.u) && w.u.length >= (w.nx as number) * (w.ny as number) &&
-    Array.isArray(w.v) && w.v.length >= (w.nx as number) * (w.ny as number)
-  );
+  if (typeof w.nx !== "number" || w.nx <= 0) return false;
+  if (typeof w.ny !== "number" || w.ny <= 0) return false;
+  const n = w.nx * w.ny;
+  return temPontos(w.u, n) && temPontos(w.v, n);
 }
 
 export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
@@ -150,8 +163,11 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
 
     let alive = true;
     setWindInfo("Baixando campo de vento…");
-    fetch(`/api/wind?date=${day}&hour=${hour}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`)))
+    // Binário, com recuo automático para JSON. Ver src/windBin.ts: a grade
+    // chega em 8,3 MB em vez de 39,6, e os componentes viram Float32Array
+    // apontando para o próprio buffer — sem os 256 ms de parse que travavam a
+    // interface a cada troca de hora.
+    buscarGrade(`/api/wind?date=${day}&hour=${hour}`)
       .then((data: WindGrid) => {
         if (!alive) return;
         if (!isValidWindGrid(data)) throw new Error("objeto de vento malformado");

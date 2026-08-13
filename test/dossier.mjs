@@ -141,9 +141,31 @@ ok("a janela respeita o que a série cobre — sem índice fora do array", () =>
 ok("o prompt PROÍBE o modelo de fazer conta", () => {
   const p = promptSistema();
   assert.match(p, /SOMENTE números presentes/i);
-  assert.match(p, /não as recalcule/i);
+  assert.match(p, /não os recalcule/i);
   assert.match(p, /sem dado/i);
   assert.match(p, /Não explique causas/i);
+});
+
+// ---------------------------------------------------------------------------
+// Perguntado sobre "insights de clima", o modelo devolvia ZERO tokens. As
+// regras 5 e 6 proíbem interpretar, deduzir, explicar causa e prever — que é
+// exatamente o que "insights" pede. Sem uma saída permitida, ele emite fim de
+// texto na primeira posição e a tela mostra uma bolha vazia.
+// ---------------------------------------------------------------------------
+ok("o prompt diz o que fazer quando NADA é permitido", () => {
+  const p = promptSistema();
+  assert.match(p, /NUNCA responda vazio/i, "sem esta regra, 'insights' vira silêncio");
+  assert.match(p, /interpreta[çc][ãa]o|causa|previs[ãa]o/i, "não nomeia o tipo de pergunta que cai aqui");
+  assert.match(p, /PODE fazer/i, "proíbe sem oferecer alternativa");
+});
+
+// O dossiê deixou de ir como JSON quando o contexto foi compactado; um prompt
+// mandando ler `esquema` mandaria o modelo procurar algo que não é enviado.
+ok("o prompt não manda ler campo que não existe mais", () => {
+  const p = promptSistema();
+  assert.doesNotMatch(p, /`esquema`/, "ainda cita o esquema, que não vai no contexto");
+  assert.doesNotMatch(p, /JSON/, "ainda chama o dossiê de JSON");
+  assert.doesNotMatch(p, /`resumo`/, "cita a chave em vez da seção RESUMO");
 });
 
 ok("o dossiê avisa que a aritmética já foi feita", () => {

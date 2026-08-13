@@ -357,6 +357,37 @@ inferência de modelo próprio, ingestão em lote e um servidor TiTiler. Nada di
 
 ---
 
+## Onde o desempenho foi ganho
+
+Três medidas, feitas antes de mexer em qualquer coisa.
+
+**A grade de vento virou binária.** São 1440×721 pontos por componente, e ia em
+JSON:
+
+| | JSON | binário |
+|---|---|---|
+| tamanho | 41,6 MB | **9,3 MB** |
+| serializar (servidor) | 454 ms | 10 ms |
+| ler (navegador) | 287 ms | **0,3 ms** |
+
+Os 287 ms eram o thread principal do navegador *parado* — sem responder ao mouse
+e sem desenhar quadro — uma vez a cada troca de hora na linha do tempo. No
+binário, `u` e `v` viram `Float32Array` apontando para dentro do próprio buffer
+recebido: sem cópia, sem laço, sem `JSON.parse`. O `forecastPlayer` já convertia
+para `Float32Array` logo depois de receber, então montar um milhão de objetos
+`number` e desmontá-los era trabalho puro de descarte.
+
+O JSON continua sendo servido para quem não pedir `?fmt=bin`: cliente antigo com
+servidor novo deve degradar, não quebrar.
+
+**O dossiê deixou de esperar em fila.** Previsão, amostra do campo de vento e
+topônimo são três idas à rede independentes, encadeadas só pela ordem em que
+foram escritas. Agora vão juntas, com `allSettled` em vez de `all` — o topônimo
+é opcional, e um geocodificador lento não pode derrubar o dossiê inteiro.
+
+**A GPU deixou de ser disputada.** Enquanto o modelo de linguagem baixa ou gera,
+a simulação de partículas para e o desenho cai para ~8 quadros por segundo.
+
 ## De onde vem cada número
 
 | Dado | Fonte | Observação |

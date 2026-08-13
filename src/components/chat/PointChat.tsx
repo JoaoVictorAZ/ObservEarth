@@ -5,13 +5,15 @@
 // -----------------------------------------------------------------------------
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { GripVertical, X, Minus, RotateCcw } from "lucide-react";
+import { GripVertical, X, Minus, RotateCcw, Layers } from "lucide-react";
 import {
-  motor, MODELOS, detectarCapacidade,
+  motor, MotorLocal, MODELOS, detectarCapacidade,
   type Capacidade, type EstadoMotor,
 } from "../../llm/engine";
 import { useChatStore } from "../../store/chatStore";
 import { fecharResposta } from "../../llm/resposta";
+import { dossieParaTexto, tokensAprox } from "../../llm/contexto";
+import { explicarFalhaGpu } from "../../llm/falhas";
 import { useWindowStore } from "../../store/windowStore";
 import { useDialog } from "../../hooks/useDialog";
 import { arrastar, travar, MOVER } from "../../arrasto";
@@ -193,6 +195,22 @@ export function PointChat({ lat, lng, date, hour, onFechar, onOrganizarJanelas }
     } catch { /* erro já publicado pelo motor */ }
   }, [modeloEscolhido, setModeloCarregado, addMsg]);
 
+  /**
+   * VOLTA PARA A LISTA DE MODELOS.
+   *
+   * Isto não existia. Depois de carregar um modelo, `pronto` virava true e a
+   * tela de escolha desaparecia para sempre — inclusive quando o modelo
+   * escolhido não cabia na GPU e nada mais funcionava. O único jeito de trocar
+   * era recarregar a página, e nem isso era dito em lugar nenhum.
+   */
+  const trocarModelo = useCallback(async (aviso?: string) => {
+    abortRef.current?.abort();
+    await motor.descarregar();
+    setModeloCarregado(null);
+    setProgresso({ fase: "ocioso" });
+    if (aviso) addMsg({ autor: "sistema", texto: aviso });
+  }, [setModeloCarregado, addMsg]);
+
   const enviar = useCallback(async () => {
     const pergunta = entrada.trim();
     if (!pergunta || gerando || !dossie || !motor.pronto) return;
@@ -204,13 +222,20 @@ export function PointChat({ lat, lng, date, hour, onFechar, onOrganizarJanelas }
 
     const sistema = String(dossie.promptSistema ?? "");
     const { promptSistema: _o, ...dados } = dossie;
+
+    // O dossiê vai como TEXTO, não como JSON cru. Medido no mesmo ponto do
+    // print: 3.783 caracteres de JSON contra 1.667 de texto, 56% a menos, sem
+    // perder um número sequer. Ver src/llm/contexto.ts para o porquê.
+    const corpo = dossieParaTexto(dados);
     const contexto = [
       { role: "system" as const, content: sistema },
-      { role: "user" as const, content:
-        `DOSSIÊ (JSON):\n${JSON.stringify(dados)}\n\nPERGUNTA: ${pergunta}` },
+      { role: "user" as const, content: `${corpo}\n\nPERGUNTA: ${pergunta}` },
     ];
+    const tokensEnviados = tokensAprox(sistema + corpo + pergunta);
 
     let acc = "";
+    let motivo: string | null = null;
+    motor.ultimoMotivo = null;
     addMsg({ autor: "modelo", texto: "" });
 
     // UMA ATUALIZAÇÃO POR QUADRO, NÃO UMA POR TOKEN.
@@ -236,15 +261,36 @@ export function PointChat({ lat, lng, date, hour, onFechar, onOrganizarJanelas }
         acc += t;
         agendar();
       }
+      // SEGUNDA TENTATIVA, SEM FLUXO.
+      //
+      // Se o fluxo terminou sem um único token e sem erro, a chamada direta ou
+      // funciona — e aí o problema estava no streaming — ou falha com uma
+      // mensagem de verdade. De um jeito ou de outro, deixa de ser "não veio
+      // nada" e vira informação.
+      if (!acc.trim() && !abortRef.current?.signal.aborted) {
+        const r = await motor.responderDeUmaVez(contexto);
+        acc = r.texto;
+        motivo = r.motivo ?? motor.ultimoMotivo;
+      }
     } catch (e) {
-      addMsg({ autor: "sistema", texto: `erro: ${e instanceof Error ? e.message : String(e)}` });
+      // Dispositivo perdido: não adianta tentar de novo, os pesos sumiram da
+      // VRAM. Descarrega e devolve o usuário à lista, com o motivo escrito.
+      if (MotorLocal.ehDispositivoPerdido(e)) {
+        void trocarModelo(
+          "A GPU perdeu o dispositivo — quase sempre é falta de VRAM para o " +
+          "modelo escolhido. O motor foi descarregado; escolha um modelo menor.",
+        );
+      } else {
+        addMsg({ autor: "sistema", texto: `erro: ${e instanceof Error ? e.message : String(e)}` });
+      }
     } finally {
       // A bolha nunca fica em branco: ver src/llm/resposta.ts
-      patchUltima(fecharResposta(acc, !!abortRef.current?.signal.aborted).texto);
+      patchUltima(fecharResposta(acc, !!abortRef.current?.signal.aborted,
+        { tokensEnviados, motivo: motivo ?? motor.ultimoMotivo }).texto);
       setGerando(false);
       abortRef.current = null;
     }
-  }, [entrada, gerando, dossie, addMsg, patchUltima]);
+  }, [entrada, gerando, dossie, addMsg, patchUltima, trocarModelo]);
 
   const lugar = (dossie?.ponto as { lugar?: string } | undefined)?.lugar;
   const pronto = modeloCarregado != null;
@@ -278,6 +324,24 @@ export function PointChat({ lat, lng, date, hour, onFechar, onOrganizarJanelas }
           </span>
         </div>
         <div className="ptchat-botoes-topo">
+          {/* O CAMINHO DE VOLTA.
+              Ficava só a tela de escolha, e ela sumia assim que um modelo
+              carregava — inclusive quando o modelo não cabia na GPU e nada
+              mais respondia. Recarregar a página era a única saída, e não
+              estava escrito em lugar nenhum. */}
+          {pronto && (
+            <button
+              type="button"
+              className="ptchat-btn-topo"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); void trocarModelo(); }}
+              disabled={gerando}
+              title="Descarregar este modelo e voltar à lista"
+              aria-label="Trocar de modelo"
+            >
+              <Layers size={13} strokeWidth={1.6} />
+            </button>
+          )}
           <button
             type="button"
             className="ptchat-btn-topo"
@@ -360,7 +424,27 @@ export function PointChat({ lat, lng, date, hour, onFechar, onOrganizarJanelas }
                 </button>
               )}
 
-              {progresso.fase === "erro" && <p className="ptchat-alerta">{progresso.mensagem}</p>}
+              {/* O ERRO CRU DIZIA O QUE, NÃO O QUE FAZER.
+                  Um caminho do Dawn e um código hexadecimal, mostrados dentro
+                  do seletor de modelos, sugerem que a culpa é do modelo — e a
+                  pessoa desce a lista inteira sem sair do lugar. */}
+              {progresso.fase === "erro" && (() => {
+                const exp = explicarFalhaGpu(progresso.mensagem);
+                if (!exp) return <p className="ptchat-alerta">{progresso.mensagem}</p>;
+                return (
+                  <div className="ptchat-alerta">
+                    <p>{exp.causa}</p>
+                    <p><strong>{exp.acao}</strong></p>
+                    {!exp.trocarModeloAjuda && (
+                      <p>Trocar de modelo não resolve este caso.</p>
+                    )}
+                    <details>
+                      <summary>mensagem original do navegador</summary>
+                      <code>{progresso.mensagem}</code>
+                    </details>
+                  </div>
+                );
+              })()}
               <small className="ptchat-rodape">
                 Baixa uma vez e fica em cache do navegador. Roda 100% local via WebGPU.
               </small>

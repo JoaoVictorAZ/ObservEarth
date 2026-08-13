@@ -73,11 +73,22 @@ export interface Capacidade {
 }
 
 /**
- * Descobre o que o dispositivo comporta ANTES de baixar gigabytes.
+ * O QUE DÁ PARA SABER ANTES DE BAIXAR GIGABYTES — que é pouco.
  *
- * `maxBufferSize` do WebGPU é o limite mais confiável exposto ao navegador —
- * não é a VRAM total, mas escala com ela e é o que de fato limita um modelo
- * grande. Chutar alto e falhar depois de 4,6 GB baixados seria cruel.
+ * A versão anterior lia `maxBufferSize` do adaptador e tratava como se fosse
+ * VRAM: "não é a VRAM total, mas escala com ela". Isso está errado.
+ * `maxBufferSize` é o teto de UM buffer, e a maioria das implementações reporta
+ * o mesmo 2 GiB do padrão independentemente da placa. Numa GPU de 4 GB e numa
+ * de 24 GB o número sai igual.
+ *
+ * O resultado prático foi recomendar o 8B — 4,9 GB de pesos — para uma placa
+ * que não aguentava, e a geração morrer com "Device was lost", sem exceção
+ * nenhuma no nosso código: zero token, bolha vazia, nenhuma pista.
+ *
+ * WebGPU NÃO expõe VRAM. Então este código para de fingir que mede: recomenda
+ * um modelo que cabe na maioria das máquinas, diz que o limite não é
+ * observável, e o resto é o usuário poder subir de modelo e VOLTAR se der
+ * errado — que é a parte que faltava na interface.
  */
 export async function detectarCapacidade(): Promise<Capacidade> {
   const gpu = (navigator as unknown as { gpu?: unknown }).gpu;
@@ -100,21 +111,21 @@ export async function detectarCapacidade(): Promise<Capacidade> {
       };
     }
     const lim = adapter.limits;
-    // O maior buffer alocável é o teto prático para os pesos do modelo.
     const maxMB = Math.floor(Number(lim.maxBufferSize ?? 0) / (1024 * 1024));
-    // Margem: o globo já está usando GPU. Reservar ~20% evita competir com as
-    // texturas de vento e os alvos de rastro, que também vivem lá.
-    const util = Math.floor(maxMB * 0.8);
 
-    const escolhido = MODELOS.find((m) => m.vramMB <= util) ?? MODELOS[MODELOS.length - 1];
+    // Recomendação conservadora: o maior modelo cujos pesos cabem com folga em
+    // 4 GB de VRAM, que é o piso comum de placa dedicada. Não é medição — é uma
+    // aposta declarada como aposta.
+    const escolhido = MODELOS.find((m) => m.vramMB <= 2600) ?? MODELOS[MODELOS.length - 1];
     return {
       webgpu: true,
       vramMB: maxMB,
       recomendado: escolhido,
       motivo:
-        escolhido === MODELOS[0]
-          ? `dispositivo comporta o 8B (${maxMB} MB de buffer máximo)`
-          : `8B não cabe em ${maxMB} MB; recuando para ${escolhido.rotulo}`,
+        `WebGPU disponível. A quantidade de VRAM não é exposta ao navegador, ` +
+        `então isto é uma sugestão, não uma medida: ${escolhido.rotulo} cabe na ` +
+        `maioria das placas. Modelos maiores rendem melhor, e se a GPU não ` +
+        `aguentar você volta aqui e desce um degrau.`,
     };
   } catch (e) {
     return {
@@ -204,17 +215,74 @@ export class MotorLocal {
     sinal?: AbortSignal
   ): AsyncGenerator<string> {
     if (!this.engine) throw new Error("motor não carregado");
-    const fluxo = await this.engine.chat.completions.create({
+    const eng = this.engine;
+
+    // INTERROMPER O LAÇO NÃO INTERROMPE O MODELO.
+    //
+    // O `break` abaixo sai do `for await`, mas o motor do WebLLM continua
+    // gerando em segundo plano — ocupando a GPU e deixando o próprio motor
+    // ocupado. A geração SEGUINTE encontra um motor no meio de outra coisa, e o
+    // resultado é uma resposta vazia sem erro nenhum. `interruptGenerate` é o
+    // que de fato para.
+    const parar = () => { void eng.interruptGenerate?.().catch?.(() => {}); };
+    sinal?.addEventListener("abort", parar, { once: true });
+
+    try {
+      const fluxo = await eng.chat.completions.create({
+        messages: mensagens,
+        stream: true,
+        temperature: 0.2,   // baixo de propósito: a tarefa é ler número, não criar
+        max_tokens: 700,
+      });
+      for await (const parte of fluxo) {
+        if (sinal?.aborted) break;
+        const escolha = parte.choices?.[0];
+        if (escolha?.finish_reason) this.ultimoMotivo = escolha.finish_reason;
+        const t = escolha?.delta?.content;
+        if (t) yield t;
+      }
+    } finally {
+      sinal?.removeEventListener("abort", parar);
+    }
+  }
+
+  /** Por que a última geração parou: "stop", "length", "abort"… */
+  ultimoMotivo: string | null = null;
+
+  /**
+   * A mesma pergunta, sem fluxo.
+   *
+   * Existe para o caso em que o fluxo termina sem entregar um único token e sem
+   * lançar erro — situação em que a única informação disponível era "não veio
+   * nada", que não diz a ninguém o que fazer. Uma chamada direta ou funciona,
+   * e aí o problema estava no fluxo, ou falha com uma mensagem de verdade.
+   */
+  async responderDeUmaVez(
+    mensagens: { role: "system" | "user" | "assistant"; content: string }[]
+  ): Promise<{ texto: string; motivo: string | null }> {
+    if (!this.engine) throw new Error("motor não carregado");
+    const r = await this.engine.chat.completions.create({
       messages: mensagens,
-      stream: true,
-      temperature: 0.2,   // baixo de propósito: a tarefa é ler número, não criar
+      stream: false,
+      temperature: 0.2,
       max_tokens: 700,
     });
-    for await (const parte of fluxo) {
-      if (sinal?.aborted) break;
-      const t = parte.choices?.[0]?.delta?.content;
-      if (t) yield t;
-    }
+    const escolha = (r as { choices?: { message?: { content?: string }; finish_reason?: string }[] }).choices?.[0];
+    return { texto: escolha?.message?.content ?? "", motivo: escolha?.finish_reason ?? null };
+  }
+
+  /**
+   * A GPU perdeu o dispositivo?
+   *
+   * "Device was lost" é o fim da linha para o motor: os pesos foram embora da
+   * VRAM e nenhuma chamada seguinte vai funcionar. O WebLLM escreve isso no
+   * console e mais nada — do nosso lado a geração simplesmente termina sem um
+   * token e sem exceção, que era o sintoma sem pista nenhuma.
+   */
+  static ehDispositivoPerdido(e: unknown): boolean {
+    const m = (e instanceof Error ? e.message : String(e ?? "")).toLowerCase();
+    return m.includes("device was lost") || m.includes("device is lost")
+        || m.includes("devicelost") || m.includes("gpudevicelostinfo");
   }
 
   async descarregar() {

@@ -22,7 +22,17 @@ export interface Fecho {
   aviso: boolean;
 }
 
-export function fecharResposta(acumulado: string, abortado: boolean): Fecho {
+/** O que se sabe sobre a geração, para o aviso não ser um chute. */
+export interface Diagnostico {
+  /** tokens estimados do que foi enviado */
+  tokensEnviados?: number;
+  /** `finish_reason` do modelo: "stop", "length", "abort"… */
+  motivo?: string | null;
+}
+
+export function fecharResposta(
+  acumulado: string, abortado: boolean, diag: Diagnostico = {},
+): Fecho {
   const t = acumulado.trim();
 
   if (t) {
@@ -33,13 +43,27 @@ export function fecharResposta(acumulado: string, abortado: boolean): Fecho {
       : { texto: acumulado, aviso: false };
   }
 
-  return abortado
-    ? { texto: "Interrompido antes da primeira palavra.", aviso: true }
-    : {
-        texto:
-          "O modelo terminou sem escrever nada. Costuma ser contexto grande " +
-          "demais para a janela dele — tente uma pergunta mais direta, ou um " +
-          "modelo maior.",
-        aviso: true,
-      };
+  if (abortado) return { texto: "Interrompido antes da primeira palavra.", aviso: true };
+
+  // O AVISO DIZ O QUE SE SABE, E SÓ ISSO.
+  //
+  // A primeira versão daqui afirmava "costuma ser contexto grande demais —
+  // tente um modelo maior". As duas metades estavam erradas: o usuário já
+  // estava no maior modelo da lista, e o dossiê medido dava cerca de 1.100
+  // tokens numa janela de 4.096. Foi um palpite vestido de diagnóstico, que é
+  // pior que não dizer nada — manda a pessoa perseguir a causa errada.
+  const partes = ["O modelo terminou sem escrever nada."];
+  if (diag.motivo) partes.push(`Motivo relatado pelo modelo: "${diag.motivo}".`);
+  if (diag.tokensEnviados) partes.push(`Foram enviados ~${diag.tokensEnviados} tokens.`);
+  // O caso mais comum, e o que nos custou várias rodadas para identificar: a
+  // GPU perdeu o dispositivo por falta de VRAM. Do nosso lado isso chega como
+  // silêncio, não como erro — então o aviso precisa apontar o console, onde a
+  // mensagem existe, e o botão que resolve.
+  partes.push(
+    "Se o console do navegador mostrar \"Device was lost\", a GPU não aguentou " +
+    "este modelo: use o botão de trocar modelo, no topo, e desça um degrau. " +
+    "Fora isso, reformular a pergunta costuma destravar.",
+  );
+
+  return { texto: partes.join(" "), aviso: true };
 }
