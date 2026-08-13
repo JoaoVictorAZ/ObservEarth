@@ -11,51 +11,6 @@ inventado para a interface não ficar vazia. Um campo sem fonte aparece como
 "sem dado", e é assim de propósito — pessoas podem tomar decisões olhando para
 isto.
 
----
-
-## Sumário
-
-- [Antes de começar](#antes-de-começar)
-- [Instalação em três minutos](#instalação-em-três-minutos)
-- [Seus primeiros cinco minutos no app](#seus-primeiros-cinco-minutos-no-app)
-- [A interface, painel por painel](#a-interface-painel-por-painel)
-- [Os dois modos](#os-dois-modos)
-- [Atalhos](#atalhos)
-- [A stack](#a-stack)
-- [De onde vem cada número](#de-onde-vem-cada-número)
-- [O orçamento de API](#o-orçamento-de-api)
-- [Chaves e variáveis de ambiente](#chaves-e-variáveis-de-ambiente)
-- [A API do servidor](#a-api-do-servidor)
-- [Licença e atribuição](#licença-e-atribuição)
-- [Estrutura do repositório](#estrutura-do-repositório)
-- [Testes](#testes)
-- [Limites conhecidos](#limites-conhecidos)
-- [Quando algo dá errado](#quando-algo-dá-errado)
-
----
-
-## Antes de começar
-
-**Node 22 ou superior.** Não é preciosismo de versão: o servidor usa `node:sqlite`
-(`DatabaseSync`), que só existe a partir do Node 22. Em Node 20 o processo morre
-na primeira linha do `server/store.js`.
-
-```bash
-node -v   # precisa mostrar v22.x ou maior
-```
-
-**Um navegador com WebGL2.** Qualquer Chrome, Edge, Firefox ou Safari dos
-últimos anos serve. O globo e as partículas de vento rodam inteiramente na GPU.
-
-**WebGPU, só se você quiser o console de IA.** O terminal LLM roda o modelo
-*dentro do navegador*, sem servidor de inferência. Isso exige WebGPU (Chrome ou
-Edge 113+, ou Safari 18+). Sem WebGPU o resto do app funciona normalmente —
-apenas o console avisa que não pode carregar.
-
-**Python é opcional.** A pasta `pipeline/` contém experimentos de treino de
-modelo próprio e ingestão em lote. Nada disso é necessário para rodar o app.
-
----
 
 ## Instalação em três minutos
 
@@ -64,15 +19,13 @@ npm install
 npm run dev
 ```
 
-Abra `http://localhost:5173`.
-
 O comando `dev` sobe duas coisas ao mesmo tempo, com saídas coloridas
 separadas: o **servidor** na porta 3001 (azul) e o **frontend** Vite na 5173
 (verde). Se preferir dois terminais:
 
 ```bash
-npm run server   # backend, porta 3001
-npm run web      # frontend, porta 5173
+npm run server   
+npm run web     
 ```
 
 **Nenhuma chave de API é necessária para começar.** Tudo que o app consome por
