@@ -9,6 +9,7 @@ import { usePerfStore } from "../../store/perfStore";
 import { useTimelineStore } from "../../store/timelineStore";
 import { useLayerStore } from "../../store/layerStore";
 import { useProbeStore, type Probe } from "../../store/probeStore";
+import { useChatStore } from "../../store/chatStore";
 import { GlobeEngine } from "../../globe";
 import { MapEngine } from "../../mapa2d";
 import { temRelevo } from "../../tipos";
@@ -46,6 +47,7 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
   } = useLayerStore();
 
   const { setProbe, setProbing } = useProbeStore();
+  const gpuOcupada = useChatStore((s) => s.ocupado);
 
   useImperativeHandle(ref, () => ({
     flyTo: (lat: number, lng: number) => {
@@ -370,6 +372,9 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
   }, [hycomOn, setHycomInfo, geracao]);
 
   useEffect(() => { engRef.current?.setDayNight(dayNight); }, [dayNight, geracao]);
+
+  // Cede a GPU enquanto o modelo de linguagem baixa ou gera. Ver setPausado.
+  useEffect(() => { engRef.current?.setPausado(gpuOcupada); }, [gpuOcupada, geracao]);
 
   // Relevo: capacidade que só o mapa plano tem. O globo simplesmente não
   // recebe a chamada — e o painel diz por quê, em vez de oferecer um

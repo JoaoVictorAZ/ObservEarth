@@ -385,6 +385,8 @@ export class MapEngine implements MotorGeo {
   readonly perf = new PerfMonitor();
   private baseDpr = 1;
   private relogio = 0;
+  private pausado = false;
+  private quadrosCedidos = 0;
 
   // ------------------------------------------------------------------ ciclo
 
@@ -450,6 +452,22 @@ export class MapEngine implements MotorGeo {
       if (this.imagem && this.imgFade < 1 && this.imgTex) {
         this.imgFade = Math.min(1, this.imgFade + dt * 2.5);
         this.imagem.material.uniforms.uFade.value = this.imgFade;
+      }
+
+      // GPU CEDIDA AO MODELO DE LINGUAGEM.
+      //
+      // Enquanto o LLM baixa ou gera, a simulação de partículas para por
+      // completo e o desenho cai para ~8 quadros por segundo. O mapa continua
+      // respondendo ao mouse, mas devolve quase toda a placa para quem precisa
+      // dela. Ver `setPausado` em src/tipos.ts.
+      if (this.pausado) {
+        this.quadrosCedidos++;
+        if (this.quadrosCedidos % 8 === 0 && this.renderer) {
+          this.renderer.render(this.scene, this.camera);
+        }
+        this.perf.end(t, this.renderer ?? undefined);
+        this.raf = requestAnimationFrame(passo);
+        return;
       }
 
       // O WindGPU alterna entre dois alvos de render a cada quadro (ping-pong),
@@ -1329,6 +1347,16 @@ export class MapEngine implements MotorGeo {
 
   /** No plano, "rotação automática" é deriva em longitude. */
   setAutoRotate(on: boolean) { this.girando = on; }
+
+  setPausado(on: boolean) {
+    this.pausado = on;
+    this.quadrosCedidos = 0;
+    // Ao voltar, o rastro acumulado está velho: as partículas ficaram paradas
+    // enquanto o campo continuou o mesmo, então os riscos viraram pontos. É
+    // mais honesto recomeçar do que descongelar um rastro sem movimento.
+    if (!on) this.windGPU?.setJanela(this.janelaVento.x, this.janelaVento.y,
+      this.janelaVento.w, this.janelaVento.h);
+  }
 
   // ----------------------------------------------------------------- avulsos
 

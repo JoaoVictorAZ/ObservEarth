@@ -11,6 +11,7 @@ import {
   type Capacidade, type EstadoMotor,
 } from "../../llm/engine";
 import { useChatStore } from "../../store/chatStore";
+import { fecharResposta } from "../../llm/resposta";
 import { useWindowStore } from "../../store/windowStore";
 import { useDialog } from "../../hooks/useDialog";
 import { arrastar, travar, MOVER } from "../../arrasto";
@@ -58,7 +59,7 @@ export function PointChat({ lat, lng, date, hour, onFechar, onOrganizarJanelas }
   const {
     modeloCarregado, setModeloCarregado,
     modeloEscolhido, setModeloEscolhido,
-    msgs, addMsg, patchUltima, trocarPonto,
+    msgs, addMsg, patchUltima, trocarPonto, setOcupado,
   } = useChatStore();
 
   const { activeWindow, focusWindow, minimizedWindows, toggleMinimize } = useWindowStore();
@@ -164,6 +165,22 @@ export function PointChat({ lat, lng, date, hour, onFechar, onOrganizarJanelas }
 
   useEffect(() => { fimRef.current?.scrollIntoView({ block: "end" }); }, [msgs]);
 
+  // ---------------------------------------------------------------------
+  // AVISA QUE A GPU ESTÁ OCUPADA.
+  //
+  // Baixar e gerar acontecem na MESMA placa que desenha o planeta. Sem este
+  // sinal, o motor gráfico continuava com 40 mil partículas a 60 Hz e o
+  // console ficava lento a ponto de parecer travado.
+  //
+  // A limpeza devolve a GPU mesmo se a janela for fechada no meio de uma
+  // geração — senão o mapa ficaria pausado para sempre.
+  // ---------------------------------------------------------------------
+  const ocupada = gerando || progresso.fase === "baixando";
+  useEffect(() => {
+    setOcupado(ocupada);
+    return () => setOcupado(false);
+  }, [ocupada, setOcupado]);
+
   const carregar = useCallback(async () => {
     if (!modeloEscolhido) return;
     try {
@@ -195,14 +212,35 @@ export function PointChat({ lat, lng, date, hour, onFechar, onOrganizarJanelas }
 
     let acc = "";
     addMsg({ autor: "modelo", texto: "" });
+
+    // UMA ATUALIZAÇÃO POR QUADRO, NÃO UMA POR TOKEN.
+    //
+    // `patchUltima` a cada token re-renderizava a janela inteira — a lista de
+    // mensagens, o cabeçalho, o rodapé — setecentas vezes numa resposta. Isso
+    // ocupa a CPU exatamente enquanto a GPU está gerando, e era metade da
+    // travada. Agora o texto se acumula e o React vê no máximo 60 versões por
+    // segundo, que é o teto do que a tela mostra de qualquer forma.
+    let pendente = false;
+    const publicar = () => {
+      pendente = false;
+      patchUltima(acc);
+    };
+    const agendar = () => {
+      if (pendente) return;
+      pendente = true;
+      requestAnimationFrame(publicar);
+    };
+
     try {
       for await (const t of motor.responder(contexto, abortRef.current.signal)) {
         acc += t;
-        patchUltima(acc);
+        agendar();
       }
     } catch (e) {
       addMsg({ autor: "sistema", texto: `erro: ${e instanceof Error ? e.message : String(e)}` });
     } finally {
+      // A bolha nunca fica em branco: ver src/llm/resposta.ts
+      patchUltima(fecharResposta(acc, !!abortRef.current?.signal.aborted).texto);
       setGerando(false);
       abortRef.current = null;
     }

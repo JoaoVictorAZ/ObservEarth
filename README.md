@@ -86,7 +86,7 @@ Outros comandos:
 |---|---|
 | `npm run build` | Checa tipos (`tsc -b`) e gera o bundle de produção em `dist/` |
 | `npm run preview` | Serve o `dist/` para conferir o build |
-| `npm test` | Roda a suíte inteira (~494 verificações) |
+| `npm test` | Roda a suíte inteira (~501 verificações) |
 | `npm run dev:all` | `dev` + o servidor Python de modelo próprio |
 | `npm run ingest` | Ingestão em lote de dados abertos (pipeline Python) |
 
@@ -332,6 +332,13 @@ do ponto carregado no contexto. Cinco opções:
 A detecção de capacidade mede a VRAM disponível e sugere o maior que cabe —
 propositalmente por baixo, porque falhar depois de baixar 4,6 GB seria cruel. O
 download só acontece quando você clica; abrir o painel não baixa nada.
+
+**Enquanto o modelo baixa ou gera, o planeta para de ser desenhado.** Não é
+economia de bateria: o modelo roda por WebGPU na *mesma placa* que simula 40 mil
+partículas com uma textura de rastro de 4096×2048 em ping-pong a 60 Hz. Os dois
+disputando a GPU deixavam o console lento a ponto de parecer travado. Pausado, o
+mapa continua respondendo ao mouse a ~8 quadros por segundo e devolve o resto da
+placa para quem precisa dela.
 
 ---
 
@@ -593,7 +600,7 @@ escolhida ou descartada).
 npm test
 ```
 
-Cerca de **494 verificações** em 32 arquivos, sem framework: só o `assert`
+Cerca de **501 verificações** em 33 arquivos, sem framework: só o `assert`
 nativo do Node. Arquivos que importam TypeScript rodam com
 `--experimental-strip-types`.
 
@@ -671,6 +678,11 @@ janela. Os limites de hora e minuto zeram sozinhos.
 **A sonda nasceu colada num canto estranho.**
 A posição vem do `localStorage`. O botão de reset no cabeçalho dela resolve, e
 existe também um "organizar janelas" que limpa as posições salvas.
+
+**O console LLM está lento.**
+Confira se o mapa realmente pausou enquanto ele gera — é o que devolve a GPU. Se
+mesmo assim estiver pesado, o modelo escolhido provavelmente não cabe com folga
+na sua VRAM: desça um degrau na lista.
 
 **O console LLM não carrega.**
 Sem WebGPU, ele não roda. Chrome ou Edge 113+, ou Safari 18+. Se houver WebGPU
