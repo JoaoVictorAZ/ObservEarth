@@ -12,13 +12,6 @@ export const ESQUEMA = {
 /** número com uma casa, preservando o nulo */
 const r1 = (x) => (x == null || !Number.isFinite(x) ? null : +x.toFixed(1));
 
-/**
- * Estatísticas de uma série, ignorando ausências — e DIZENDO quantas foram.
- *
- * `n` e `ausentes` não são detalhe: uma média de 2 valores num intervalo de 24
- * horas não significa a mesma coisa que uma média de 24, e o modelo só tem como
- * saber disso se o número estiver ali.
- */
 function estatisticas(valores) {
   const bons = valores.filter((v) => v != null && Number.isFinite(v));
   if (!bons.length) {
@@ -27,11 +20,6 @@ function estatisticas(valores) {
   const min = Math.min(...bons);
   const max = Math.max(...bons);
   const media = bons.reduce((a, b) => a + b, 0) / bons.length;
-
-  // Variação entre a PRIMEIRA e a ÚLTIMA leitura válida — não entre min e max.
-  // São perguntas diferentes: "quanto mudou do começo ao fim" e "qual a
-  // amplitude". Confundi-las já produziu relatório dizendo que a temperatura
-  // subiu 12° num dia em que ela subiu e desceu de volta.
   const primeiro = bons[0], ultimo = bons[bons.length - 1];
   const delta = ultimo - primeiro;
 
@@ -44,10 +32,6 @@ function estatisticas(valores) {
   };
 }
 
-/**
- * Delta circular para direção do vento — de novo a lição do 350°→10°.
- * A diferença entre 350 e 10 é 20 graus, não 340.
- */
 function deltaAngular(a, b) {
   if (a == null || b == null) return null;
   let d = ((b - a + 540) % 360) - 180;
@@ -150,15 +134,6 @@ export function montarDossie(o) {
   };
 }
 
-/**
- * Instruções para o modelo de linguagem.
- *
- * Vai junto do dossiê e é deliberadamente restritivo. O usuário escolheu que o
- * chat apenas DESCREVA e COMPARE — não interprete meteorologia. Um modelo
- * pequeno rodando no navegador afirmando mecanismo físico ("a queda de pressão
- * indica frente fria") soaria idêntico a um meteorologista e não teria como ser
- * conferido por quem lê.
- */
 export function promptSistema() {
   return [
     "Você lê um dossiê de medições de um ponto geográfico e responde perguntas sobre ele.",
@@ -171,18 +146,6 @@ export function promptSistema() {
     "5. Não explique causas meteorológicas nem preveja o que não está no dossiê.",
     "6. Se a informação não estiver no dossiê, diga que não está. Não deduza.",
     "",
-    // ---------------------------------------------------------------------
-    // A REGRA 7 EXISTE POR UM SILÊNCIO OBSERVADO.
-    //
-    // Perguntado sobre "insights de clima", o modelo devolvia ZERO tokens. Não
-    // era falta de memória nem contexto grande: as regras 5 e 6 proíbem
-    // interpretar, deduzir, explicar causa e prever — que é exatamente o que
-    // "insights" pede. Sem uma saída permitida, o modelo emite fim de texto na
-    // primeira posição, e a tela mostra uma bolha vazia.
-    //
-    // Um conjunto de regras que só diz o que NÃO fazer precisa terminar
-    // dizendo o que fazer quando nada é permitido.
-    // ---------------------------------------------------------------------
     "7. NUNCA responda vazio. Se a pergunta pede interpretação, causa, previsão",
     "   ou opinião, responda em uma frase que este terminal descreve medições e",
     "   não faz diagnóstico — e ofereça o que ele PODE fazer com este dossiê:",

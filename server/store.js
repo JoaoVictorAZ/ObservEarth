@@ -5,14 +5,41 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DB_DIR = join(HERE, "..", "data");
-const DB_PATH = process.env.DB_PATH || join(DB_DIR, "observatorio.db");
 
+/**
+ * O CAMINHO DO BANCO É LIDO NA ABERTURA, NÃO NA IMPORTAÇÃO.
+ *
+ * Ele já foi uma constante de módulo, e isso era uma armadilha de ORDEM DE
+ * IMPORTAÇÃO: em ESM os imports são avaliados antes de qualquer linha do
+ * módulo que importa, então um teste que faz
+ *
+ *     import { closeStore } from "../server/store.js";
+ *     process.env.DB_PATH = "/tmp/teste.db";        // tarde demais
+ *
+ * ficava com o caminho de PRODUÇÃO gravado na constante. O teste então lia o
+ * `data/observatorio.db` de verdade, encontrava respostas em cache de uma
+ * sessão anterior do servidor, e as rotas devolviam sem nunca tocar a rede —
+ * fazendo cair justamente as verificações que conferem a URL requisitada.
+ *
+ * Isso aconteceu. O sintoma foi três falhas em `test/rotas-analise.mjs` logo
+ * depois de acrescentar aquele import, e nada no erro apontava para banco.
+ *
+ * `test/rotas-analise.mjs` já documenta que um teste que depende do que ficou
+ * da última execução não mede o código, mede a ordem em que se rodou. Ler o
+ * ambiente na abertura é o que torna essa promessa cumprível.
+ */
 let db = null;
+/** o caminho efetivamente aberto, para `/api/store` relatar a verdade */
+let caminhoAberto = null;
 
 export function openStore() {
   if (db) return db;
-  mkdirSync(DB_DIR, { recursive: true });
-  db = new DatabaseSync(DB_PATH);
+  const caminho = process.env.DB_PATH || join(DB_DIR, "observatorio.db");
+  caminhoAberto = caminho;
+  // Só cria o diretório do projeto quando é ele que vai ser usado: com
+  // DB_PATH apontando para o temporário, criar `data/` seria efeito colateral.
+  if (!process.env.DB_PATH) mkdirSync(DB_DIR, { recursive: true });
+  db = new DatabaseSync(caminho);
   db.exec(`PRAGMA journal_mode = WAL;`);
   db.exec(`PRAGMA synchronous = NORMAL;`);
 
@@ -160,7 +187,7 @@ export function archiveStats() {
     .get();
   const cacheRows = openStore().prepare(`SELECT COUNT(*) AS n FROM cache`).get();
   return {
-    path: DB_PATH,
+    path: caminhoAberto,
     bytes: size?.bytes ?? 0,
     cacheEntries: cacheRows?.n ?? 0,
     kinds: rows,
@@ -169,5 +196,6 @@ export function archiveStats() {
 
 export function closeStore() {
   try { db?.close(); } catch {  }
+  caminhoAberto = null;
   db = null;
 }

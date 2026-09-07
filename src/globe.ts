@@ -8,6 +8,13 @@ import * as THREE from "three";
 import { WindGPU } from "./windGPU";
 import { PerfMonitor, TIERS, type QualityTier, type FrameStats } from "./perf";
 import { EstadoAnimacao } from "./pausa";
+import { PiramideGlobo } from "./piramideGlobo";
+import { FronteirasGlobo } from "./fronteiras";
+import { calotaVisivel } from "./calota";
+import { ORDEM } from "./ordemDesenho";
+import { MalhaEscalar, type Escala as EscalaMalha } from "./malha/malha3d";
+import type { CampoEscalar } from "./malha/campo";
+import type { PontoCritico } from "./malha/extremos";
 
 const TEX = {
   day: "https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg",
@@ -24,14 +31,6 @@ import type {
   Quake, WindGrid, PlaceLabel, LabelSets, IsobarSet, Fire,
 } from "./tipos";
 export type { Quake, WindGrid, PlaceLabel, LabelSets, IsobarSet, Fire };
-
-interface PolyFeature {
-  type: string;
-  properties: { rank?: number; name?: string };
-  geometry: unknown;
-  /** centroide unitario, calculado uma vez para filtrar por hemisferio visivel */
-  _v?: [number, number, number];
-}
 
 /** rotulo pronto para o DOM: `tier` escolhe o estilo em index.css */
 type LabelDatum = PlaceLabel & {
@@ -202,6 +201,14 @@ export class GlobeEngine {
   private dayNight = true;
 
   // imagery
+  // A PIRÂMIDE é a resolução que acompanha o zoom; ver src/piramideGlobo.ts.
+  // A textura única continua existindo como PISO: ela cobre o planeta inteiro
+  // de uma vez e segura a imagem enquanto os tiles do nível novo não chegam.
+  //
+  // Quem sabe qual camada está escolhida é a própria pirâmide. Havia uma cópia
+  // do dia aqui (`imgDia`) só para uma guarda que deixou de existir quando as
+  // fronteiras passaram a usar esta mesma atualização de câmera.
+  private piramide: PiramideGlobo | null = null;
   private imgMesh: THREE.Mesh | null = null;
   private imgMat: THREE.ShaderMaterial | null = null;
   private imgTex: THREE.Texture | null = null;
@@ -226,6 +233,10 @@ export class GlobeEngine {
   private isobarData: IsobarSet | null = null;
   private isobarsOn = false;
 
+  // malha 3D do campo escalar: a camada de análise (ver src/malha/malha3d.ts)
+  private malha: MalhaEscalar | null = null;
+  private malhaOn = false;
+
   private clickFn: ((lat: number, lng: number) => void) | null = null;
 
   // rotulos e fronteiras com nivel de detalhe
@@ -235,13 +246,16 @@ export class GlobeEngine {
   // vetores unitarios pre-calculados: sem isso cada atualizacao de camera
   // refazia seno e cosseno para milhares de rotulos
   private lblVec = new Map<PlaceLabel, [number, number, number]>();
-  private bounds0: PolyFeature[] = [];
-  private bounds1: PolyFeature[] = [];
-  private statesRequested = false;
-  private statesLoading = false;
-  private statesFailed = 0;
+  /**
+   * As fronteiras deixaram de ser polígonos do three-globe.
+   *
+   * Eram 470 feições trianguladas e extrudadas para desenhar apenas o
+   * contorno — as duas faces preenchidas eram pintadas de transparente. Agora
+   * são linhas numa pirâmide de tiles, com resolução que acompanha o zoom.
+   * Ver `src/fronteiras.ts`.
+   */
+  private fronteiras: FronteirasGlobo | null = null;
   private noticeFn: ((msg: string | null) => void) | null = null;
-  private lodTier = -1;
 
   // desempenho
   readonly perf = new PerfMonitor();
@@ -282,19 +296,17 @@ export class GlobeEngine {
       // e um foco branco-incandescente ganharia um halo de outra temperatura.
       .ringColor((d: RingDatum) => (t: number) =>
         `rgba(${d.rgb ?? "249,115,22"},${(1 - t) * d.strength})`)
-      .polygonCapColor(() => "rgba(0,0,0,0)")
-      .polygonSideColor(() => "rgba(0,0,0,0)")
-      .polygonStrokeColor(() => "rgba(255,255,255,0.30)")
-      .polygonAltitude(0.003);
+;
 
     this.g.onGlobeClick(({ lat, lng }: { lat: number; lng: number }) =>
       this.clickFn?.(lat, lng)
     );
 
 
-    this.g.onPolygonClick((_p: unknown, _e: unknown, coords: { lat: number; lng: number }) => {
-      if (coords && Number.isFinite(coords.lat)) this.clickFn?.(coords.lat, coords.lng);
-    });
+    // `onPolygonClick` foi removido junto com os polígonos. Ele existia porque
+    // as feições cobriam a esfera e engoliam o clique antes de `onGlobeClick`
+    // ver — de brinde, sondar um ponto no meio do oceano nunca funcionou como
+    // sondar um ponto em terra. Sem polígonos, todo clique chega ao globo.
 
     const size = () => {
       if (!this.g || this.disposed) return;
@@ -329,10 +341,16 @@ export class GlobeEngine {
     });
 
     this.tuneRenderer();
+    const raio = this.g.getGlobeRadius();
+    this.piramide = new PiramideGlobo(this.g.scene(), { raio });
+    this.fronteiras = new FronteirasGlobo(this.g.scene(), { raio });
+    this.fronteiras.onAviso((m) => this.noticeFn?.(m));
+    this.malha = new MalhaEscalar(this.g.scene(), { raio });
     this.applyOcean();
     this.applySun();
     this.loop();
-    this.loadBoundaries();
+    // As fronteiras entram pela pirâmide, junto com a câmera. Ver atualizarPiramide.
+    this.atualizarPiramide(true);
     this.loadLabels();
   }
 
@@ -437,81 +455,6 @@ export class GlobeEngine {
     return [Math.cos(la) * Math.cos(ln), Math.sin(la), Math.cos(la) * Math.sin(ln)];
   }
 
-  /** centroide aproximado da feicao, so para teste de visibilidade */
-  private featureVec(f: PolyFeature): [number, number, number] {
-    const g = f.geometry as { type?: string; coordinates?: number[][][][] | number[][][] };
-    const polys = g?.type === "Polygon"
-      ? [g.coordinates as number[][][]]
-      : (g?.coordinates as number[][][][]) ?? [];
-    let sx = 0, sy = 0, n = 0;
-    for (const poly of polys) {
-      const ring = poly?.[0];
-      if (!ring) continue;
-      const step = Math.max(1, Math.floor(ring.length / 12));
-      for (let i = 0; i < ring.length; i += step) { sx += ring[i][0]; sy += ring[i][1]; n++; }
-    }
-    return n ? this.vecOf(sy / n, sx / n) : [0, 0, 0];
-  }
-
-  private async loadBoundaries() {
-    try {
-      const r = await fetch("/api/boundaries?level=0");
-      if (!r.ok || this.disposed) return;
-      const gj = await r.json();
-      if (this.disposed) return;
-      this.bounds0 = (gj.features ?? []) as PolyFeature[];
-      for (const f of this.bounds0) f._v = this.featureVec(f);
-
-      this.g
-        ?.polygonStrokeColor((d: PolyFeature) =>
-          d?.properties?.rank === 1 ? "rgba(190,215,245,0.65)" : "rgba(255,255,255,0.85)"
-        )
-        .polygonAltitude((d: PolyFeature) => (d?.properties?.rank === 1 ? 0.0036 : 0.0042));
-
-      this.applyLOD(true);
-    } catch { /* fronteiras sao enfeite: sem elas o globo continua util */ }
-  }
-
-
-  private async ensureStates() {
-    if (this.statesRequested || this.statesLoading) return;
-    if (this.statesFailed >= 3) return;              // desiste após 3, mas AVISA
-    this.statesLoading = true;
-    try {
-      const r = await fetch("/api/boundaries?level=1");
-      if (this.disposed) return;
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-
-      const gj = await r.json();
-      if (this.disposed) return;
-
-      const feats = (gj.features ?? []) as PolyFeature[];
-      if (!feats.length) throw new Error("resposta sem feições");
-
-      this.bounds1 = feats;
-      for (const f of this.bounds1) f._v = this.featureVec(f);
-      this.statesRequested = true;                   // só agora: houve sucesso
-      this.statesFailed = 0;
-      this.noticeFn?.(null);
-      this.applyLOD(true);
-    } catch (e) {
-      this.statesFailed++;
-      const msg = e instanceof Error ? e.message : String(e);
-      this.noticeFn?.(
-        this.statesFailed >= 3
-          ? `contornos estaduais indisponíveis (${msg}) — só países no mapa`
-          : `contornos estaduais falharam (${msg}); tentando de novo`
-      );
-      // nova tentativa com espera crescente: falha de CDN costuma ser passageira
-      if (this.statesFailed < 3) {
-        setTimeout(() => { if (!this.disposed) void this.ensureStates(); },
-          1500 * this.statesFailed);
-      }
-    } finally {
-      this.statesLoading = false;
-    }
-  }
-
   /** canal para a barra de status contar o que deu errado no globo */
   onNotice(fn: (msg: string | null) => void) { this.noticeFn = fn; }
 
@@ -562,6 +505,12 @@ export class GlobeEngine {
     const lat: number = pov?.lat ?? 0;
     const lng: number = pov?.lng ?? 0;
 
+    // A PIRÂMIDE VEM ANTES DO CORTE POR `viewKey`. Aquela chave é quantizada em
+    // 6° de latitude e longitude, granularidade pensada para rótulo — que não
+    // muda com um arrasto pequeno. Tile muda: no nível 7 um tile tem 1,4° de
+    // lado, e esperar 6° de movimento deixaria metade da tela sem imagem.
+    this.atualizarPiramide();
+
     const key = `${Math.round(lat / 6)}:${Math.round(lng / 6)}:${Math.round(alt * 20)}`;
     if (!force && key === this.viewKey) return;
     this.viewKey = key;
@@ -572,18 +521,6 @@ export class GlobeEngine {
     if (this.rawFiresAll.length) {
       this.selectFires();
       this.refreshPointsAndRings();
-    }
-
-    // ---- fronteiras -------------------------------------------------------
-    const tier = alt > LOD.regional ? 0 : alt > LOD.local ? 1 : 2;
-    if (tier >= 1) void this.ensureStates();
-
-    if (force || tier !== this.lodTier || tier >= 1) {
-      const polys: PolyFeature[] = tier === 0
-        ? this.bounds0
-        : [...this.bounds0, ...this.bounds1];
-      this.g.polygonsData(polys);
-      this.lodTier = tier;
     }
 
     // ---- rotulos ----------------------------------------------------------
@@ -731,7 +668,7 @@ export class GlobeEngine {
       });
       const geo = new THREE.SphereGeometry(this.g.getGlobeRadius() * 1.001, 128, 64);
       this.imgMesh = new THREE.Mesh(geo, this.imgMat);
-      this.imgMesh.renderOrder = 2;
+      this.imgMesh.renderOrder = ORDEM.IMAGEM;
       this.imgMesh.visible = false;
       this.g.scene().add(this.imgMesh);
     }
@@ -739,6 +676,18 @@ export class GlobeEngine {
 
     const my = this.imgToken;
     const day = date.toISOString().slice(0, 10);
+
+    // A PIRÂMIDE SÓ VALE PARA IMAGEM DE SATÉLITE, e a distinção é de dado, não
+    // de conveniência. O MODIS tem 250 m nativos e o VIIRS 375 m: uma textura
+    // global de 4096 px joga fora 97% desse detalhe, e recortar recupera. Um
+    // campo do GFS tem 0,25°, ou seja 1440 colunas — a textura de 4096 já
+    // amostra o campo quase três vezes acima da resolução dele. Pedir tiles
+    // ali seria ampliar pixel inventado e gastar cota para isso.
+    //
+    // `id` começando com "/" é uma URL pronta de campo; ver o comentário acima.
+    this.piramide?.definirCamada(id.startsWith("/") ? null : id, day);
+    this.piramide?.definirOpacidade(opacity);
+    this.atualizarPiramide(true);
     // `id` pode ser um identificador de camada OU uma URL pronta. Campos do GFS
     // dependem de data E HORA e vêm de outra rota; carregar a textura é
     // idêntico nos dois casos, então quem sabe montar o endereço é o chamador.
@@ -769,7 +718,13 @@ export class GlobeEngine {
           tex.anisotropy = Math.min(8, rnd.capabilities.getMaxAnisotropy());
         }
 
-        this.imgTex?.dispose();
+        this.piramide?.dispose();
+    this.piramide = null;
+    this.fronteiras?.dispose();
+    this.fronteiras = null;
+    this.malha?.dispose();
+    this.malha = null;
+    this.imgTex?.dispose();
         this.imgTex = tex;
         this.imgMat.uniforms.uMap.value = tex;
         this.imgMesh.visible = true;
@@ -780,6 +735,30 @@ export class GlobeEngine {
     );
   }
 
+  // ------------------------------------------------------------- malha 3D
+  // A camada de análise. Ver `src/malha/malha3d.ts` para o porquê de altura E
+  // cor, e `src/malha/extremos.ts` para o que os pinos marcam.
+
+  setMalha(campo: CampoEscalar | null, escala: EscalaMalha | null) {
+    this.malha?.definirCampo(campo, escala);
+    this.malha?.definirVisivel(this.malhaOn && !!campo);
+    this.wake();
+  }
+
+  setMalhaVisivel(on: boolean) {
+    this.malhaOn = on;
+    this.malha?.definirVisivel(on);
+    this.wake();
+  }
+
+  /** altura máxima como fração do raio; 0 achata a malha sobre a esfera */
+  setMalhaExagero(x: number) { this.malha?.definirExagero(x); this.wake(); }
+  setMalhaArame(on: boolean) { this.malha?.definirArame(on); this.wake(); }
+  setMalhaOpacidade(o: number) { this.malha?.definirOpacidade(o); this.wake(); }
+
+  /** pinos de mínimo, máximo e sela, no ponto refinado sub-célula */
+  setExtremos(pontos: PontoCritico[]) { this.malha?.marcarExtremos(pontos); this.wake(); }
+
   // ------------------------------------------------- sobreposicao termica
   setThermalOverlay(on: boolean, date: Date) {
     if (!on) { this.clearImagery(); return; }
@@ -788,11 +767,47 @@ export class GlobeEngine {
 
   setImageryOpacity(o: number) {
     if (this.imgMat) this.imgMat.uniforms.uOpacity.value = o;
+    this.piramide?.definirOpacidade(o);
   }
 
   private clearImagery() {
     if (this.imgMesh) this.imgMesh.visible = false;
     this.imgFade = 0;
+    this.piramide?.definirCamada(null, "");
+  }
+
+  /**
+   * Repõe os tiles para a câmera atual.
+   *
+   * Chamado a cada mudança de câmera, e por isso precisa ser barato quando não
+   * há nada a fazer: a `PiramideGlobo` sai na primeira linha se não houver
+   * camada, e `planoDeTiles` é aritmética sobre meia dúzia de números.
+   */
+  private atualizarPiramide(force = false) {
+    if (!this.g || this.disposed || !this.piramide) return;
+    // SEM GUARDA DE CAMADA AQUI, e isso mudou.
+    //
+    // Antes esta função saía cedo quando não havia imagem escolhida. As
+    // fronteiras existem SEMPRE, inclusive sobre o globo nu, e a guarda as
+    // congelaria no nível em que estivessem. Quem sabe se tem o que pedir é
+    // cada pirâmide: a de imagem sai na primeira linha do `atualizar` dela.
+
+    const pov = this.g.pointOfView?.();
+    const cam = this.g.camera?.();
+    if (!pov || !cam) return;
+
+    const vista = calotaVisivel(
+      pov.lat ?? 0, pov.lng ?? 0, pov.altitude ?? 2,
+      cam.fov ?? 50, cam.aspect ?? 16 / 9,
+    );
+    const rnd = this.g.renderer?.();
+    const larguraPx = rnd?.domElement?.clientWidth || window.innerWidth;
+    const dpr = rnd?.getPixelRatio?.() ?? 1;
+    this.piramide.atualizar(vista, larguraPx, dpr);
+    // As fronteiras usam a MESMA janela e o MESMO plano de tiles da imagem.
+    // Duas pirâmides desalinhadas pediriam níveis diferentes para a mesma
+    // vista, e a linha ficaria mais grossa ou mais fina que o mapa embaixo.
+    this.fronteiras?.atualizar(vista, larguraPx, dpr);
   }
 
   private tickImagery(dt: number) {
@@ -879,7 +894,7 @@ export class GlobeEngine {
     });
 
     this.isobarLines = new THREE.LineSegments(geo, mat);
-    this.isobarLines.renderOrder = 3;
+    this.isobarLines.renderOrder = ORDEM.ISOBARAS;
     this.g.scene().add(this.isobarLines);
 
     this.refreshIsobarLabels();
@@ -931,7 +946,7 @@ export class GlobeEngine {
       });
       const geo = new THREE.SphereGeometry(this.g.getGlobeRadius() * 1.002, 128, 64);
       this.windMesh = new THREE.Mesh(geo, this.windMat);
-      this.windMesh.renderOrder = 5;
+      this.windMesh.renderOrder = ORDEM.VENTO;
       this.g.scene().add(this.windMesh);
     }
     this.windMesh.visible = !!this.windGrid;
@@ -989,7 +1004,7 @@ export class GlobeEngine {
     });
     const geo = new THREE.SphereGeometry(this.g.getGlobeRadius() * 1.0012, 128, 64);
     this.currentMesh = new THREE.Mesh(geo, this.currentMat);
-    this.currentMesh.renderOrder = 4;
+    this.currentMesh.renderOrder = ORDEM.CORRENTES;
     this.currentMesh.visible = false;
     this.g.scene().add(this.currentMesh);
   }

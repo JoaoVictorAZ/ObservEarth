@@ -3,6 +3,7 @@ import { useGlobeStore } from "../../../store/globeStore";
 import { usePerfStore } from "../../../store/perfStore";
 import { TIERS } from "../../../perf";
 import { RefreshCw, Home, Camera, Activity, Sun, Map, Globe2 } from "lucide-react";
+import { entrar, sair, noTopo } from "../../../pilhaDialogos";
 
 export const ToolbarButtons: React.FC<{ onSearchCoord?: (lat: number, lng: number) => void }> = ({ onSearchCoord }) => {
   const { rotate, toggleRotate, dayNight, toggleDayNight, modo, toggleModo } = useGlobeStore();
@@ -12,15 +13,25 @@ export const ToolbarButtons: React.FC<{ onSearchCoord?: (lat: number, lng: numbe
 
   useEffect(() => {
     if (!aberto) return;
+    // O menu também entra na PILHA de superfícies. Sem isto, abrir o painel de
+    // estado do motor com o terminal aberto e apertar `Esc` fechava o terminal
+    // — a superfície mais antiga — e deixava aberto o menu que a pessoa
+    // acabara de abrir. Ver `src/pilhaDialogos.ts`.
+    const ficha = entrar();
     const fora = (e: MouseEvent) => {
       if (cx.current && !cx.current.contains(e.target as Node)) setAberto(false);
     };
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setAberto(false); };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !noTopo(ficha)) return;
+      e.stopPropagation();
+      setAberto(false);
+    };
     document.addEventListener("mousedown", fora);
-    document.addEventListener("keydown", esc);
+    document.addEventListener("keydown", esc, true);
     return () => {
       document.removeEventListener("mousedown", fora);
-      document.removeEventListener("keydown", esc);
+      document.removeEventListener("keydown", esc, true);
+      sair(ficha);
     };
   }, [aberto]);
 

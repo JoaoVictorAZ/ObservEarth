@@ -21,7 +21,8 @@
 
 import assert from "node:assert/strict";
 import {
-  PASSO, LOTE, TETO_MS, uvDaCorrente, montarPontos, buscarCorrentes,
+  PASSO, LOTE, TETO_MS, CONCORRENCIA, COBERTURA_MINIMA,
+  uvDaCorrente, montarPontos, buscarCorrentes,
 } from "../server/currents.js";
 
 let n = 0;
@@ -118,11 +119,19 @@ ok("as células são centradas, não encostadas na borda", () => {
 });
 
 ok("o custo em requisições cabe no orçamento", () => {
-  // Teto do projeto: um quarto do limite gratuito. 28.800 pontos em lotes de
-  // 200 são 144 requisições, cacheadas por 6 h.
+  // Teto do projeto: um quarto do limite gratuito, cacheado por 6 h.
   const { nx, ny } = montarPontos(PASSO);
   const reqs = Math.ceil((nx * ny) / LOTE);
   assert.ok(reqs <= 200, `${reqs} requisições por campo`);
+});
+
+ok("o LOTE cabe na URL que o nginx da fonte aceita", () => {
+  // MEDIDO contra a API real: 400 pontos dão 7.277 bytes e passam; 600 dão
+  // 10.969 e voltam 414 Request-URI Too Large. O limite não é de pontos, é de
+  // bytes — e coordenadas negativas de três dígitos gastam mais que "0.75".
+  const piorCaso = "-179.25";
+  const bytes = LOTE * (piorCaso.length + 1) * 2 + 200;   // lat + lng + resto
+  assert.ok(bytes < 8000, `lote de ${LOTE} geraria ~${bytes} bytes de URL`);
 });
 
 // ---------------------------------------------------------------------------
@@ -230,6 +239,147 @@ await okA("o campo resultante aponta para leste onde a direção é 90°", async
   assert.ok(i >= 0);
   assert.ok(c.u[i] > 1.19, `u = ${c.u[i]}, esperava ~+1,2 (leste)`);
   assert.ok(Math.abs(c.v[i]) < 1e-6);
+});
+
+// ---------------------------------------------------------------------------
+// O TRANSPORTE — a parte que quebrou em produção
+// ---------------------------------------------------------------------------
+// O campo chegou à tela com 5,9% de cobertura, desenhado como faixas
+// horizontais de partículas separadas por vazios de dezenas de graus. A causa
+// não era o desenho: 132 dos 144 lotes voltavam 429, e como cada lote cobria
+// quase exatamente uma linha da grade, cada falha apagava uma faixa inteira de
+// latitude. Medido contra a API de verdade:
+//
+//     1 lote sozinho ......... 200 OK
+//     6 lotes em paralelo .... 4 de 6 deram 429
+//
+// E nada disso aparecia: a rota devolvia `ok: true` porque o único critério de
+// recusa era "zero pontos medidos".
+// ---------------------------------------------------------------------------
+
+/** fonte que só aguenta `teto` requisições simultâneas; acima disso, 429 */
+function servidorComLimite({ teto = 2, velocidade = 0.8, atraso = 5 } = {}) {
+  let emVoo = 0;
+  const estado = { pico: 0, total: 0, recusadas: 0 };
+  const impl = async (url) => {
+    estado.total++;
+    emVoo++;
+    estado.pico = Math.max(estado.pico, emVoo);
+    try {
+      if (emVoo > teto) { estado.recusadas++; return { ok: false, status: 429, headers: new Map(), json: async () => ({}) }; }
+      await new Promise((r) => setTimeout(r, atraso));
+      const p = new URL(String(url)).searchParams;
+      const lats = p.get("latitude").split(",").map(Number);
+      const time = ["2026-08-12T12:00"];
+      return {
+        ok: true, status: 200,
+        json: async () => lats.map(() => ({
+          hourly: {
+            time,
+            ocean_current_velocity: [velocidade],
+            ocean_current_direction: [90],
+          },
+        })),
+      };
+    } finally { emVoo--; }
+  };
+  return { impl, estado };
+}
+
+await okA("a fila NUNCA passa da concorrência declarada", async () => {
+  // Com `Promise.all` este número era o total de lotes. É ele que produzia o
+  // 429 em massa, e é ele que o teste trava.
+  const { impl, estado } = servidorComLimite({ teto: 99 });
+  await buscarCorrentes(impl, { passo: 10, lote: 40, concorrencia: 2, coberturaMinima: 0 });
+  assert.ok(estado.total > 4, `poucos lotes para o teste valer: ${estado.total}`);
+  assert.ok(estado.pico <= 2, `${estado.pico} requisições simultâneas, o limite é 2`);
+});
+
+await okA("429 é repetido com espera, não descartado", async () => {
+  // Uma fonte que recusa acima de 1 simultânea. Com concorrência 2, metade dos
+  // lotes toma 429 na primeira tentativa — e tem que voltar completo mesmo
+  // assim.
+  const { impl, estado } = servidorComLimite({ teto: 1 });
+  const c = await buscarCorrentes(impl, { passo: 15, lote: 30, concorrencia: 2, coberturaMinima: 0 });
+  assert.ok(estado.recusadas > 0, "o teste não chegou a provocar 429 nenhum");
+  assert.equal(c.lotesComFalha, 0, `${c.lotesComFalha} lotes desistiram apesar da repetição`);
+  assert.ok(c.measuredPct > 90, `cobertura ${c.measuredPct}% depois das repetições`);
+});
+
+await okA("COBERTURA BAIXA é recusada, e a mensagem traz o número", async () => {
+  // O caso exato de produção: a maior parte dos lotes falha, alguns passam, e
+  // o resultado é um campo com faixas vazias. Servir isso como `ok: true` foi
+  // o defeito — a tela não tinha como saber que estava desenhando um buraco.
+  let n = 0;
+  const impl = async (url) => {
+    // um em cada dez lotes responde; o resto morre de vez (400 não repete)
+    if (n++ % 10 !== 0) return { ok: false, status: 400, headers: new Map(), json: async () => ({}) };
+    const p = new URL(String(url)).searchParams;
+    const lats = p.get("latitude").split(",").map(Number);
+    return {
+      ok: true, status: 200,
+      json: async () => lats.map(() => ({
+        hourly: { time: ["2026-08-12T12:00"], ocean_current_velocity: [0.8], ocean_current_direction: [90] },
+      })),
+    };
+  };
+  const e = await buscarCorrentes(impl, { passo: 10, lote: 40, concorrencia: 2 }).catch((x) => x);
+  assert.ok(e instanceof Error, "um campo com 90% de buraco foi aceito");
+  assert.equal(e.code, "CORRENTES_INCOMPLETAS");
+  assert.match(e.message, /% dos pontos medidos/);
+  assert.match(e.message, /lotes falharam/);
+  assert.ok(typeof e.medidoPct === "number" && e.medidoPct > 0, "o número não veio no erro");
+});
+
+await okA("cobertura boa passa e declara a fração de mar medida", async () => {
+  const { impl } = servidorComLimite({ teto: 99 });
+  const c = await buscarCorrentes(impl, { passo: 10, lote: 40, concorrencia: 2 });
+  // Sem terra na fonte falsa, tudo é medido: a fração passa de 1.
+  assert.ok(c.coberturaDoMar > COBERTURA_MINIMA, `cobertura do mar ${c.coberturaDoMar}`);
+  assert.equal(c.esquema, 2, "o esquema precisa viajar para a chave de cache mudar");
+});
+
+await okA("a concorrência padrão é conservadora — a fonte mede em rajada", async () => {
+  assert.ok(CONCORRENCIA <= 3, `concorrência padrão ${CONCORRENCIA} é alta demais`);
+  assert.ok(COBERTURA_MINIMA > 0.3 && COBERTURA_MINIMA < 1,
+    `piso de cobertura ${COBERTURA_MINIMA} fora de faixa útil`);
+});
+
+await okA("o CUSTO contado é o de LOCALIDADES, não o de requisições", async () => {
+  // O defeito que deixou a camada consumir a cota diária inteira do provedor.
+  // O guarda de `server/budget.js` recebia `1` por um lote que carrega
+  // centenas de pontos, então acreditava ter gasto 144 chamadas onde gastara
+  // 28.800 — e a sonda, a série histórica, o perfil vertical e a comparação
+  // de modelos, que saem do MESMO provedor, ficavam sem cota sem explicação.
+  const contado = [];
+  const { impl } = servidorComLimite({ teto: 99 });
+  await buscarCorrentes(impl, {
+    passo: 20, lote: 30, concorrencia: 1, coberturaMinima: 0,
+    medir: (n, f) => { contado.push(n); return f(); },
+  });
+  const { nx, ny } = montarPontos(20);
+  const total = contado.reduce((a, b) => a + b, 0);
+  assert.equal(total, nx * ny, `contou ${total} onde ha ${nx * ny} localidades`);
+  assert.ok(contado.every((x) => x > 1), "algum lote foi contado como uma chamada so");
+});
+
+await okA("orçamento estourado aborta a fila inteira, sem repetir", async () => {
+  // Não é falha passageira da fonte: é a nossa salvaguarda. Repetir quatro
+  // vezes por lote, em dezenas de lotes, gastaria minutos para receber a mesma
+  // recusa.
+  let chamadas = 0;
+  const medir = () => {
+    chamadas++;
+    throw Object.assign(new Error("orçamento por minuto atingido"),
+      { code: "BUDGET_EXCEEDED", window: "minuto", status: 429 });
+  };
+  const e = await buscarCorrentes(async () => ({ ok: true, status: 200, json: async () => [] }), {
+    passo: 10, lote: 40, concorrencia: 2, medir,
+  }).catch((x) => x);
+  assert.ok(e instanceof Error);
+  assert.equal(e.code, "SEM_CORRENTES");
+  assert.match(e.message, /orçamento/);
+  assert.ok(chamadas < 8, `${chamadas} tentativas depois de o orçamento acabar`);
 });
 
 console.log(`\n  ${n} verificações das correntes\n`);

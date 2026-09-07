@@ -4,7 +4,7 @@
 // Janela flutuante com foco z-index, minimização, arraste e redimensionamento em 8 direções.
 // -----------------------------------------------------------------------------
 
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { GripVertical, X, Minus, RotateCcw, Layers } from "lucide-react";
 import {
   motor, MotorLocal, MODELOS, detectarCapacidade,
@@ -14,9 +14,8 @@ import { useChatStore } from "../../store/chatStore";
 import { fecharResposta } from "../../llm/resposta";
 import { dossieParaTexto, tokensAprox } from "../../llm/contexto";
 import { explicarFalhaGpu } from "../../llm/falhas";
-import { useWindowStore } from "../../store/windowStore";
 import { useDialog } from "../../hooks/useDialog";
-import { arrastar, travar, MOVER } from "../../arrasto";
+import { useJanelaFlutuante, MOVER, type Caixa } from "../../janelas";
 
 interface Props {
   lat: number;
@@ -31,28 +30,15 @@ const CHAT_STORAGE_KEY = "obs:chat:pos:v2";
 const MIN_W = 340;
 const MIN_H = 220;
 
-function lerPadraoChat(): { x: number; y: number; w: number; h: number } {
+function padraoChat(): Caixa {
   const W = typeof window !== "undefined" ? window.innerWidth : 1200;
   const H = typeof window !== "undefined" ? window.innerHeight : 800;
-
-  const padrao = {
+  return {
     x: Math.max(20, W - 520),
-    y: Math.min(140, H - 450),
+    y: Math.min(140, Math.max(0, H - 450)),
     w: 460,
     h: 380,
   };
-
-  try {
-    const t = localStorage.getItem(CHAT_STORAGE_KEY);
-    if (!t) return padrao;
-    const c = JSON.parse(t);
-    if ([c.x, c.y, c.w, c.h].every((v: number) => Number.isFinite(v))) {
-      if (c.x > 0 && c.x < W - 50 && c.y >= 0 && c.y < H - 50) {
-        return c;
-      }
-    }
-  } catch { /* usa padrão */ }
-  return padrao;
 }
 
 const GB = (n: number) => `${n.toFixed(1)} GB`;
@@ -64,16 +50,16 @@ export function PointChat({ lat, lng, date, hour, onFechar, onOrganizarJanelas }
     msgs, addMsg, patchUltima, trocarPonto, setOcupado,
   } = useChatStore();
 
-  const { activeWindow, focusWindow, minimizedWindows, toggleMinimize } = useWindowStore();
-
-  const [caixa, setCaixa] = useState(lerPadraoChat);
-  const [movendo, setMovendo] = useState(false);
-
-  const caixaRef = useRef(caixa);
-  caixaRef.current = caixa;
-
-  const isFocused = activeWindow === "chat";
-  const isMinimized = !!minimizedWindows["chat"];
+  // O comportamento de janela mora em `src/janelas.ts` — a mesma peça que a
+  // sonda usa. Antes eram sessenta linhas quase iguais nos dois arquivos, e a
+  // diferença entre elas era deriva, não intenção.
+  const jan = useJanelaFlutuante({
+    id: "chat",
+    chave: CHAT_STORAGE_KEY,
+    padrao: padraoChat,
+    minW: MIN_W,
+    minH: MIN_H,
+  });
 
   const [cap, setCap] = useState<Capacidade | null>(null);
   const [progresso, setProgresso] = useState<EstadoMotor>({ fase: "ocioso" });
@@ -83,54 +69,14 @@ export function PointChat({ lat, lng, date, hour, onFechar, onOrganizarJanelas }
   const [gerando, setGerando] = useState(false);
   const [verJson, setVerJson] = useState(false);
   const fimRef = useRef<HTMLDivElement>(null);
-  const painelRef = useDialog<HTMLElement>({ aberto: true, aoFechar: onFechar });
+  // JANELA, NÃO MODAL: `focar: false`.
+  //
+  // Com o padrão anterior, o terminal puxava o foco para dentro dele toda vez
+  // que montava. Como ele remonta a cada ponto novo, cada clique no globo
+  // arrancava o cursor de onde a pessoa estava. `Esc` continua fechando — mas
+  // só quando o terminal é a superfície do topo, ver `src/pilhaDialogos.ts`.
+  const painelRef = useDialog<HTMLElement>({ aberto: true, aoFechar: onFechar, focar: false });
   const abortRef = useRef<AbortController | null>(null);
-
-  const limites = useCallback(() => ({
-    minW: MIN_W, minH: MIN_H, telaW: window.innerWidth, telaH: window.innerHeight,
-  }), []);
-
-  useEffect(() => {
-    const aoRedimensionar = () => setCaixa((c) => travar(c, limites()));
-    window.addEventListener("resize", aoRedimensionar);
-    return () => window.removeEventListener("resize", aoRedimensionar);
-  }, [limites]);
-
-  useEffect(() => {
-    try { localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(caixa)); } catch { /* segue */ }
-  }, [caixa]);
-
-  const iniciarArrasto = (modo: string) => (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
-    if (
-      (e.target as HTMLElement).closest("button") ||
-      (e.target as HTMLElement).closest("input") ||
-      (e.target as HTMLElement).closest("select")
-    ) return;
-
-    e.preventDefault();
-    focusWindow("chat");
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const startCaixa = { ...caixaRef.current };
-
-    setMovendo(true);
-
-    const aoMover = (ev: PointerEvent) => {
-      setCaixa(arrastar(modo, ev.clientX - startX, ev.clientY - startY, startCaixa, limites()));
-    };
-
-    const aoSoltar = () => {
-      setMovendo(false);
-      window.removeEventListener("pointermove", aoMover);
-      window.removeEventListener("pointerup", aoSoltar);
-      window.removeEventListener("pointercancel", aoSoltar);
-    };
-
-    window.addEventListener("pointermove", aoMover);
-    window.addEventListener("pointerup", aoSoltar);
-    window.addEventListener("pointercancel", aoSoltar);
-  };
 
   useEffect(() => {
     if (motor.pronto && motor.modelo) {
@@ -298,22 +244,16 @@ export function PointChat({ lat, lng, date, hour, onFechar, onOrganizarJanelas }
   return (
     <aside
       ref={painelRef}
-      className={`ptchat ${movendo ? "ptchat-movendo" : ""} ${isFocused ? "win-foco" : ""} ${isMinimized ? "win-minimizada" : ""}`}
-      style={{
-        left: caixa.x,
-        top: caixa.y,
-        width: caixa.w,
-        height: isMinimized ? "auto" : caixa.h,
-        zIndex: isFocused ? 30 : 21,
-      }}
-      onPointerDownCapture={() => focusWindow("chat")}
+      className={`ptchat ${jan.movendo ? "ptchat-movendo" : ""} ${jan.focada ? "win-foco" : ""} ${jan.minimizada ? "win-minimizada" : ""}`}
+      style={jan.estilo}
+      onPointerDownCapture={jan.trazerParaFrente}
       role="dialog"
       aria-label="Terminal LLM do ponto"
     >
       <header
         className="ptchat-head"
-        onPointerDown={iniciarArrasto(MOVER)}
-        onDoubleClick={() => toggleMinimize("chat")}
+        onPointerDown={jan.iniciarArrasto(MOVER)}
+        onDoubleClick={jan.alternarMinimizar}
         title="Clique duplo para minimizar/expandir"
       >
         <GripVertical size={14} className="ptchat-pega" aria-hidden="true" />
@@ -346,15 +286,7 @@ export function PointChat({ lat, lng, date, hour, onFechar, onOrganizarJanelas }
             type="button"
             className="ptchat-btn-topo"
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              setCaixa({
-                x: Math.max(20, window.innerWidth - 520),
-                y: Math.min(140, window.innerHeight - 450),
-                w: 460,
-                h: 380,
-              });
-            }}
+            onClick={(e) => { e.stopPropagation(); jan.recolocar(); }}
             title="Resetar posição da janela"
             aria-label="Resetar posição"
           >
@@ -366,9 +298,9 @@ export function PointChat({ lat, lng, date, hour, onFechar, onOrganizarJanelas }
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
-              toggleMinimize("chat");
+              jan.alternarMinimizar();
             }}
-            title={isMinimized ? "Expandir janela" : "Minimizar janela"}
+            title={jan.minimizada ? "Expandir janela" : "Minimizar janela"}
             aria-label="Minimizar terminal"
           >
             <Minus size={14} strokeWidth={1.6} />
@@ -388,7 +320,7 @@ export function PointChat({ lat, lng, date, hour, onFechar, onOrganizarJanelas }
         </div>
       </header>
 
-      {!isMinimized && (
+      {!jan.minimizada && (
         <>
           {!pronto && (
             <div className="ptchat-setup">
@@ -521,14 +453,14 @@ export function PointChat({ lat, lng, date, hour, onFechar, onOrganizarJanelas }
       )}
 
       {/* Puxadores de redimensionamento em 8 direções */}
-      <div className="win-puxa win-puxa-n" onPointerDown={iniciarArrasto("c")} />
-      <div className="win-puxa win-puxa-s" onPointerDown={iniciarArrasto("b")} />
-      <div className="win-puxa win-puxa-e" onPointerDown={iniciarArrasto("d")} />
-      <div className="win-puxa win-puxa-w" onPointerDown={iniciarArrasto("e")} />
-      <div className="win-puxa win-puxa-nw" onPointerDown={iniciarArrasto("ec")} />
-      <div className="win-puxa win-puxa-ne" onPointerDown={iniciarArrasto("dc")} />
-      <div className="win-puxa win-puxa-sw" onPointerDown={iniciarArrasto("eb")} />
-      <div className="win-puxa win-puxa-se" onPointerDown={iniciarArrasto("db")} />
+      <div className="win-puxa win-puxa-n" onPointerDown={jan.iniciarArrasto("c")} />
+      <div className="win-puxa win-puxa-s" onPointerDown={jan.iniciarArrasto("b")} />
+      <div className="win-puxa win-puxa-e" onPointerDown={jan.iniciarArrasto("d")} />
+      <div className="win-puxa win-puxa-w" onPointerDown={jan.iniciarArrasto("e")} />
+      <div className="win-puxa win-puxa-nw" onPointerDown={jan.iniciarArrasto("ec")} />
+      <div className="win-puxa win-puxa-ne" onPointerDown={jan.iniciarArrasto("dc")} />
+      <div className="win-puxa win-puxa-sw" onPointerDown={jan.iniciarArrasto("eb")} />
+      <div className="win-puxa win-puxa-se" onPointerDown={jan.iniciarArrasto("db")} />
     </aside>
   );
 }

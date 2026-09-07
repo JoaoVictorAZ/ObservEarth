@@ -1,9 +1,3 @@
-// server/index.js
-// -----------------------------------------------------------------------------
-// ObservEarth: backend completo, num arquivo so.
-// -----------------------------------------------------------------------------
-
-
 import express from "express";
 import { metered, registerBudgetRoutes, report as budgetReport } from "./budget.js";
 import { reportKeys, keysStatus } from "./keys.js";
@@ -13,13 +7,15 @@ import { buildWindGrid, gfsStatus, windKey, WIND_KEY_PREFIX, WIND_KEY_CURRENT, W
 import { startPrecompute, registerPrecomputeRoutes } from "./precompute.js";
 import { forecastTimeline } from "./forecast.js";
 import { buildField, fieldCatalog } from "./fields.js";
+import { buildCampo } from "./campo.js";
 import { buildIsobars } from "./isobars.js";
 import { buscarSerie } from "./timeseries.js";
 import { buscarSondagem } from "./sounding.js";
 import { compararModelos } from "./compare.js";
-import { buscarCorrentes } from "./currents.js";
+import { buscarCorrentes, CORRENTES_SCHEMA } from "./currents.js";
 import { escolherFonte, caminhoDe, VARIAVEIS, beaufort, avisoDeVento } from "./arquivo.js";
 import { registerGeoRoutes, placeAt } from "./geo.js";
+import { construirTile as construirFronteiras } from "./fronteiras.js";
 import { describeModelLayer, sortModelLayers } from "./modelNames.js";
 import { parseCapabilities, snapTime, coverageOf } from "./gibsTime.js";
 import { lerBBox, alturaDe, janelaEm } from "./janela.js";
@@ -102,11 +98,6 @@ function imageryUrl(id, dateStr, width, bbox = null, height = null) {
   const qs = new URLSearchParams({
     SERVICE: "WMS", REQUEST: "GetMap", VERSION: "1.3.0",
     LAYERS: cfg.layer, CRS: "EPSG:4326",
-    // JANELA DE INTERESSE. Sem bbox, o mundo — que é o comportamento antigo.
-    // Com bbox, a MESMA requisição recorta a região visível, e a resolução
-    // efetiva multiplica pelo fator de zoom. Uma textura global de 4096 px dá
-    // 11,4 texels por grau e isso é FIXO; os pixels de tela por grau crescem
-    // sem limite ao aproximar. Nenhum aumento de textura resolve — só recorte.
     BBOX: bbox ? bbox.join(",") : "-90,-180,90,180",
     WIDTH: String(width),
     HEIGHT: String(height ?? Math.round(width / 2)),
@@ -191,22 +182,6 @@ app.get("/api/imagery/:id", async (req, res) => {
 // ======================================================================
 // 1b. TILES — a mesma imagem, recortada por nível de zoom
 // ======================================================================
-//
-// POR QUE WMS COM BBOX ALINHADA À GRADE, E NÃO WMTS
-//
-// O GIBS tem um serviço WMTS de verdade, com tiles pré-renderizados, e ele
-// seria mais rápido e mais leve para a NASA. O problema é que cada camada só
-// existe em determinados TileMatrixSets — `250m`, `500m`, `1km`, `2km` — e
-// descobrir qual vale para cada uma exige ler um GetCapabilities de vários
-// megabytes, ou chutar e receber erro em produção.
-//
-// A bbox alinhada à grade dá exatamente o mesmo resultado geométrico, funciona
-// para TODA camada sem tabela nenhuma, e reaproveita o `imageryUrl` que já
-// estava testado. Trocar para WMTS depois é mudar a URL: a matemática da
-// pirâmide, que é a parte que erra, fica igual.
-//
-// O custo é honesto: são ~12 renderizações WMS por vista em vez de 1. Por isso
-// cada tile passa pelo `metered` e tem cache de 6 h em memória e em disco.
 
 app.get("/api/tile/:id/:z/:y/:x", async (req, res) => {
   const { id } = req.params;
@@ -248,17 +223,7 @@ app.get("/api/tile/:id/:z/:y/:x", async (req, res) => {
 // ----------------------------------------------------------------------
 // RELEVO E BATIMETRIA — elevação em metros, não imagem sombreada
 // ----------------------------------------------------------------------
-// Tiles `terrarium` da Mapzen, hospedados pela AWS Open Data. Cada pixel
-// carrega a altitude REAL codificada em RGB, com deslocamento de 32.768 — o
-// que permite representar profundidade oceânica junto com altitude terrestre
-// no mesmo raster.
-//
-// Isto é dado, não enfeite: o mesmo tile que sombreia a montanha responde
-// "-4.128 m" quando se pergunta a profundidade daquele ponto do Atlântico.
-// Uma imagem de relevo sombreado bonita não responde nada.
-//
-// ATENÇÃO À PROJEÇÃO: estes tiles são Web Mercator (EPSG:3857) e o nosso mapa
-// é equirretangular. A reprojeção acontece no shader do cliente.
+
 
 const TERRENO = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium";
 
@@ -269,8 +234,6 @@ app.get("/api/terrain/:z/:y/:x", async (req, res) => {
   }
 
   try {
-    // O relevo não muda: uma semana de cache é conservador, e o disco guarda
-    // entre reinícios. É a camada mais barata do app depois do primeiro uso.
     const img = await cached(`terreno:${z}/${y}/${x}`, 7 * 24 * HOUR, async () => {
       const r = await metered("mapzen-terrain", 1,
         () => fetch(`${TERRENO}/${z}/${x}/${y}.png`));
@@ -338,15 +301,6 @@ app.get("/api/wind", async (req, res) => {
       buildWindGrid(fetch, dateStr, hour)
     );
 
-    // BINÁRIO QUANDO PEDIDO, JSON QUANDO NÃO.
-    //
-    // Medido em 1440x721: JSON são 39,6 MB e 401 ms só para serializar; o
-    // binário são 8,3 MB e praticamente nada. Do outro lado a diferença é
-    // maior ainda — 256 ms de thread principal parado viram zero, porque os
-    // componentes viram Float32Array apontando para o próprio buffer.
-    //
-    // O JSON continua servido para quem não pedir: um cliente antigo com um
-    // servidor novo deve degradar, não quebrar.
     if (String(req.query.fmt) === "bin") {
       const buf = empacotar(grid);
       res.set("Content-Type", "application/octet-stream");
@@ -361,31 +315,7 @@ app.get("/api/wind", async (req, res) => {
   }
 });
 
-// ----------------------------------------------------------------------
-// DIAGNÓSTICO CRU DO GRIB2. Vai direto ao NOMADS, sem cache e sem plano B.
-// Responde com número a pergunta "o vento está errado?": devolve os fatores de
-// escala da seção 5 e a faixa de valores obtida.
-// Vento de 10 m no mundo real: −120 a +120 m/s. Fora disso é desempacotamento.
-// ----------------------------------------------------------------------
-// ----------------------------------------------------------------------
-// QUAL CAMINHO ESTÁ SERVINDO O VENTO.
-//
-// Existe porque a pergunta "o vento está errado?" tem uma resposta anterior à
-// meteorologia: DE ONDE ele veio. Os dois caminhos diferem por 144x em área de
-// célula, e o recuo entra sozinho, em silêncio, em dois casos — data fora da
-// janela que o NOMADS guarda, e disjuntor aberto depois de três falhas do GFS.
-//
-// Com o disjuntor aberto, TODA data cai para 3°, inclusive hoje.
-// ----------------------------------------------------------------------
-// ----------------------------------------------------------------------
-// CENTROS DE CIRCULAÇÃO — onde estão os ciclones neste campo.
-//
-// Existe porque "não é possível identificar o ciclone através dos dados de
-// vento" é um relato sobre IDENTIFICAÇÃO, não sobre renderização. Ciclone não
-// se distingue por velocidade — um jato tem 60 m/s e não é ciclone; o ciclone
-// subtropical da costa do Sudeste tem 20-25 m/s e é. O que separa é a rotação,
-// e rotação se mede.
-// ----------------------------------------------------------------------
+
 app.get("/api/wind/vortices", async (req, res) => {
   const dateStr = String(req.query.date ?? new Date().toISOString().slice(0, 10));
   const hour = Math.max(0, Math.min(23, Number(req.query.hour) || 12));
@@ -436,8 +366,6 @@ app.get("/api/wind/status", async (req, res) => {
       celulaKm: g.stepDeg ? +(g.stepDeg * 111).toFixed(0) : null,
       medidoPct: g.measuredPct,
       ventoMaxMs: +mx.toFixed(1), ventoMedioMs: +(soma / n).toFixed(2),
-      // Num campo global de 0,25° há sempre algum lugar acima de 25 m/s (jatos,
-      // frentes, ciclones). Um máximo baixo é sinal de campo suavizado demais.
       temExtremos: mx > 25,
       construidoEm: g.builtAt,
     };
@@ -577,6 +505,24 @@ app.get("/api/fields/:id/meta", async (req, res) => {
   } catch (e) { res.status(e.status ?? 502).json({ error: e.message, code: e.code }); }
 });
 
+
+app.get("/api/campo/:id", async (req, res) => {
+  const ids = String(req.params.id).split(",").map((s) => s.trim()).filter(Boolean);
+  const dateStr = String(req.query.date ?? new Date().toISOString().slice(0, 10));
+  const hour = Math.max(0, Math.min(23, Number(req.query.hour) || 12));
+  const passo = Math.max(1, Math.min(16, Number(req.query.passo) || 1));
+
+  try {
+    const buf = await buildCampo(fetch, ids, dateStr, hour, { passo });
+    res.set("Content-Type", "application/octet-stream");
+    res.set("Cache-Control", "public, max-age=21600");
+    res.set("X-Campo-Planos", ids.join(","));
+    res.send(buf);
+  } catch (e) {
+    res.status(e.status ?? 502).json({ error: e.message, code: e.code });
+  }
+});
+
 app.get("/api/isobars", async (req, res) => {
   const dateStr = String(req.query.date ?? new Date().toISOString().slice(0, 10));
   const hour = Math.max(0, Math.min(23, Number(req.query.hour) || 12));
@@ -592,6 +538,30 @@ app.get("/api/isobars", async (req, res) => {
 // ======================================================================
 registerGeoRoutes(app);
 
+app.get("/api/fronteiras/:z/:y/:x", async (req, res) => {
+  const bbox = bboxDoTile(req.params.z, req.params.y, req.params.x);
+  if (!bbox) {
+    return res.status(400).json({ error: "tile fora da grade", code: "TILE_RANGE" });
+  }
+  const z = Number(req.params.z);
+  const [sul, oeste, norte, leste] = bbox;
+
+  try {
+    const margem = (leste - oeste) * 0.005;
+    const buf = await cached(
+      `fronteira:${z}/${req.params.y}/${req.params.x}`,
+      7 * 24 * HOUR,
+      () => construirFronteiras(fetch, z, [oeste, sul, leste, norte], margem),
+    );
+    res.set("Content-Type", "application/octet-stream");
+    // Fronteira é dado estático: uma semana de cache é conservador.
+    res.set("Cache-Control", "public, max-age=604800");
+    res.send(buf);
+  } catch (e) {
+    res.status(502).json({ error: String(e.message ?? e), code: "FRONTEIRA" });
+  }
+});
+
 function getCardinal(deg) {
   const dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
   const val = Math.floor((deg / 22.5) + 0.5);
@@ -601,12 +571,6 @@ function getCardinal(deg) {
 // ======================================================================
 // 5. SONDA ATMOSFÉRICA
 // ======================================================================
-// ======================================================================
-// DOSSIÊ DO PONTO — contrato de dados para o chat
-// ======================================================================
-// UMA requisição à Open-Meteo cobre a janela inteira, porque a API devolve
-// séries horárias. Pedir hora a hora multiplicaria o custo por N sem ganhar
-// nada, e o orçamento deste projeto é 25% do plano gratuito.
 app.get("/api/dossier", async (req, res) => {
   const lat = Number(req.query.lat);
   const lng = Number(req.query.lng);
@@ -628,14 +592,7 @@ app.get("/api/dossier", async (req, res) => {
       ? `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&hourly=${campos}&wind_speed_unit=ms&forecast_days=3&timezone=UTC`
       : `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lng}&hourly=${campos}&wind_speed_unit=ms&start_date=${dateStr}&end_date=${dateStr}&timezone=UTC`;
 
-    // TRÊS ESPERAS INDEPENDENTES, EM PARALELO.
-    //
-    // Eram sequenciais: a previsão, depois a amostra do campo de vento, depois
-    // o topônimo. Nenhuma delas alimenta a seguinte — o encadeamento era só a
-    // ordem em que foram escritas, e somava três idas à rede onde uma basta.
-    //
-    // `allSettled`, não `all`: o topônimo e o campo de vento são opcionais, e
-    // um `all` derrubaria o dossiê inteiro porque o geocodificador demorou.
+
     const [rWx, rCampo, rLugar] = await Promise.allSettled([
       cached(`dossie:${lat.toFixed(2)}:${lng.toFixed(2)}:${dateStr}`, 3 * HOUR,
         () => metered("open-meteo", 1, () => fetch(url)).then((r) => (r.ok ? r.json() : null))),
@@ -678,11 +635,6 @@ app.get("/api/probe", async (req, res) => {
   const hour = Math.max(0, Math.min(23, Number(req.query.hour) || 12));
 
   try {
-    // A ESCOLHA DE ARQUIVO É PARTE DA RESPOSTA — ver server/arquivo.js.
-    // Datas passadas iam para o ERA5, que a própria Open-Meteo descreve como
-    // otimizado para tendência climática e NÃO para fidelidade a um evento.
-    // Usar o arquivo de análise climática para responder sobre uma frente que
-    // passou é a fonte errada, não um número errado.
     const fonte = escolherFonte(date);
     const qsP = new URLSearchParams({
       latitude: String(lat), longitude: String(lng),
@@ -702,26 +654,6 @@ app.get("/api/probe", async (req, res) => {
     const h = wx?.hourly;
     const k = h ? Math.min(hour, (h.time?.length ?? 1) - 1) : 0;
     const pick = (arr) => (h && Number.isFinite(arr?.[k]) ? arr[k] : null);
-
-
-    // -----------------------------------------------------------------------
-    // SEM VALOR INVENTADO. Ausência é `null`, e a tela diz "sem dado".
-    //
-    // Cada linha aqui terminava num `??` com uma fórmula: temperatura de uma
-    // senóide da latitude com a hora solar, umidade de `72 − |lat|·0,18`, vento
-    // de `8 + sen(lat/90·3π)·4`. Quando a Open-Meteo não respondia, o painel
-    // exibia esses números — e o campo `source` declarava
-    // "Modelo Climatológico Físico GFS/ERA5".
-    //
-    // Não é GFS. Não é ERA5. É uma senóide com nome de dataset. Num
-    // instrumento de leitura científica isso não é degradação elegante: é
-    // atribuir a um centro de dados um número que ele nunca produziu, com
-    // aparência de medição e sem nenhuma marca de que foi inventado.
-    //
-    // Este projeto já removeu duas fabricações assim (o banco de ciclones que
-    // se dizia IBTrACS, e a sobreposição térmica pintada de caixas fixas de
-    // lat/lng). Esta é a terceira.
-    // -----------------------------------------------------------------------
     const tempC = pick(h?.temperature_2m) ?? null;
     const humidity = pick(h?.relative_humidity_2m) ?? null;
     const pressureHpa = pick(h?.surface_pressure) ?? null;
@@ -729,52 +661,17 @@ app.get("/api/probe", async (req, res) => {
     const windDir = pick(h?.wind_direction_10m) ?? null;
     const dewPt = pick(h?.dew_point_2m) ?? null;
     const cloud = pick(h?.cloud_cover) ?? null;
-
-    // -----------------------------------------------------------------------
-    // UNIDADE DO VENTO — o erro que fazia a sonda discordar do escoamento.
-    //
-    // A Open-Meteo devolve `wind_speed_10m` em **km/h** por padrão. O código
-    // recebia esse número, chamava-o de `windMs` e em seguida multiplicava por
-    // 3,6 para "converter para km/h". Resultado, sobre o Índico Sul:
-    //
-    //     valor real     58,5 km/h  =  16,3 m/s   (normal nos rugidos dos 40)
-    //     tela mostrava  58,5 m/s   =  210,6 km/h (furacão categoria 3)
-    //
-    // Um fator de 3,6 exato. E como as partículas vêm do GFS em m/s de
-    // verdade, a sonda e o escoamento discordavam por esse mesmo fator em
-    // TODO ponto do planeta — que é exatamente o sintoma relatado.
-    //
-    // A correção é pedir a unidade à API em vez de supor: `wind_speed_unit=ms`
-    // está agora na URL. Supor unidade é como supor fuso horário.
-    // -----------------------------------------------------------------------
     const windMs = pick(h?.wind_speed_10m) ?? null;
-    // RAJADA: a grandeza que causa dano e a que o noticiário reporta. Sem ela,
-    // comparar a tela com a notícia dá sempre um fator de 1,5 a 2 — e parece
-    // erro de unidade quando é diferença de grandeza.
     const gustMs = pick(h?.wind_gusts_10m) ?? null;
-
     const r1 = (x) => (x == null ? null : +x.toFixed(1));
     const tempF = tempC == null ? null : +(tempC * 9 / 5 + 32).toFixed(1);
     const pressureMmHg = pressureHpa == null ? null : +(pressureHpa * 0.750062).toFixed(1);
     const windKmH = r1(windMs == null ? null : windMs * 3.6);
     const windKnots = r1(windMs == null ? null : windMs * 1.94384);
     const windCardinal = getCardinal(windDir);
-    // Derivados também propagam a ausência. `null * 100` é 0 em JavaScript, e
-    // uma densidade do ar de 0,000 kg/m³ na tela é mais enganosa que um traço:
-    // parece medição, tem três casas decimais e é fisicamente impossível.
     const airDensity = (pressureHpa == null || tempC == null)
       ? null
       : +((pressureHpa * 100) / (287.058 * (tempC + 273.15))).toFixed(3);
-    // ÍNDICE UV MEDIDO, NÃO CALCULADO.
-    //
-    // Aqui havia:
-    //   const solarZenith = max(0, cos(lat) * sin(((horaSolar − 6)/12)·π));
-    //   const uvIndex = solarZenith * 11.5 * (1 − nuvem/150);
-    //
-    // Um índice UV inventado a partir de latitude, hora e nuvem — sem ozônio,
-    // sem aerossol, sem altitude, sem albedo. Exibido como "Índice UV" sem
-    // nenhuma marca de que era fórmula. A Open-Meteo publica `uv_index` de
-    // verdade, na mesma chamada, de graça.
     const uvIndex = pick(h?.uv_index) ?? null;
     // elevação por barometria só existe se houver pressão medida
     const elevationM = pressureHpa == null ? null
@@ -791,10 +688,7 @@ app.get("/api/probe", async (req, res) => {
       windNotice: avisoDeVento(fonte),
       resolutionKm: fonte.resolucaoKm ?? null,
       cloudCover: cloud, airDensity, uvIndex: uvIndex == null ? null : Math.max(0, uvIndex), elevationM,
-      // A procedência tem que descrever de onde o número VEIO. Sem resposta da
-      // fonte, todos os campos acima são null e a tela diz "sem dado" — mas
-      // esta linha ainda declarava "Modelo Climatológico Físico GFS/ERA5",
-      // atribuindo a dois centros de dados uma leitura que não existe.
+      
       source: h
         ? `Open-Meteo · ${fonte.rotulo}${fonte.resolucaoKm ? ` · ~${fonte.resolucaoKm} km` : ""}`
         : "fonte não respondeu — nenhum valor foi estimado",
@@ -1025,7 +919,10 @@ app.get("/api/hospitals", async (req, res) => {
 app.get("/api/hycom", async (req, res) => {
   const hora = req.query.hour != null ? Math.max(0, Math.min(23, Number(req.query.hour))) : null;
   try {
-    const grid = await cached(`corr:${hora ?? "meio"}`, 6 * HOUR, () =>
+    // O ESQUEMA ENTRA NA CHAVE. A v1 era servida com 5,9% de cobertura e ficava
+    // seis horas em disco: corrigir o código não bastaria, porque o campo
+    // estragado continuaria saindo do cache até o TTL vencer.
+    const grid = await cached(`corr:v${CORRENTES_SCHEMA}:${hora ?? "meio"}`, 6 * HOUR, () =>
       buscarCorrentes(fetch, { hora, medir: (n, f) => metered("open-meteo", n, f) })
     );
     res.json({ ok: true, ...grid });

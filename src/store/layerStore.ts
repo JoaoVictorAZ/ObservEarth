@@ -23,6 +23,19 @@ export interface FieldLayer {
   group: string;
   unit: string;
   legend: [string, string][] | null;
+  /**
+   * AS PARADAS DA RAMPA, e não só a legenda de seis amostras.
+   *
+   * A malha 3D pinta os valores que ela mesma recebeu em binário. Sem as
+   * paradas ela inventaria uma escala própria, e o mesmo campo apareceria com
+   * duas cores conforme fosse desenhado como textura ou como relevo. Chegam
+   * de `/api/fields`; ver `fieldCatalog` em server/fields.js.
+   */
+  render?: "rampa" | "faixas";
+  stops?: [number, [number, number, number]][];
+  floor?: number;
+  /** ressalva sobre o que este campo NÃO diz — ver server/fields.js */
+  nota?: string | null;
 }
 
 const DEFAULT_FIELDS: FieldLayer[] = [

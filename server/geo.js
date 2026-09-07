@@ -2,20 +2,12 @@ import { gzipSync } from "node:zlib";
 
 const CDN = "https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson";
 const SRC = {
-  // 110m para paises: 177 feicoes e contorno limpo a distancia planetaria.
-  // O 50m tem o mesmo desenho com 10x mais vertices — invisivel de longe e
-  // caro de desenhar. Resolucao alta so entra onde o zoom justifica.
   countries: `${CDN}/ne_110m_admin_0_countries.geojson`,
   states: `${CDN}/ne_50m_admin_1_states_provinces.geojson`,
   places: `${CDN}/ne_50m_populated_places_simple.geojson`,
 };
 
-/**
- * Douglas-Peucker. O Natural Earth guarda precisao cartografica de impressao;
- * num globo de 900 px na tela, vertices a menos de ~0,05 grau caem no mesmo
- * pixel. Removê-los corta a contagem sem diferenca visivel — e contagem de
- * vertice e exatamente o que faz o three-globe demorar a montar a geometria.
- */
+
 function dp(points, tol) {
   if (points.length < 3) return points;
   let maxD = 0, idx = 0;
@@ -86,13 +78,6 @@ async function load(kind) {
   return mem[kind];
 }
 
-// ------------------------------------------------------------------ fronteiras
-/**
- * FeatureCollection unica com `rank` em cada feicao:
- *   rank 0 = pais   (sempre visivel)
- *   rank 1 = estado (aparece com zoom)
- * O cliente usa o rank para estilo e para o nivel de detalhe.
- */
 /**
  * Fronteiras por NIVEL, servidas separadamente.
  *
@@ -162,12 +147,7 @@ async function getAllForLookup() {
   return mem.lookup;
 }
 
-// --------------------------------------------------------------------- rotulos
-/**
- * Rotulos ja reduzidos ao minimo: nome, posicao e ordem de importancia.
- * Mandar a geometria inteira so para escrever um nome seria desperdicio de
- * banda — o poligono ja vai em /api/boundaries.
- */
+// rotulos
 export async function getLabels() {
   if (mem.labels) return mem.labels;
 
@@ -179,9 +159,6 @@ export async function getLabels() {
   if (c0.status === "fulfilled") {
     for (const f of c0.value.features ?? []) {
       const p = f.properties;
-      // LABEL_X/LABEL_Y sao posicoes de rotulo curadas pelo Natural Earth:
-      // ficam dentro do pais mesmo quando o centroide cairia no mar (Noruega,
-      // Chile, Indonesia). Usar centroide geometrico erra nesses casos.
       const lng = Number(prop(p, "LABEL_X", "label_x"));
       const lat = Number(prop(p, "LABEL_Y", "label_y"));
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
@@ -218,21 +195,14 @@ export async function getLabels() {
       cities.push({
         name: prop(p, "name", "NAME", "nameascii"),
         lat, lng,
-        // scalerank: 0 = metropole mundial, 10 = vilarejo. E a ordem que o
-        // proprio Natural Earth criou para decidir o que mostrar em cada zoom.
         rank: Number(prop(p, "scalerank", "SCALERANK")) ?? 10,
         pop: Number(prop(p, "pop_max", "POP_MAX")) || 0,
       });
     }
     cities.sort((a, b) => a.rank - b.rank || b.pop - a.pop);
-    // O LOD nunca desenha mais que ~140 cidades. Mandar 7.000 so aumenta o
-    // payload e o custo de varredura a cada mudanca de camera.
     cities.length = Math.min(cities.length, 1200);
   }
 
-  // Falha total tem de FALHAR. Devolver as tres listas vazias com HTTP 200
-  // faria a interface concluir que o mundo simplesmente nao tem rotulos — o
-  // mesmo erro de "silencio parecendo sucesso" que ja custou caro aqui.
   if (!countries.length && !states.length && !cities.length) {
     const err = new Error("catálogo de rótulos indisponível (sem rede?)");
     err.status = 502;
@@ -243,7 +213,7 @@ export async function getLabels() {
   return mem.labels;
 }
 
-// -------------------------------------------------------------- ponto -> nome
+// ponto -> nome
 function inRing(lat, lng, ring) {
   let inside = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
@@ -267,10 +237,6 @@ function hit(f, lat, lng) {
   return false;
 }
 
-/**
- * Nome do lugar. Tenta estado; se nao houver, cai para pais. Só devolve o
- * rotulo de oceano quando REALMENTE nao ha poligono nenhum sob o ponto.
- */
 export async function placeAt(lat, lng) {
   try {
     const gj = await getAllForLookup();
@@ -291,8 +257,8 @@ export async function placeAt(lat, lng) {
   return lat > 66.5 ? "Ártico" : lat < -60 ? "Antártica" : "Oceano";
 }
 
-// -------------------------------------------------------------------- rotas
-/** gzip manual: geojson comprime ~85% e o express não comprime por padrão */
+// rotas
+
 function sendJsonGz(req, res, obj, maxAge) {
   const body = Buffer.from(JSON.stringify(obj), "utf8");
   res.set("Content-Type", "application/json; charset=utf-8");

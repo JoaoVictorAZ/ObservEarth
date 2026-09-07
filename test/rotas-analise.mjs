@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { DIARIAS } from "../server/timeseries.js";
 import { NIVEIS, CAMPOS } from "../server/sounding.js";
 import { MODELOS, VARIAVEIS } from "../server/compare.js";
+import { closeStore } from "../server/store.js";
 
 const PORTA = 3941;
 process.env.PORT = String(PORTA);
@@ -34,7 +35,23 @@ process.env.PORT = String(PORTA);
 // a ordem em que se rodou.
 const DB = join(tmpdir(), `observatorio-teste-${process.pid}-${Date.now()}.db`);
 process.env.DB_PATH = DB;
-const limpar = () => { for (const s of ["", "-wal", "-shm"]) rmSync(DB + s, { force: true }); };
+/**
+ * FECHAR ANTES DE APAGAR.
+ *
+ * No Windows um arquivo aberto não pode ser removido, e o `node:sqlite` mantém
+ * o descritor vivo até `close()`. Sem isto, o processo terminava com sucesso e
+ * ainda assim cuspia `EBUSY: resource busy or locked` no final da suíte — um
+ * erro que não reprova nada e ensina a ignorar erro, que é pior que reprovar.
+ *
+ * O `try` existe porque o banco pode nem ter sido aberto quando um teste falha
+ * cedo, e um erro DENTRO do manipulador de saída esconderia a falha de verdade.
+ */
+const limpar = () => {
+  try { closeStore(); } catch { /* pode não ter sido aberto */ }
+  for (const s of ["", "-wal", "-shm"]) {
+    try { rmSync(DB + s, { force: true }); } catch { /* já foi, ou está preso */ }
+  }
+};
 process.on("exit", limpar);
 
 const vistas = [];

@@ -1,15 +1,3 @@
-// server/gribIndex.js
-// -----------------------------------------------------------------------------
-// Leitura de índices .idx GRIB2 e download parcial via HTTP Range requests.
-// -----------------------------------------------------------------------------
-
-/**
- * Interpreta o texto de um `.idx`.
- *
- * O fim de cada mensagem é o começo da seguinte. A última fica em aberto —
- * `fim: null` — porque o índice não diz o tamanho do arquivo, e inventar um
- * limite aqui truncaria a última mensagem.
- */
 export function parseIdx(texto) {
   const regs = [];
   for (const linha of String(texto).split("\n")) {
@@ -37,13 +25,7 @@ export function parseIdx(texto) {
   return regs;
 }
 
-/**
- * Acha as mensagens pedidas.
- *
- * `alvos` é uma lista de `{ campo, nivel }`. A comparação de nível é EXATA:
- * "10 m above ground" não pode casar com "100 m above ground", e um casamento
- * por prefixo faria exatamente isso.
- */
+
 export function acharRegistros(regs, alvos) {
   const achados = [];
   for (const a of alvos) {
@@ -53,16 +35,6 @@ export function acharRegistros(regs, alvos) {
   return achados;
 }
 
-/**
- * Junta registros vizinhos numa faixa só.
- *
- * UGRD e VGRD a 10 m são quase sempre consecutivos no arquivo. Uma faixa
- * contígua os cobre com UMA requisição em vez de duas — o que importa porque o
- * orçamento do projeto é um quarto do limite gratuito.
- *
- * O `fim: null` (última mensagem do arquivo) propaga: uma faixa aberta continua
- * aberta ao ser fundida, senão o corte truncaria a mensagem final.
- */
 export function fundirFaixas(regs) {
   if (!regs.length) return [];
   const ord = [...regs].sort((a, b) => a.inicio - b.inicio);
@@ -83,14 +55,6 @@ export function cabecalhoRange({ inicio, fim }) {
   return fim == null ? `bytes=${inicio}-` : `bytes=${inicio}-${fim}`;
 }
 
-/**
- * Baixa só as mensagens pedidas de um GRIB remoto.
- *
- * Devolve a concatenação dos intervalos. Como cada registro do índice é uma
- * mensagem GRIB2 completa (começa em "GRIB", termina em "7777"), concatenar
- * intervalos produz um GRIB2 válido de várias mensagens, que o decodificador lê
- * direto.
- */
 export async function baixarPorIndice(fetchImpl, urlGrib, alvos, { timeoutMs = 30000 } = {}) {
   const rIdx = await fetchImpl(`${urlGrib}.idx`, { signal: AbortSignal.timeout(timeoutMs) });
   if (!rIdx.ok) {
@@ -119,8 +83,7 @@ export async function baixarPorIndice(fetchImpl, urlGrib, alvos, { timeoutMs = 3
       headers: { Range: cabecalhoRange(f) },
       signal: AbortSignal.timeout(timeoutMs),
     });
-    // 206 é o esperado. Um 200 significa que o servidor IGNOROU o Range e está
-    // mandando o arquivo inteiro — meio gigabyte. Recusar é melhor que aceitar.
+
     if (r.status !== 206) {
       throw Object.assign(
         new Error(`servidor ignorou o Range (HTTP ${r.status}) — evitando baixar o arquivo inteiro`),

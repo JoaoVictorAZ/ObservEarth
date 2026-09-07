@@ -39,7 +39,7 @@ Outros comandos:
 |---|---|
 | `npm run build` | Checa tipos (`tsc -b`) e gera o bundle de produção em `dist/` |
 | `npm run preview` | Serve o `dist/` para conferir o build |
-| `npm test` | Roda a suíte inteira (~484 verificações) |
+| `npm test` | Roda a suíte inteira (~788 verificações) |
 | `npm run dev:all` | `dev` + o servidor Python de modelo próprio |
 | `npm run ingest` | Ingestão em lote de dados abertos (pipeline Python) |
 
@@ -150,6 +150,30 @@ com 4096 px de largura — 9,8 km por pixel, fixo, por mais que se aproximasse.
 Trinta e duas vezes mais fino no zoom fechado, com teto de 40 tiles por vista
 para o orçamento continuar de pé.
 
+**O globo agora usa a mesma pirâmide.** Ela ficou um tempo só no mapa plano, e
+isso era estranho: o globo é o modo padrão, e servia 32 vezes menos detalhe que
+o modo secundário. A matemática de `src/tiles.ts` não sabe se quem chama desenha
+num plano ou numa esfera, então o globo só precisou de duas coisas próprias.
+Um tile deixa de ser um retângulo e vira um **setor de casca esférica** —
+`SphereGeometry` com `phiStart`/`thetaStart`, e a imagem equirretangular cola
+nele sem reprojeção, porque os dois estão no mesmo espaço de coordenada. E a
+janela visível deixa de ser um retângulo de tela e vira uma **calota**:
+
+> Da altitude inicial de 1,7 raios, o que se enxerga do planeta é uma calota de
+> **68,3°** — não um hemisfério. O limite é a tangente que sai da câmera,
+> `acos(R/d)`, e supor 90° pediria quase o dobro da área em tiles, todos
+> jogados fora atrás da curvatura.
+
+A textura única de 4096 px continua carregada como **piso**: ela cobre o mundo
+inteiro de uma vez e segura a imagem enquanto os tiles do nível novo chegam.
+
+A pirâmide vale para satélite e **não** para campo do modelo, e a distinção é
+de dado. O MODIS tem 250 m nativos e o VIIRS 375 m: uma textura global de 4096
+px joga fora quase todo esse detalhe. Um campo do GFS tem 0,25°, ou seja 1.440
+colunas — a textura de 4096 já o amostra quase três vezes acima da resolução
+que ele tem. Pedir tiles ali seria ampliar pixel inventado e gastar cota
+para isso.
+
 O que o plano faz melhor:
 
 - **O antimeridiano deixa de partir o mundo.** O mapa é desenhado três vezes
@@ -169,6 +193,80 @@ justamente onde a corrente de jato importa.
 O terminador dia/noite também muda de implementação: no globo é luz direcional
 sobre a esfera, no plano é calculado por pixel a partir do ângulo zenital solar,
 com o crepúsculo civil na borda da sombra.
+
+### Fronteiras: costa, países e divisas
+
+Desenhadas como **linhas**, numa pirâmide de tiles com resolução que acompanha
+o zoom — a mesma grade da imagem de satélite, com geometria em vez de pixel.
+
+**O que havia antes.** A coleção de polígonos inteira ia para o `polygonsData`
+do three-globe, com o preenchimento e as laterais pintados de transparente:
+
+```js
+.polygonCapColor(()  => "rgba(0,0,0,0)")      // invisível
+.polygonSideColor(() => "rgba(0,0,0,0)")      // invisível
+.polygonStrokeColor(() => "rgba(255,255,255,0.30)")
+```
+
+O motor triangulava e extrudava 470 feições — 1.132 anéis, 44.652 vértices,
+1.044 kB — para que se visse **apenas o contorno delas**. Cada triângulo gerado
+era invisível por construção. E o nível de detalhe reenviava tudo a *cada*
+movimento de câmera com zoom, remontando a geometria por quadro.
+
+**E o detalhe era fixo.** A fonte de países era a de 110m — escala
+1:110.000.000, feita para ver o planeta numa página — e sobre ela ainda se
+aplicava Douglas-Peucker com tolerância cravada em 0,05°, que são 5,5 km.
+Aproximar não melhorava nada: a mesma linha grosseira era esticada, e uma
+península de 20 km simplesmente não existia no dado.
+
+#### A pirâmide
+
+| Nível | Fonte | Tolerância | Estados |
+|---|---|---|---|
+| 0–2 | Natural Earth 110m | 0,18° a 0,04° | não |
+| 3–4 | 50m | 0,022° a 0,011° | sim |
+| 5–7 | 10m | 0,0055° a 0,0014° (≈150 m) | sim |
+
+A tolerância não é escolhida, é **derivada**: um tile do nível z cobre
+360/2^(z+1) graus em 512 px, e meio pixel disso é o limite abaixo do qual dois
+vértices caem no mesmo pixel. Guardar mais é pagar banda por nada.
+
+O que trafega, medido contra o dado real:
+
+| Vista | Antes | Agora |
+|---|---|---|
+| Planeta inteiro | 1.044 kB | **44 kB** |
+| Continente | 1.044 kB | 9,9 kB |
+| País | 1.044 kB | 10,8 kB |
+| Região | 1.044 kB | **1,6 kB** — e a 10m, não a 110m |
+
+#### Simplificar antes de recortar, e nunca o contrário
+
+A ordem importa e não é intuitiva. Recortar primeiro e simplificar depois faz
+cada tile decidir sozinho quais vértices manter — e dois tiles vizinhos tomam
+decisões diferentes para a *mesma* linha. O resultado é uma fenda na costura,
+que aparece como um risco branco no litoral e que ninguém associa a um
+algoritmo de simplificação.
+
+Simplificando o conjunto inteiro uma vez por nível e recortando depois, a
+geometria é idêntica dos dois lados da emenda. O recorte também **não inventa
+vértice**: descarta segmentos inteiros em vez de calcular a interseção com a
+borda, porque vértice novo numa borda de tile é a outra origem clássica da
+fenda.
+
+#### O que isso responde sobre tiles vetoriais
+
+É exatamente a técnica, aplicada ao caso: **geometria servida por tile, por
+nível de zoom**, em vez de imagem. Não usa MVT nem depende de provedor externo
+— o formato binário é o mesmo padrão do vento e dos campos (cabeçalho,
+metadados alinhados, `Float32Array` sem cópia), e a fonte continua sendo a
+Natural Earth que o projeto já usava.
+
+O custo em desenho também caiu: todas as linhas de um tile cabem num único
+`LineSegments`, então é **uma chamada de desenho por tile** contra as milhares
+de malhas de antes. A hierarquia entre costa, limite internacional e divisa
+estadual é feita com cor no vértice — `linewidth` é ignorado por praticamente
+todo WebGL, e desenhar linha grossa exigiria gerar geometria de faixa.
 
 ### Relevo e batimetria
 
@@ -197,6 +295,208 @@ Duas consequências técnicas que valem registro:
   texels inventa uma rampa de 256 m numa borda onde o vermelho passa de 137 para
   138.
 
+### Malha 3D — a camada de análise
+
+Ligue *Malha 3D do campo* no painel esquerdo e o globo ganha relevo: o campo
+escalar escolhido deixa de ser só uma pintura e vira uma superfície, com
+altura proporcional ao valor. Ao lado, uma lista dos pontos onde esse relevo
+tem cume, fundo ou colo.
+
+**Por que altura, se a cor já diz o valor.** Porque as duas falham em coisas
+diferentes. A cor é um canal ruim para ordem: o olho compara cores vizinhas
+bem e cores distantes mal, e não diz se a diferença é grande sem voltar à
+legenda — e cerca de 8% dos homens não separam vermelho de verde, que é o eixo
+em que quase toda rampa meteorológica põe a informação principal. A altura é
+boa para ordem e péssima para valor absoluto: ninguém lê "1.032 hPa" de uma
+elevação, mas todo mundo vê num relance onde estão as cristas e os cavados,
+quantos são, e qual é mais fundo.
+
+A cor da malha é **exatamente** a mesma do PNG do mesmo campo — as paradas da
+rampa viajam do servidor junto com o catálogo, e um teste compara as duas
+implementações valor a valor. Se elas divergissem, o mesmo dado teria duas
+cores conforme fosse desenhado como textura ou como relevo, e não haveria como
+saber em qual acreditar.
+
+**O que a malha não é:** terreno. A altura é uma variável meteorológica
+esticada por um fator que você escolhe no painel, e o painel separa
+tipograficamente o que foi medido, o que foi calculado e o que foi escolhido.
+O relevo real, esse em metros, continua sendo outra camada.
+
+**Buraco continua buraco.** Um vértice sem dado não vira zero nem nível médio:
+os triângulos que o tocariam não são gerados, e a malha fica vazada ali.
+
+#### Os valores viajam como valores
+
+Para isto existir foi preciso uma rota nova. `/api/fields/:id` devolve um PNG —
+o campo já pintado. De uma cor não se tira derivada: a rampa é sobrejetora e
+não injetora, o alfa mistura o campo com o que está embaixo, e o PNG é
+quantizado a 8 bits por canal. Ler o valor de volta do pixel seria estimativa
+apresentada como medida.
+
+`/api/campo/:id` devolve os números, no mesmo formato binário que o vento já
+usava: cabeçalho, metadados em JSON alinhados a múltiplo de quatro, e os planos
+em `Float32Array` que o navegador aponta para dentro do próprio buffer
+recebido, sem cópia. Vários campos cabem no mesmo pacote — pedir
+`temp2m,dew2m` garante que os dois vieram da **mesma rodada** e da **mesma
+grade**, que é o que torna a comparação entre eles legítima.
+
+Os dois caminhos saem da mesma leitura do GRIB2. Se fossem leituras separadas,
+bastaria alguém corrigir a conversão de kelvin de um deles para a tela e a
+análise passarem a discordar sem nenhum teste perceber.
+
+#### Mínimos, máximos e selas
+
+O painel lista os pontos críticos com o valor, o lugar e a forma. Três decisões
+merecem registro.
+
+**A posição é refinada abaixo da célula.** A grade do GFS tem 27,8 km de passo;
+sem refino, todo centro de baixa aparece grudado no vértice mais próximo, e o
+erro é sistemático, não aleatório. Perto de um extremo o campo é bem descrito
+pela sua expansão de Taylor de segunda ordem, e o ponto crítico da quadrática
+é a solução de `H δ = −∇f` — um sistema 2×2, resolvido por Cramer. Quando δ sai
+da célula, o refino é recusado e vale o centro: Newton só converge onde a
+quadrática descreve o campo.
+
+**A classificação é topológica, não de curvatura.** A primeira versão usava o
+teste da segunda derivada — sinal do determinante e do traço da Hessiana. Ela
+devolveu, contra o campo de pressão real do GFS, 184 máximos − 94 selas + 222
+mínimos = **312**. A característica de Euler de uma esfera é 2. O erro não
+estava na Hessiana: estava em pedir a ela uma pergunta que não é dela. A
+resposta certa é combinatória — andar pelo elo de vizinhos e contar quantas
+vezes o campo cruza o valor do centro. Pelo teorema de Banchoff, o índice do
+vértice é `1 − mudanças/2`, e a soma dos índices sobre a esfera fecha em 2
+exatamente. Depois da reescrita, o mesmo campo devolve 663 máximos, 673 mínimos
+e 1.325 selas, **e a soma dá 2**.
+
+A Hessiana continua no arquivo, fazendo o que ela sabe: a **anisotropia** (a
+diferença entre uma cúpula e um cavado alongado), a orientação do eixo maior, e
+o refino. Geometria, não topologia.
+
+**A conta de Euler fica na tela.** Ela não conserta nada — ela diz se a
+detecção está completa, e é a única verificação disponível quando não há
+gabarito, que é sempre o caso com dado real. Quando o campo tem buracos ela
+deixa de fechar, e o painel diz que deixou.
+
+**O filtro é separado da detecção.** Um campo de pressão a 1° tem centenas de
+mínimos locais; uns dez são centros sinóticos e o resto é ondulação de meio
+hectopascal. O controle de *proeminência mínima* é em desvios padrão do próprio
+campo — "2 hPa" é razoável para pressão e sem sentido para umidade — com a
+tradução para a unidade ao lado.
+
+#### A conta que quase todo mundo erra
+
+A média espacial é ponderada pela **área** de cada célula, e não pelo número
+delas. A diferença não é sutil: uma célula de 0,25° tem 773 km² no equador e
+27 km² a 88°, vinte e oito vezes menos. Sem a ponderação, a grade dá aos polos
+— o lugar mais frio do planeta — um voto que a Terra não dá. Medido no campo
+de pressão de hoje, a correção vale **1,9 hPa**; num campo de temperatura, são
+vários graus.
+
+E o peso não é `cos φ`: é a integral exata do elemento de área sobre a faixa de
+latitude da célula, `sen φₙ − sen φₛ`, com as linhas polares valendo meia
+célula. A soma de todos os pesos fecha em 2 para qualquer `ny`, e é esse
+invariante que o teste confere.
+
+O desvio padrão espacial divide por `n`, e não por `n−1`. É o contrário do que
+`server/timeseries.js` faz, e os dois estão certos: a série de dez anos é uma
+*amostra* do clima, mas a grade não é uma amostra da região — é a região
+inteira, célula por célula.
+
+#### O cálculo, na esfera
+
+Gradiente, laplaciano e Hessiana são calculados com a métrica esférica, não
+como se a grade fosse papel quadriculado. Um passo de 0,25° em longitude vale
+27,8 km no equador e 1,0 km a 88°; dividir pelo passo angular faria um campo
+perfeitamente suave parecer ter uma frente meteorológica em toda latitude alta.
+
+O laplaciano é o de Laplace–Beltrami, com o termo `−tan φ · ∂f/∂φ` que vem da
+convergência dos meridianos. Ele é a diferença entre o operador certo e "somar
+as duas segundas derivadas", e não desaparece com refinamento — é modelo
+errado, não discretização grossa. O teste confere contra harmônicos esféricos,
+que são as autofunções do operador: `Δ Yₗᵐ = −l(l+1)/R² · Yₗᵐ`, para l = 1, 2 e
+3. Um sinal trocado ou um `R` esquecido não sobrevive a uma autofunção.
+
+Onde `cos φ → 0` a conta deixa de existir e a resposta é **"sem dado"**, nunca
+zero — zero afirmaria campo plano no lugar exato onde a grade lat/lng deixa de
+sustentar a derivada, e é justamente ali que fica o vórtice polar.
+
+### Recorte 3D — o bloco da região
+
+No rodapé da sonda, *Recorte 3D da região* arranca um paralelepípedo do planeta
+em volta do ponto e o põe sobre a mesa, com câmera livre.
+
+**Por que um bloco, e não mais uma camada no globo.** O globo é ótimo para ver
+*onde* e ruim para ver *quanto* em vertical: a câmera orbita o centro da Terra,
+e o relevo cabe em milésimos de raio. Levantá-lo até ficar visível transforma o
+planeta numa bola de espinhos. O bloco troca a pergunta — em vez de "onde no
+planeta", passa a ser "como é a coluna sobre **este** lugar". É o diagrama de
+bloco da geologia, que existe há um século e meio exatamente por isso.
+
+O que aparece, de baixo para cima:
+
+- **As paredes do corte**, com estratos a cada intervalo redondo de altitude e
+  uma linha distinta no nível do mar. Elas não são enfeite: são o único lugar
+  do bloco onde a escala vertical pode ser *lida* em vez de estimada — contar
+  faixas dá a altura sem eixo, sem rótulo e sem legenda. E a linha de zero
+  precisa mesmo se distinguir, porque a batimetria entra no mesmo raster: um
+  bloco de cidade costeira mostra o fundo do mar.
+- **O terreno**, em metros de verdade, tingido com a rampa hipsométrica de
+  qualquer atlas físico — azul de profundidade, verde de planície, ocre de
+  planalto, branco de neve. O salto no zero é brusco de propósito: −1 m e +1 m
+  são lados opostos da linha d'água.
+- **A malha do campo**, flutuando acima, com a mesma cor e a mesma escala do
+  globo.
+- **A agulha do ponto**, que sobe do piso até a malha e amarra as duas
+  superfícies à mesma coluna vertical.
+
+#### As duas verticais, e por que elas não podem ser a mesma
+
+O bloco carrega **dois** eixos verticais, e confundi-los seria mentir:
+
+| | está em | a altura é |
+|---|---|---|
+| **Terreno** | metros | altitude, com exagero declarado |
+| **Malha do campo** | hPa, °C, mm | **valor**, não altitude |
+
+Uma superfície de pressão desenhada "a 3 km" não está a três quilômetros de
+nada. Por isso a malha flutua numa faixa própria, separada por um vão visível,
+e os dois controles ficam em blocos distintos do painel. Encostar uma na outra
+faria parecer que a superfície de pressão é uma nuvem pousada no morro.
+
+O **exagero vertical** fica sempre visível ao lado do terreno, e o painel diz a
+razão real do recorte — num bloco de 60 km com 800 m de morro é 1:75, e sem
+exagero o relevo ocuparia menos de um pixel. Todo diagrama de bloco desde o
+século XIX declara esse número.
+
+#### De onde vem a altitude
+
+Dos mesmos tiles `terrarium` que o mapa plano já usa, com uma diferença que
+importa: ali a altitude nunca sai da GPU, porque o shader reprojeta e pinta. Um
+bloco precisa do número na CPU — cada vértice tem que saber a que altura fica.
+
+Dois cuidados no caminho, os dois testados:
+
+- **A reprojeção.** Os tiles só existem em Mercator Web e o bloco é construído
+  em lat/lng. Um erro aqui desloca o relevo em relação à imagem, e o
+  deslocamento *cresce* com a latitude — perfeito no equador, quilômetros fora
+  na Escandinávia.
+- **A ordem da decodificação.** O canal vermelho vale 256 m por unidade.
+  Interpolar os *pixels* e decodificar depois inventaria uma rampa de 256 m em
+  toda borda onde o vermelho troca de valor. Decodifica-se primeiro cada texel
+  para metros, e só então se interpola — metro é contínuo, byte não é.
+
+Conferido contra o mundo real, com o pipeline inteiro ligado:
+
+| Lugar | Lido | Referência |
+|---|---|---|
+| Everest | 8.673 m | 8.849 m (o cume suaviza a 150 m de amostra) |
+| Mar Morto | −415 m | ~−430 m |
+| Vale da Morte | −81 m | −86 m |
+| Fossa das Marianas | −10.584 m | ~−10.900 m |
+
+Cobertura ausente continua ausente: a malha fica vazada ali, sem platô
+inventado ao nível do mar.
+
 ### Barra de tempo (Tier 2)
 
 Rodada do modelo, hora da previsão, calendário, régua do tempo e controles de
@@ -224,6 +524,13 @@ ela aparece sozinha.
 Sobrepostos a qualquer camada: **vento**, **isóbaras**, **terremotos** (USGS ao
 vivo), **incêndios** (FIRMS), **qualidade do ar** (OpenAQ), **WBGT** e
 **hospitais**.
+
+E uma família à parte, **Análise**, que não mostra dado: mostra conta feita
+sobre dado. Hoje ela tem a **malha 3D do campo**, com os mínimos, máximos e
+selas — ver [Malha 3D](#malha-3d--a-camada-de-análise). Ela é um grupo próprio
+porque a regra de leitura é outra: a altura da malha é uma escolha de
+visualização, e não uma grandeza medida, ao contrário de tudo que está nas
+outras famílias.
 
 E o **controle de densidade de partículas** — uma régua que reduz a quantidade
 de partículas sem mudar a física. Serve para máquinas modestas e para quando
@@ -308,6 +615,11 @@ download só acontece quando você clica; abrir o painel não baixa nada.
 | **lucide-react** | Ícones |
 | **@mlc-ai/web-llm** | LLM no navegador via WebGPU |
 | Pirâmide de tiles própria | `src/tiles.ts` + `server/tiles.js`, sem biblioteca de mapa |
+| `src/tiles.ts` + `src/calota.ts` | A decisão que gasta cota, fora do motor e testável sem GPU |
+| `src/piramideGlobo.ts` | Os tiles como setores de casca esférica |
+| `src/malha/` | Cálculo, estatística e topologia sobre a grade — sem dependência externa |
+| `src/bloco/` | O recorte 3D: relevo em metros, geometria do bloco, cena com câmera livre |
+| `src/fronteiras.ts` + `server/fronteiras.js` | Fronteiras como linhas, em pirâmide de tiles vetoriais |
 | CSS à mão | Sistema de design próprio, sem framework de componentes |
 
 O motor do globo encapsula todo o contato com three.js e globe.gl. A interface
@@ -339,6 +651,7 @@ cai um nível; depois de folga sustentada ele volta a subir.
 | **SQLite** (`node:sqlite`) | Contador de uso de API, persistido em `data/` |
 | Decodificador GRIB2 próprio | `server/grib2.js` — sem dependência externa |
 | Leitor de índice `.idx` | `server/gribIndex.js` — baixa só a faixa de bytes que interessa |
+| `server/campo.js` + `campoBin.js` | Os valores do campo em binário, para a análise |
 
 O **decodificador GRIB2** foi escrito do zero e cobre os templates de
 empacotamento 5.0, 5.2 e 5.3, inteiros em sinal-magnitude e a reorientação de
@@ -404,6 +717,7 @@ a simulação de partículas para e o desenho cai para ~8 quadros por segundo.
 | Incêndios | **NASA FIRMS** | Exige chave gratuita |
 | Qualidade do ar | **OpenAQ** | |
 | Fronteiras | **Natural Earth** via jsDelivr | |
+| Malha 3D e pontos críticos | **NOAA GFS 0.25°**, valores brutos via `/api/campo` | Cálculo no navegador, sem serviço externo |
 
 O vento tem **disjuntor**: se o GFS falhar três vezes seguidas, o servidor
 desliga aquela fonte por vinte minutos e usa a Open-Meteo, em vez de martelar um

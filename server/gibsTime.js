@@ -1,15 +1,3 @@
-// server/gibsTime.js
-// -----------------------------------------------------------------------------
-// Resolução de dimensões temporais e disponibilidade de camadas NASA GIBS.
-// -----------------------------------------------------------------------------
-
-/**
- * Duracao ISO 8601 -> {months, ms}.
- *
- * Meses e anos ficam SEPARADOS dos milissegundos de proposito: mes nao tem
- * duracao fixa. Somar "30 dias" a 31 de janeiro erra o alvo, e ao longo de 45
- * anos de serie mensal o erro acumulado passa de um ano inteiro.
- */
 export function parseDuration(p) {
   const m = /^P(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/.exec(p);
   if (!m) return null;
@@ -41,12 +29,7 @@ function addMonths(date, n) {
 const monthsBetween = (a, b) =>
   (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + (b.getUTCMonth() - a.getUTCMonth());
 
-/**
- * Interpreta o conteudo de <Dimension name="time">.
- *
- * Formato: uma ou mais faixas separadas por virgula, cada uma
- * `inicio/fim/periodo`. Uma faixa pode ser um instante solto, sem barras.
- */
+
 export function parseTimeDimension(raw, defaultAttr = null) {
   const ranges = [];
   for (const part of String(raw ?? "").split(",")) {
@@ -89,9 +72,6 @@ function stepDown(r, want) {
     const total = monthsBetween(r.start, want);
     let idx = Math.floor(total / r.period.months);
     let at = addMonths(r.start, idx * r.period.months);
-    // O DIA DO MES pode empurrar o resultado para depois de `want`: uma serie
-    // que comeca em 31/01 tem instantes no dia 31, e pedir 15/04 daria 30/04.
-    // Recuar um passo resolve, e o laco cobre o caso de meses curtos.
     while (at > want && idx > 0) at = addMonths(r.start, --idx * r.period.months);
     return at < r.start ? r.start : at;
   }
@@ -100,16 +80,6 @@ function stepDown(r, want) {
   return new Date(r.start.getTime() + Math.max(0, idx) * r.period.ms);
 }
 
-/**
- * Converte a data pedida no instante valido mais proximo, para tras.
- *
- * "Para tras" e uma escolha, nao um detalhe: avancar mostraria dado de DEPOIS
- * da data que o usuario escolheu — num instrumento de leitura cientifica, isso
- * seria mentir sobre o que esta na tela.
- *
- * Devolve tambem `exact`, para a interface poder dizer que o que aparece nao e
- * exatamente o que foi pedido.
- */
 export function snapTime(dim, wantedStr) {
   if (!dim?.ranges?.length) return null;
   const want = new Date(hasClock(wantedStr) ? wantedStr : `${wantedStr}T00:00:00Z`);
@@ -123,14 +93,6 @@ export function snapTime(dim, wantedStr) {
     return { time: fmt(first.start, dim.clock), exact: false, reason: "before" };
   }
 
-  // Depois do fim da cobertura. E o caso das MERRA-2 hoje: reanalise sai com
-  // meses de atraso, entao "hoje" esta sempre fora da serie.
-  //
-  // ATENCAO: devolver `end` cru esta ERRADO. O fim declarado de uma faixa NAO
-  // precisa cair na grade do periodo — em `2000-01-01/2020-01-01/P8D` sao 7.305
-  // dias entre as pontas, que nao e multiplo de 8, entao 2020-01-01 nao e um
-  // instante da serie. Passar o fim pelo mesmo degrau garante um valor que
-  // existe de verdade.
   if (want > lastRange.end) {
     return { time: fmt(stepDown(lastRange, lastRange.end), dim.clock), exact: false, reason: "after" };
   }
@@ -139,9 +101,6 @@ export function snapTime(dim, wantedStr) {
     const r = dim.ranges[i];
     if (want < r.start) continue;
 
-    // Dentro da faixa usa a propria data; num BURACO entre faixas, recua para o
-    // fim da faixa anterior. Sem este segundo caso, um pedido entre 2023-11 e
-    // 2024-02 viraria um TIME que o GIBS recusa.
     const noBuraco = want > r.end;
     const at = stepDown(r, noBuraco ? r.end : want);
     const exact = !noBuraco && Math.abs(at - want) < 1000;
@@ -175,14 +134,6 @@ export function coverageOf(dim) {
   };
 }
 
-/**
- * Extrai o catalogo temporal de um GetCapabilities do WMS.
- *
- * Percorre por blocos <Layer>, nao por expressao unica sobre o documento
- * inteiro: as camadas sao ANINHADAS (ha <Layer> de grupo, como "Temperature",
- * envolvendo as de dado) e uma expressao global casaria o nome de um grupo com
- * a dimensao de outra camada.
- */
 export function parseCapabilities(xml) {
   const out = new Map();
   const nameRe = /<Name>([^<]+)<\/Name>/;

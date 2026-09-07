@@ -80,3 +80,41 @@ export function arrastar(modo: string, dx: number, dy: number, inicio: Caixa, li
 
   return travar(c, lim);
 }
+
+// -----------------------------------------------------------------------------
+// A CAIXA SALVA — mesma razão de estar aqui: é decisão pura, e se testa sem DOM.
+// -----------------------------------------------------------------------------
+
+/**
+ * Uma caixa salva serve para a tela de AGORA?
+ *
+ * Não basta ser um número finito. Uma janela posicionada numa tela de 3440 px
+ * e reaberta num notebook de 1366 nasce inteiramente fora da vista, e não há
+ * como trazê-la de volta: a barra de título, que é a alça, está fora também.
+ *
+ * O critério é o mesmo de `travar`: não é preciso caber inteira, é preciso
+ * sobrar alça. `margem` é quanto de janela precisa estar visível.
+ */
+export function caixaUsavel(
+  c: unknown, telaW: number, telaH: number, margem = 60,
+): c is Caixa {
+  if (!c || typeof c !== "object") return false;
+  const { x, y, w, h } = c as Partial<Caixa>;
+  if (![x, y, w, h].every((v) => typeof v === "number" && Number.isFinite(v))) return false;
+  if ((w as number) <= 0 || (h as number) <= 0) return false;
+  // alça alcançável na horizontal e cabeçalho dentro da tela na vertical
+  if ((x as number) + (w as number) < margem) return false;
+  if ((x as number) > telaW - margem) return false;
+  if ((y as number) < 0 || (y as number) > telaH - 40) return false;
+  return true;
+}
+
+export function lerCaixa(chave: string, padrao: Caixa, telaW: number, telaH: number): Caixa {
+  try {
+    const bruto = localStorage.getItem(chave);
+    if (!bruto) return padrao;
+    const c = JSON.parse(bruto);
+    if (caixaUsavel(c, telaW, telaH)) return c;
+  } catch { /* sem persistência, usa o padrão */ }
+  return padrao;
+}

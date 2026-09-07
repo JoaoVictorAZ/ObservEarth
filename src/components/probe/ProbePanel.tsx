@@ -4,10 +4,10 @@
 // minimização, arraste de cabeçalho e redimensionamento em 8 direções).
 // -----------------------------------------------------------------------------
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React from "react";
 import { useProbeStore } from "../../store/probeStore";
 import { useUIStore } from "../../store/uiStore";
-import { useWindowStore } from "../../store/windowStore";
+import { useBlocoStore } from "../../store/blocoStore";
 import {
   Thermometer, Wind, Droplets, Compass, BarChart2, Activity,
   Cloud, Sun, ArrowUpRight, Mountain, Gauge, GripVertical, X, Minus, RotateCcw
@@ -17,7 +17,7 @@ import {
   TEMPERATURA, ORVALHO, VENTO, RAJADA, UMIDADE, PRESSAO, CHUVA, NUVEM, UV, ELEVACAO,
 } from "../../probe/escalas";
 
-import { arrastar, travar, MOVER, type Caixa } from "../../arrasto";
+import { useJanelaFlutuante, MOVER, type Caixa } from "../../janelas";
 
 export type { Caixa };
 
@@ -34,25 +34,17 @@ const STORAGE_KEY = "obs:probe:pos:v3";
 const MIN_W = 340;
 const MIN_H = 220;
 
-function lerPadrao(): Caixa {
+/**
+ * O lugar de fábrica, recalculado a partir da tela.
+ *
+ * É uma FUNÇÃO e não uma constante porque o botão "organizar janelas" a chama
+ * de novo: a tela pode ter mudado de tamanho desde a montagem, e recolocar a
+ * janela numa coordenada de outra resolução seria o mesmo problema que o
+ * `caixaUsavel` existe para evitar.
+ */
+function padraoSonda(): Caixa {
   const W = typeof window !== "undefined" ? window.innerWidth : 1200;
-  const padrao: Caixa = {
-    x: Math.max(20, W - 480),
-    y: 80,
-    w: 450,
-    h: 410,
-  };
-  try {
-    const t = localStorage.getItem(STORAGE_KEY);
-    if (!t) return padrao;
-    const c = JSON.parse(t);
-    if ([c.x, c.y, c.w, c.h].every((v) => Number.isFinite(v))) {
-      if (c.x > 0 && c.x < W - 50 && c.y >= 0 && c.y < window.innerHeight - 50) {
-        return c;
-      }
-    }
-  } catch { /* usa padrão */ }
-  return padrao;
+  return { x: Math.max(20, W - 480), y: 80, w: 450, h: 410 };
 }
 
 interface LinhaProps {
@@ -106,58 +98,20 @@ export interface ProbePanelProps {
 export const ProbePanel: React.FC<ProbePanelProps> = ({ onToggleChat, chatAberto }) => {
   const { probe, clearProbe } = useProbeStore();
   const { setAnalysisTarget } = useUIStore();
-  const { activeWindow, focusWindow, minimizedWindows, toggleMinimize } = useWindowStore();
+  const abrirBloco = useBlocoStore((b) => b.abrir);
 
-  const [caixa, setCaixa] = useState<Caixa>(lerPadrao);
-  const [movendo, setMovendo] = useState(false);
-
-  const caixaRef = useRef<Caixa>(caixa);
-  caixaRef.current = caixa;
-
-  const isFocused = activeWindow === "probe" || activeWindow === null;
-  const isMinimized = !!minimizedWindows["probe"];
-
-  const limites = useCallback(() => ({
-    minW: MIN_W, minH: MIN_H, telaW: window.innerWidth, telaH: window.innerHeight,
-  }), []);
-
-  useEffect(() => {
-    const aoRedimensionar = () => setCaixa((c) => travar(c, limites()));
-    window.addEventListener("resize", aoRedimensionar);
-    return () => window.removeEventListener("resize", aoRedimensionar);
-  }, [limites]);
-
-  useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(caixa)); } catch { /* segue */ }
-  }, [caixa]);
-
-  const iniciarArrasto = (modo: string) => (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
-    if ((e.target as HTMLElement).closest("button")) return;
-
-    e.preventDefault();
-    focusWindow("probe");
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const startCaixa = { ...caixaRef.current };
-
-    setMovendo(true);
-
-    const aoMover = (ev: PointerEvent) => {
-      setCaixa(arrastar(modo, ev.clientX - startX, ev.clientY - startY, startCaixa, limites()));
-    };
-
-    const aoSoltar = () => {
-      setMovendo(false);
-      window.removeEventListener("pointermove", aoMover);
-      window.removeEventListener("pointerup", aoSoltar);
-      window.removeEventListener("pointercancel", aoSoltar);
-    };
-
-    window.addEventListener("pointermove", aoMover);
-    window.addEventListener("pointerup", aoSoltar);
-    window.addEventListener("pointercancel", aoSoltar);
-  };
+  // Todo o comportamento de janela — posição salva, arraste, foco, minimizar,
+  // recolocar — mora em `src/janelas.ts`. Ver o cabeçalho de lá para o porquê.
+  const jan = useJanelaFlutuante({
+    id: "probe",
+    chave: STORAGE_KEY,
+    padrao: padraoSonda,
+    minW: MIN_W,
+    minH: MIN_H,
+    // A sonda é a primeira janela da sessão: com `activeWindow` ainda nulo ela
+    // vale como focada, senão nasceria atrás de nada.
+    focoPadrao: true,
+  });
 
   if (!probe) return null;
 
@@ -170,22 +124,16 @@ export const ProbePanel: React.FC<ProbePanelProps> = ({ onToggleChat, chatAberto
 
   return (
     <div
-      className={`probe ${movendo ? "probe-movendo" : ""} ${isFocused ? "win-foco" : ""} ${isMinimized ? "win-minimizada" : ""}`}
-      style={{
-        left: caixa.x,
-        top: caixa.y,
-        width: caixa.w,
-        height: isMinimized ? "auto" : caixa.h,
-        zIndex: isFocused ? 30 : 20,
-      }}
-      onPointerDownCapture={() => focusWindow("probe")}
+      className={`probe ${jan.movendo ? "probe-movendo" : ""} ${jan.focada ? "win-foco" : ""} ${jan.minimizada ? "win-minimizada" : ""}`}
+      style={jan.estilo}
+      onPointerDownCapture={jan.trazerParaFrente}
       role="dialog"
       aria-label={`Sonda ${probe.place}`}
     >
       <header
         className="probe-header"
-        onPointerDown={iniciarArrasto(MOVER)}
-        onDoubleClick={() => toggleMinimize("probe")}
+        onPointerDown={jan.iniciarArrasto(MOVER)}
+        onDoubleClick={jan.alternarMinimizar}
         title="Clique duplo para minimizar/expandir"
       >
         <GripVertical size={14} strokeWidth={1.6} className="probe-pega" aria-hidden="true" />
@@ -198,15 +146,13 @@ export const ProbePanel: React.FC<ProbePanelProps> = ({ onToggleChat, chatAberto
             type="button"
             className="probe-btn-topo"
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              setCaixa({
-                x: Math.max(20, window.innerWidth - 450),
-                y: 70,
-                w: 420,
-                h: 460,
-              });
-            }}
+            // O BOTÃO USA O MESMO LUGAR DE FÁBRICA que a montagem.
+            //
+            // Ele cravava outra caixa aqui — 420x460 em x = W−450 — enquanto a
+            // janela nascia com 450x410 em x = W−480. Duas "posições padrão"
+            // para a mesma janela, e resetar a movia para um lugar onde ela
+            // nunca tinha estado.
+            onClick={(e) => { e.stopPropagation(); jan.recolocar(); }}
             title="Resetar posição da janela"
             aria-label="Resetar posição"
           >
@@ -218,9 +164,9 @@ export const ProbePanel: React.FC<ProbePanelProps> = ({ onToggleChat, chatAberto
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
-              toggleMinimize("probe");
+              jan.alternarMinimizar();
             }}
-            title={isMinimized ? "Expandir janela" : "Minimizar janela"}
+            title={jan.minimizada ? "Expandir janela" : "Minimizar janela"}
             aria-label="Minimizar sonda"
           >
             <Minus size={14} strokeWidth={1.6} />
@@ -240,7 +186,7 @@ export const ProbePanel: React.FC<ProbePanelProps> = ({ onToggleChat, chatAberto
         </div>
       </header>
 
-      {!isMinimized && (
+      {!jan.minimizada && (
         <div className="probe-corpo">
           <div className="prows">
             <Linha icone={<Thermometer {...ico} />} rotulo="Temperatura (2 m)"
@@ -287,6 +233,16 @@ export const ProbePanel: React.FC<ProbePanelProps> = ({ onToggleChat, chatAberto
                 <span>{chatAberto ? "Ocultar Terminal LLM" : "Terminal LLM"}</span>
               </button>
             )}
+            {/* O RECORTE 3D é a resposta para "como é AQUI", e o globo não
+                consegue dar: ali a câmera orbita o centro da Terra e a vertical
+                cabe em milésimos de raio. Ver src/bloco/cena.ts. */}
+            <button
+              type="button"
+              className="probe-analise"
+              onClick={() => abrirBloco(probe.lat, probe.lng)}
+            >
+              <span>Recorte 3D da região</span>
+            </button>
             <button
               type="button"
               className="probe-analise"
@@ -304,14 +260,14 @@ export const ProbePanel: React.FC<ProbePanelProps> = ({ onToggleChat, chatAberto
       )}
 
       {/* Puxadores de redimensionamento em 8 direções */}
-      <div className="win-puxa win-puxa-n" onPointerDown={iniciarArrasto("c")} />
-      <div className="win-puxa win-puxa-s" onPointerDown={iniciarArrasto("b")} />
-      <div className="win-puxa win-puxa-e" onPointerDown={iniciarArrasto("d")} />
-      <div className="win-puxa win-puxa-w" onPointerDown={iniciarArrasto("e")} />
-      <div className="win-puxa win-puxa-nw" onPointerDown={iniciarArrasto("ec")} />
-      <div className="win-puxa win-puxa-ne" onPointerDown={iniciarArrasto("dc")} />
-      <div className="win-puxa win-puxa-sw" onPointerDown={iniciarArrasto("eb")} />
-      <div className="win-puxa win-puxa-se" onPointerDown={iniciarArrasto("db")} />
+      <div className="win-puxa win-puxa-n" onPointerDown={jan.iniciarArrasto("c")} />
+      <div className="win-puxa win-puxa-s" onPointerDown={jan.iniciarArrasto("b")} />
+      <div className="win-puxa win-puxa-e" onPointerDown={jan.iniciarArrasto("d")} />
+      <div className="win-puxa win-puxa-w" onPointerDown={jan.iniciarArrasto("e")} />
+      <div className="win-puxa win-puxa-nw" onPointerDown={jan.iniciarArrasto("ec")} />
+      <div className="win-puxa win-puxa-ne" onPointerDown={jan.iniciarArrasto("dc")} />
+      <div className="win-puxa win-puxa-sw" onPointerDown={jan.iniciarArrasto("eb")} />
+      <div className="win-puxa win-puxa-se" onPointerDown={jan.iniciarArrasto("db")} />
     </div>
   );
 };

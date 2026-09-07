@@ -8,6 +8,8 @@ import { useUIStore } from "../../store/uiStore";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { FAMILIES, ruleOf, OVERLAY_LAYERS, FIELD_FAMILY, type Family } from "../../design/taxonomy";
 import { DensidadeVento } from "./DensidadeVento";
+import { MalhaPainel } from "./MalhaPainel";
+import { useMalhaStore } from "../../store/malhaStore";
 
 /** um item de raster: campo do GFS, camada de modelo ou de satélite */
 interface ItemRaster {
@@ -31,8 +33,12 @@ export const LeftDock: React.FC = () => {
     relevoOn, setRelevoOn,
     hycomOn, setHycomOn,
     windInfo, isoInfo, fireInfo, geoInfo,
+    openaqInfo, hospitalInfo, hycomInfo,
   } = useLayerStore();
   const { modo } = useGlobeStore();
+  const malhaAtiva = useMalhaStore((m) => m.ativa);
+  const setMalhaAtiva = useMalhaStore((m) => m.setAtiva);
+  const malhaErro = useMalhaStore((m) => m.erro);
 
   const { sidebarOpen } = useUIStore();
   const [busca, setBusca] = useState("");
@@ -86,18 +92,31 @@ export const LeftDock: React.FC = () => {
 
   const overlayEstado: Record<string, [boolean, (v: boolean) => void, string | null]> = {
     wind: [wind, setWind, windInfo],
-    hycom: [hycomOn, setHycomOn, null],
+    // TRÊS CANAIS DE PROCEDÊNCIA ESTAVAM MORTOS AQUI.
+    //
+    // `setHycomInfo`, `setOpenaqInfo` e `setHospitalInfo` eram chamados pelo
+    // viewport a cada carga, e esta tabela passava `null` no lugar deles. O
+    // texto era calculado e jogado fora.
+    //
+    // Não é detalhe cosmético: foi assim que um campo de correntes com 5,9% de
+    // cobertura ficou na tela sem ninguém saber. O painel do vento avisa
+    // quando a grade cai para 3°; o das correntes não avisava de nada.
+    hycom: [hycomOn, setHycomOn, hycomInfo],
     isobars: [isobarsOn, setIsobarsOn, isoInfo],
     quakes: [quakesOn, setQuakesOn, null],
     fires: [firesOn, setFiresOn, fireInfo],
-    openaq: [openaqOn, setOpenaqOn, null],
-    hospitals: [hospitalsOn, setHospitalsOn, null],
+    openaq: [openaqOn, setOpenaqOn, openaqInfo],
+    hospitals: [hospitalsOn, setHospitalsOn, hospitalInfo],
     // O relevo é a única camada que ainda depende do modo: o atlas de
     // elevação é reprojetado num plano, e o globo não tem onde recebê-lo.
     // Dizer isso na linha da camada é melhor que um interruptor que liga e
     // não faz nada.
     relevo: [relevoOn, setRelevoOn,
       modo === "mapa" ? null : "disponível no modo mapa plano"],
+    // Simétrico ao relevo: a malha de campo escalar existe no GLOBO e não no
+    // plano. Ver a nota sobre capacidades opcionais em src/tipos.ts.
+    malha: [malhaAtiva, setMalhaAtiva,
+      modo === "mapa" ? "disponível no modo globo" : malhaErro],
   };
 
   const alterna = (id: string) => setFechadas((f) => ({ ...f, [id]: !f[id] }));
@@ -213,6 +232,7 @@ export const LeftDock: React.FC = () => {
                           só aparece com ela ligada: controle de coisa desligada
                           é ruído, e pior, sugere que faz algo agora. */}
                       {on && o.id === "wind" && <DensidadeVento />}
+                      {on && o.id === "malha" && modo !== "mapa" && <MalhaPainel />}
                     </div>
                   );
                 })}

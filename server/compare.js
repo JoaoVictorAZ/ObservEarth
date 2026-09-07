@@ -1,12 +1,4 @@
-// server/compare.js
-// -----------------------------------------------------------------------------
-// Comparação entre modelos numéricos globais (GFS, ICON, ECMWF).
-// -----------------------------------------------------------------------------
 
-/**
- * Os três centros globais. `id` é o parâmetro da API; o resto é para a tela
- * não precisar saber decodificar nome de modelo.
- */
 export const MODELOS = [
   { id: "gfs_seamless",  sigla: "GFS",   centro: "NOAA · Estados Unidos",  grade: "0,11°/0,25°" },
   { id: "icon_seamless", sigla: "ICON",  centro: "DWD · Alemanha",         grade: "11 km" },
@@ -20,13 +12,6 @@ export const VARIAVEIS = [
   { id: "precipitation",    rotulo: "Precipitação",          unidade: "mm",  casas: 1 },
 ];
 
-/**
- * Dispersão entre modelos num instante: amplitude e desvio.
- *
- * Com menos de dois modelos NÃO existe dispersão — e o campo é null, não zero.
- * Zero significaria "os modelos concordam perfeitamente", que é a conclusão
- * oposta de "só um modelo respondeu".
- */
 export function dispersao(valores) {
   const bons = valores.filter((v) => v != null && Number.isFinite(v));
   if (bons.length < 2) {

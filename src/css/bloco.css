@@ -1,0 +1,239 @@
+/* src/css/bloco.css — o recorte 3D da região.
+ *
+ * A janela é dividida em PALCO e LADO, e a divisão carrega a hierarquia: o
+ * bloco é o que se lê, e os controles existem para ajustá-lo. Num painel de
+ * instrumento a proporção entre as duas partes é a afirmação mais forte sobre
+ * o que importa — por isso o palco fica com todo o espaço que sobra e o lado
+ * tem largura fixa.
+ */
+
+.bloco {
+  position: fixed;
+  display: flex; flex-direction: column;
+  min-width: 420px; min-height: 340px;
+  background: var(--scrim);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-lg);
+  box-shadow: var(--e-float);
+  backdrop-filter: blur(14px);
+  overflow: hidden;
+}
+.bloco-movendo, .bloco-movendo * { user-select: none; cursor: grabbing !important; }
+
+/* ---- cabeçalho ---------------------------------------------------------- */
+.bloco-head {
+  flex: none; display: flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+  cursor: grab;
+}
+.bloco-head:active { cursor: grabbing; }
+.bloco-pega { flex: none; color: var(--ink-4); }
+.bloco-titulos { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.bloco-tit {
+  display: flex; align-items: center; gap: var(--s-2);
+  font-size: var(--t-body); font-weight: var(--w-medium); color: var(--ink);
+}
+.bloco-tit svg { color: var(--fam-analise); }
+.bloco-coord {
+  font-family: var(--mono); font-size: var(--t-micro); color: var(--ink-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.bloco-botoes-topo { flex: none; display: flex; gap: 2px; }
+.bloco-btn-topo {
+  display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 3px;
+  color: var(--ink-3); background: transparent; border: none; cursor: pointer;
+}
+.bloco-btn-topo:hover { color: var(--ink); background: var(--surface-hi); }
+.bloco-btn-topo:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+
+/* ---- corpo: palco + lado ------------------------------------------------ */
+.bloco-corpo { flex: 1; min-height: 0; display: flex; }
+
+.bloco-palco {
+  flex: 1; min-width: 0; position: relative;
+  background: #070a10;
+}
+/* O canvas tem que preencher o palco em PIXEL, não em porcentagem: um canvas
+   dimensionado por CSS estica a imagem em vez de renderizar mais pixels, e o
+   relevo sai borrado. O `ResizeObserver` no componente é quem repassa o
+   tamanho real ao renderizador. */
+.bloco-canvas { display: block; width: 100%; height: 100%; }
+
+.bloco-aviso {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  padding: var(--s-3) var(--s-4);
+  background: var(--scrim); border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  font-size: var(--t-micro); color: var(--ink-2);
+  max-width: 78%; text-align: center; line-height: 1.5;
+}
+.bloco-aviso-erro { color: #ff9d8a; border-color: rgb(255 107 87 / 0.4); }
+
+/* A dica de navegação some no hover: ela ensina uma vez e depois atrapalha. */
+.bloco-dica {
+  position: absolute; left: var(--s-4); bottom: var(--s-3);
+  font-size: var(--t-micro); color: var(--ink-4);
+  pointer-events: none;
+  transition: opacity var(--m-fast) var(--ease);
+}
+.bloco-palco:hover .bloco-dica { opacity: 0; }
+
+.bloco-lado {
+  flex: none; width: 268px;
+  border-left: 1px solid var(--rule);
+  padding: var(--s-4);
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: var(--s-4);
+  background: rgb(255 255 255 / 0.012);
+}
+
+/* ---- o que foi MEDIDO --------------------------------------------------- */
+.bloco-res { display: flex; flex-direction: column; gap: var(--s-2); }
+.bloco-num { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-3); }
+.bloco-num-r { font-size: var(--t-micro); color: var(--ink-3); }
+.bloco-num-v {
+  font-family: var(--mono); font-size: var(--t-micro); color: var(--ink);
+  font-variant-numeric: tabular-nums; text-align: right;
+}
+.bloco-num-v small { display: block; color: var(--ink-4); font-size: 0.9em; }
+
+/* ---- os grupos de controle --------------------------------------------- */
+.bloco-grupo {
+  display: flex; flex-direction: column; gap: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--rule-soft);
+}
+.bloco-h {
+  margin: 0;
+  font-size: var(--t-micro); font-weight: var(--w-medium);
+  letter-spacing: .06em; text-transform: uppercase;
+  color: var(--fam-analise);
+}
+
+.bloco-lin { display: block; }
+.bloco-rot {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-3);
+  font-size: var(--t-micro); color: var(--ink-3);
+  margin-bottom: var(--s-2);
+}
+.bloco-rot output {
+  font-family: var(--mono); color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.bloco-seg { display: flex; align-items: center; gap: 2px; }
+.bloco-seg-btn {
+  flex: 1;
+  background: transparent; color: var(--ink-3);
+  border: 1px solid var(--rule-soft); border-radius: 3px;
+  padding: var(--s-2) 0;
+  font-family: var(--mono); font-size: var(--t-micro);
+  cursor: pointer;
+  transition: color var(--m-fast) var(--ease), border-color var(--m-fast) var(--ease);
+}
+.bloco-seg-btn:hover { color: var(--ink-2); border-color: var(--rule-hi); }
+.bloco-seg-on { color: var(--void); background: var(--fam-analise); border-color: var(--fam-analise); }
+.bloco-seg-un { flex: none; font-size: var(--t-micro); color: var(--ink-4); padding-left: 2px; }
+
+.bloco input[type="range"] {
+  width: 100%; height: 16px; margin: 0;
+  appearance: none; background: transparent; cursor: pointer;
+}
+.bloco input[type="range"]::-webkit-slider-runnable-track {
+  height: 2px; background: var(--rule-hi); border-radius: 1px;
+}
+.bloco input[type="range"]::-moz-range-track {
+  height: 2px; background: var(--rule-hi); border-radius: 1px;
+}
+.bloco input[type="range"]::-webkit-slider-thumb {
+  appearance: none; width: 14px; height: 14px; margin-top: -6px;
+  background: var(--fam-analise); border: 2px solid var(--void); border-radius: 50%;
+}
+.bloco input[type="range"]::-moz-range-thumb {
+  width: 14px; height: 14px;
+  background: var(--fam-analise); border: 2px solid var(--void); border-radius: 50%;
+}
+.bloco input[type="range"]:focus-visible { outline: none; }
+.bloco input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px var(--signal-dim);
+}
+
+.bloco-sw {
+  display: flex; align-items: center; gap: var(--s-3);
+  font-size: var(--t-micro); color: var(--ink-3); cursor: pointer;
+}
+.bloco-sw input { accent-color: var(--fam-analise); margin: 0; }
+.bloco-sw:hover { color: var(--ink-2); }
+
+.bloco-nota {
+  margin: 0; font-size: var(--t-micro); color: var(--ink-4); line-height: 1.5;
+}
+.bloco-nota strong { color: var(--ink-2); font-weight: var(--w-medium); }
+
+/* A ressalva não é rodapé: ela muda o que se pode concluir do que está acima. */
+.bloco-ressalva {
+  margin: 0; padding: var(--s-2) var(--s-3);
+  border-left: 2px solid #ffb454;
+  background: rgb(255 180 84 / 0.07);
+  font-size: var(--t-micro); color: var(--ink-2); line-height: 1.5;
+}
+
+.bloco-ligar {
+  display: block; margin-top: var(--s-2);
+  background: transparent; color: var(--fam-analise);
+  border: 1px solid currentColor; border-radius: 3px;
+  padding: 3px 8px; font: inherit; font-size: var(--t-micro); cursor: pointer;
+}
+.bloco-ligar:hover { background: rgb(159 224 176 / 0.10); }
+
+.bloco-fonte {
+  margin: 0; padding-top: var(--s-3);
+  border-top: 1px solid var(--rule-soft);
+  font-size: var(--t-micro); color: var(--ink-4); line-height: 1.5;
+}
+
+/* Numa janela estreita o lado passa para baixo do palco: com 268 px de
+   controles e 150 de palco não sobra bloco para ver. */
+@media (max-width: 760px) {
+  .bloco-corpo { flex-direction: column; }
+  .bloco-lado { width: auto; border-left: none; border-top: 1px solid var(--rule); }
+  .bloco-palco { min-height: 220px; }
+}
+
+/* -----------------------------------------------------------------------------
+   O AVISO DE PAINEL QUEBRADO
+   -----------------------------------------------------------------------------
+   Ver `src/components/Limite.tsx`. Fica no canto, discreto e legível: é uma
+   falha isolada, e não um alarme sobre o resto da tela.
+   -------------------------------------------------------------------------- */
+.limite-quebrou {
+  position: fixed;
+  right: 20px;
+  bottom: 64px;
+  z-index: 60;
+  max-width: 380px;
+  padding: 14px 16px;
+  border: 1px solid rgba(232, 104, 88, 0.45);
+  border-radius: 10px;
+  background: rgba(20, 12, 14, 0.96);
+  color: #f3dcd8;
+  font-size: 12.5px;
+  line-height: 1.5;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.55);
+}
+.limite-quebrou strong { display: block; margin-bottom: 6px; color: #f2a094; }
+.limite-quebrou p { margin: 0 0 8px; }
+.limite-nota { color: #b09a97; font-size: 11.5px; }
+.limite-quebrou button {
+  padding: 5px 11px;
+  border: 1px solid rgba(232, 104, 88, 0.5);
+  border-radius: 6px;
+  background: transparent;
+  color: #f2a094;
+  font: inherit;
+  cursor: pointer;
+}
+.limite-quebrou button:hover { background: rgba(232, 104, 88, 0.14); }

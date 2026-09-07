@@ -157,3 +157,36 @@ export interface MotorComRelevo {
 export function temRelevo(m: MotorGeo | null): m is MotorGeo & MotorComRelevo {
   return !!m && typeof (m as Partial<MotorComRelevo>).setRelevo === "function";
 }
+
+// -----------------------------------------------------------------------------
+// A MALHA 3D é a segunda capacidade opcional, e fica de fora do `MotorGeo` pela
+// mesma razão que o relevo — a razão está escrita acima e vale palavra por
+// palavra aqui.
+//
+// A diferença é de qual motor sabe fazer o quê, e ela é simétrica: o relevo em
+// metros existe no MAPA PLANO e não no globo; a malha de campo escalar existe
+// no GLOBO e não no plano. Não é distração — no plano a "altura" teria de ser
+// desenhada como sombreado ou contorno, que é outra representação, e fingir que
+// é a mesma coisa esconderia a diferença de quem lê.
+// -----------------------------------------------------------------------------
+
+/** o que a malha precisa saber para transformar valor em altura e em cor */
+export interface EscalaMalha {
+  lo: number;
+  hi: number;
+  stops: [number, [number, number, number]][];
+  modo: "rampa" | "faixas";
+}
+
+export interface MotorComMalha {
+  setMalha(campo: unknown | null, escala: EscalaMalha | null): void;
+  setMalhaVisivel(on: boolean): void;
+  setMalhaExagero(x: number): void;
+  setMalhaArame(on: boolean): void;
+  setMalhaOpacidade(o: number): void;
+  setExtremos(pontos: unknown[]): void;
+}
+
+export function temMalha(m: MotorGeo | null): m is MotorGeo & MotorComMalha {
+  return !!m && typeof (m as Partial<MotorComMalha>).setMalha === "function";
+}

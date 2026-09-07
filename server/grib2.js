@@ -20,16 +20,6 @@ class BitReader {
         throw new Error(`BitReader: leitura além do buffer (pos=${this.pos}, len=${this.buf.length})`);
       }
       const b = this.buf[byteIdx];
-      // MULTIPLICAR POR 2, NUNCA `v << 1`.
-      //
-      // Os operadores de deslocamento do JavaScript convertem para inteiro de
-      // 32 bits COM SINAL. No 32º bit, `v << 1` estoura e o valor vira
-      // negativo: uma leitura de 32 bits com todos os bits em 1 devolve -1 em
-      // vez de 4.294.967.295. A aritmética de ponto flutuante é exata até 2^53
-      // e não tem esse limite.
-      //
-      // Não é hipotético: larguras de 32 bits aparecem em contagens de pontos
-      // e em comprimentos de seção de arquivos globais.
       v = v * 2 + ((b >> (7 - (this.pos & 7))) & 1);
       this.pos++;
     }
@@ -45,23 +35,7 @@ class BitReader {
   }
 }
 
-/**
- * Inteiro com SINAL-MAGNITUDE — a convenção do GRIB2, não complemento de dois.
- *
- * WMO FM 92, Regulamento 92.1.4: o bit mais significativo é o SINAL e os
- * demais são a MAGNITUDE. Não há complemento.
- *
- *   0x802A  ->  sinal negativo, magnitude 0x2A  ->  -42
- *
- * Lido como complemento de dois, o mesmo valor daria -32726. Isso não gera
- * erro em lugar nenhum: entra silenciosamente nos fatores de escala da seção 5
- * (valor = (R + X·2^E) / 10^D). Um expoente E = -2, corriqueiro no GFS, seria
- * lido como -32766, e 2^-32766 é zero — o campo inteiro sai zerado, e a tela
- * mostra "sem dado" como se fosse a atmosfera que estivesse vazia.
- *
- * `v * 256` em vez de `v << 8` pela mesma razão do BitReader: o deslocamento
- * trunca em 32 bits com sinal.
- */
+
 function signedFromBytes(buf, off, len) {
   if (!len || len > 6) throw new Error(`signedFromBytes: len inválido ${len}`);
   let v = 0;
@@ -72,10 +46,6 @@ function signedFromBytes(buf, off, len) {
 
 function u8(b, o)  { return b[o]; }
 function u16(b, o) { return (b[o] << 8) | b[o + 1]; }
-// `>>> 0` é obrigatório: sem ele, qualquer valor com o bit 31 ligado sai
-// NEGATIVO (0xFF000010 vira -16.777.200). Comprimento de mensagem e número de
-// pontos passam por aqui, e um negativo faz a varredura de seções sair do lugar
-// — o sintoma foi "grade lida 4x0", uma grade sem linhas.
 function u32(b, o) { return (((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0); }
 function i16(b, o) { return signedFromBytes(b, o, 2); }
 function i32(b, o) { return signedFromBytes(b, o, 4); }
@@ -117,28 +87,6 @@ function readMessage(buf, start) {
 // ⬅️ BUGFIX CRÍTICO: offsets corrigidos para GRIB2 Section 3 Template 0
 function parseGrid(buf, s) {
   const o = s.off;
-  // -------------------------------------------------------------------------
-  // OCTETO É 1-BASED; DESLOCAMENTO É 0-BASED.
-  //
-  // A norma WMO numera os octetos a partir de 1, então o octeto N está em
-  // `o + N - 1`. Ler o comentário "octetos 31-34" e escrever `o + 34` desloca
-  // tudo em quatro bytes — e é uma confusão fácil, porque o número do último
-  // octeto do campo parece o deslocamento do primeiro.
-  //
-  // Mapeamento conferido contra FM 92, Seção 3 e Gabarito 3.0:
-  //
-  //   nPoints   octetos  7-10  ->  o + 6
-  //   template  octetos 13-14  ->  o + 12
-  //   Ni        octetos 31-34  ->  o + 30
-  //   Nj        octetos 35-38  ->  o + 34
-  //   La1       octetos 47-50  ->  o + 46
-  //   Lo1       octetos 51-54  ->  o + 50
-  //   La2       octetos 56-59  ->  o + 55
-  //   Lo2       octetos 60-63  ->  o + 59
-  //   Di        octetos 64-67  ->  o + 63
-  //   Dj        octetos 68-71  ->  o + 67
-  //   scanMode  octeto     72  ->  o + 71
-  // -------------------------------------------------------------------------
   const nPoints = u32(buf, o + 6);
   const tpl = u16(buf, o + 12);
   if (tpl !== 0) {
@@ -157,12 +105,6 @@ function parseGrid(buf, s) {
   return {
     ni, nj, nPoints, la1, lo1, la2, lo2, di, dj, scanMode,
     iNegative: !!(scanMode & 0x80),
-    // Tabela de Bandeiras 3.4, bit 2 (0x40):
-    //   0 = varredura em -j  (norte -> sul, primeira linha já é o norte)
-    //   1 = varredura em +j  (sul -> norte, precisa inverter as linhas)
-    // Portanto BIT LIGADO significa +j. A leitura invertida deixa o campo de
-    // cabeça para baixo: o mapa continua plausível, só que com a Antártida no
-    // topo — e num campo de vento oceânico isso passa despercebido.
     jPositive: !!(scanMode & 0x40),
     consecutiveJ: !!(scanMode & 0x20),
   };
@@ -224,38 +166,6 @@ function unpackComplex(buf, s7, drs) {
   let ival1 = 0, ival2 = 0, minsd = 0;
   if (drs.tpl === 3 && drs.extraOctets > 0) {
     const nb = drs.extraOctets * 8;
-    // REVERTIDO A PEDIDO: volta ao complemento de dois.
-    //
-    // ------------------------------------------------------------------------
-    // REGISTRO DA DISCORDÂNCIA, para não se perder.
-    //
-    // Estes três valores semeiam a reconstrução por diferenciação espacial:
-    // `ival1`/`ival2` são os primeiros pontos e `minsd` é o mínimo global das
-    // diferenças. A reconstrução é uma RECORRÊNCIA — x[i] += 2·x[i-1] − x[i-2] —
-    // então um erro na semente NÃO fica local: propaga linearmente ao longo de
-    // 1.038.240 pontos e vira uma rampa que cresce sem limite.
-    //
-    // A norma (WMO FM 92, Reg. 92.1.4) especifica sinal-magnitude para inteiro
-    // com sinal no GRIB2, e a g2clib do próprio NCEP lê estes campos assim:
-    // um bit de sinal, depois (n−1) bits de magnitude, negando se o bit estiver
-    // ligado. Foi por isso que troquei.
-    //
-    // Se o vento melhorar com o complemento de dois, a explicação provável é
-    // que o problema esteja em OUTRO ponto do desempacotamento — largura de
-    // grupo, comprimento de grupo ou alinhamento — e a semente errada estivesse
-    // compensando parcialmente. Vale conferir com /api/wind/grib-debug antes de
-    // fechar a questão.
-    // ------------------------------------------------------------------------
-    // SINAL-MAGNITUDE. Agora com prova, não com argumento de autoridade.
-    //
-    // `test/grib53.mjs` codifica um campo conhecido no gabarito 5.3 conforme a
-    // norma e manda decodificar. Com complemento de dois, um `minsd` de −3 é
-    // lido como −2.147.483.645, e a recorrência estoura o Int32Array em
-    // −2.147.483.648 — o mesmo valor que aparecia no campo inteiro.
-    //
-    // Foi por isto que os testes nunca pegaram: eles cobriam só o gabarito 5.0
-    // (empacotamento simples), que o GFS não usa. O caminho que roda em
-    // produção não tinha teste nenhum.
     const rawSigned = (bits) => {
       const v = br.read(bits);
       const signBit = Math.pow(2, bits - 1);
@@ -326,7 +236,6 @@ function applyBitmap(buf, s6, values, nPoints) {
   return out;
 }
 
-// ⬅️ BUGFIX: shift só para grades 0..360; não shifta grades já em -180..180
 function reorient(values, grid) {
   const { ni, nj } = grid;
   const out = new Float32Array(ni * nj);
@@ -371,9 +280,6 @@ export function decodeGrib2(buf) {
     const category = s4 ? u8(buf, s4.off + 9) : -1;
     const parameter = s4 ? u8(buf, s4.off + 10) : -1;
 
-    // Estatísticas do campo ANTES de reorientar, para diagnóstico.
-    // Custa uma passada linear e responde de imediato a pergunta que hoje só se
-    // responde por tentativa: a escala está certa, ou o desempacotamento está?
     let vmin = Infinity, vmax = -Infinity, nan = 0;
     for (let i = 0; i < values.length; i++) {
       const v = values[i];

@@ -1,33 +1,10 @@
-// -----------------------------------------------------------------------------
-// Download de GRIB2 do NOMADS (NOAA) para vento a 10m.
-//
-// O GFS 0.25° tem ciclos a cada 6h (00, 06, 12, 18 UTC). Para uma data/hora
-// pedida, encontramos o ciclo mais recente e o passo de previsão (fhr).
-//
-// URL do NOMADS GRIB filter:
-//   https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl
-// -----------------------------------------------------------------------------
-
 import { decodeGrib2 } from "./grib2.js";
 import { baixarPorIndice } from "./gribIndex.js";
 
 /** Alcance máximo de previsão do GFS em horas (16 dias) */
 export const GFS_MAX_LEAD = 384;
 
-/**
- * Encontra o ciclo GFS mais recente disponível para uma data.
- *
- * O GFS publica com ~4h de atraso. Para "agora", usamos o ciclo anterior.
- * Para datas no passado, usamos o último ciclo do dia (18z).
- */
-/**
- * Traduz o nome de nível do filtro do NOMADS para o texto que aparece no .idx.
- *
- * São vocabulários diferentes para a mesma coisa: o filtro usa
- * `lev_10_m_above_ground`, o índice escreve "10 m above ground". Sem esta
- * tradução a busca no índice não acha nada — e falharia em silêncio, caindo no
- * recuo de 3° outra vez.
- */
+
 export function nivelIdx(lev) {
   const s = String(lev).replace(/_/g, " ").trim();
   const mb = /^(\d+)\s*mb$/.exec(s);
@@ -122,15 +99,6 @@ export async function fetchGfsMessages(fetchImpl, dateStr, hour, vars = [], levs
   }
 
   if (!buf) {
-    // S3 POR FAIXA DE BYTES, NUNCA O ARQUIVO INTEIRO.
-    //
-    // Aqui havia um GET simples de `pgrb2.0p25.fXXX`: o arquivo COMPLETO, com
-    // todas as variáveis e todos os níveis de pressão, ~500 MB, com prazo de
-    // 30 s, para extrair dois campos de vento de superfície. Nunca terminava.
-    //
-    // Como o NOMADS só guarda ~10 dias de ciclos, isso significava que TODA
-    // data mais antiga caía no recuo de 3° — grade 144x mais grossa em área,
-    // onde o núcleo de um ciclone tropical cabe numa célula e desaparece.
     const s3Url = `https://noaa-gfs-bdp-pds.s3.amazonaws.com/gfs.${date}/${cycle}/atmos/gfs.t${cycle}z.pgrb2.0p25.f${fhr}`;
     try {
       const alvos = [];
@@ -157,12 +125,6 @@ export async function fetchGfsMessages(fetchImpl, dateStr, hour, vars = [], levs
   };
 }
 
-/**
- * Baixa GRIB2 de vento a 10m do NOMADS.
- *
- * Retorna Buffer/Uint8Array com o arquivo GRIB2 binário.
- * Se o NOMADS estiver fora, tenta o arquivo direto do AWS S3 (bucket NOAA).
- */
 export async function fetchGfsWind(fetchImpl, dateStr, hour) {
   const { date, cycle, fhr } = resolveCycle(dateStr, hour);
 
@@ -206,7 +168,6 @@ export async function fetchGfsWind(fetchImpl, dateStr, hour) {
   }
 
   // ─── Tentativa 2: AWS S3 (bucket NOAA aberto) ───
-  // O NOAA publica GFS no S3 com ~4h de atraso também
   const s3Url = `https://noaa-gfs-bdp-pds.s3.amazonaws.com/gfs.${date}/${cycle}/atmos/gfs.t${cycle}z.pgrb2.0p25.f${fhr}`;
 
   try {
@@ -222,7 +183,6 @@ export async function fetchGfsWind(fetchImpl, dateStr, hour) {
   }
 
   // ─── Tentativa 3: Open-Data do DWD (German Weather Service) ───
-  // DWD espelha GFS com menos atraso
   const dwdUrl = `https://opendata.dwd.de/weather/nwp/gfs/gfs${date}_${cycle}/gfs.t${cycle}z.pgrb2.0p25.f${fhr}`;
 
   try {

@@ -4,10 +4,6 @@ export const PROVIDERS = {
     label: "Open-Meteo",
     free: 10000,          // limite documentado para uso nao comercial
     share: 0.25,          // -> 2.500 chamadas/dia
-    // A Open-Meteo limita em TRES janelas, nao so por dia:
-    //   < 10.000/dia · 5.000/hora · 600/minuto
-    // Contar apenas o dia deixa passar a rajada: percorrer a linha do tempo
-    // depressa cabe folgado no teto diario e ainda assim leva 429 por minuto.
     freeHour: 5000,
     freeMinute: 600,
     note: "Sem chave. Limites por dia, hora e minuto. CC BY 4.0 exige atribuição.",
@@ -62,8 +58,6 @@ function slot(provider) {
   let s = state.get(provider);
   if (!s || s.day !== day) {
 
-    // Trinta reinicios num dia de desenvolvimento furavam o teto sem aviso.
-    // Agora o total do dia e recuperado do disco.
     let restored = null;
     try { restored = loadUsage(provider, day); } catch { /* disco indisponivel */ }
     s = {
@@ -136,11 +130,7 @@ export function blockedWindow(provider, n = 1) {
   return PROVIDERS[provider] ? blocked(provider, n) : null;
 }
 
-/**
- * Envolve um fetch com contabilidade e recusa controlada.
- * `n` declara quantas chamadas a operacao gasta (um lote de 3 requisicoes
- * declara 3), para o orcamento refletir a realidade e nao a contagem de funcoes.
- */
+
 export async function metered(provider, n, fn) {
   const win = blockedWindow(provider, n);
   if (!spend(provider, n)) {
@@ -184,15 +174,7 @@ export function report() {
   return { day: utcDay(), providers: out };
 }
 
-/**
- * Zera o consumo de um provedor (ou de todos).
- *
- * O orcamento e uma salvaguarda NOSSA, nao o limite do provedor. Quando uma
- * sequencia de tentativas falhas queima a cota do dia — como aconteceu com o
- * GFS caindo e o fallback gastando 21 requisicoes por fatia — a plataforma fica
- * travada por horas sem que o provedor tenha recusado nada. O operador precisa
- * poder destravar.
- */
+
 export function resetUsage(provider) {
   const day = utcDay();
   const ids = provider ? [provider] : Object.keys(PROVIDERS);

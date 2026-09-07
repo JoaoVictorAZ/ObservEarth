@@ -1,22 +1,8 @@
-// server/forecast.js
-// -----------------------------------------------------------------------------
-// Geração da linha do tempo e ordenação de quadros de previsão GFS.
-// -----------------------------------------------------------------------------
-
 import { gfsCoverage, GFS_MAX_LEAD } from "./gfs.js";
 import { windKey } from "./wind.js";
 
 /** passo da linha do tempo, em horas. Igual a cadencia do GFS acima de f120. */
 export const FRAME_STEP = 3;
-
-/**
- * Janela padrao de reproducao, em horas.
- *
- * Nao usamos as 240 h inteiras por escolha de custo: cada quadro e uma
- * requisicao ao NOMADS e ~8 MB de textura na GPU. 72 h dao 25 quadros — a 4 por
- * segundo, uma animacao de ~6 s, tempo suficiente para ler a evolucao de um
- * sistema sinotico sem gastar dez dias de banda que ninguem vai assistir.
- */
 export const DEFAULT_SPAN_H = 72;
 
 function toUTC(dateStr, hour) {
@@ -30,13 +16,6 @@ function splitUTC(ms) {
   return { date: d.toISOString().slice(0, 10), hour: d.getUTCHours() };
 }
 
-/**
- * Alinha um instante ao passo da grade temporal.
- *
- * Sem isto, comecar as 14h07 pediria quadros em horas quebradas, que nao
- * existem no GFS: cada um cairia no passo mais proximo e dois quadros seguidos
- * poderiam resolver para o MESMO campo — a animacao teria repeticoes.
- */
 export function alignToStep(ms) {
   const stepMs = FRAME_STEP * 3600e3;
   return Math.floor(ms / stepMs) * stepMs;

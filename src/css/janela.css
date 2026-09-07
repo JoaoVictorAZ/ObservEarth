@@ -1,64 +1,15 @@
-/* src/css/janela.css — Estilos da janela flutuante (.jan). */
-
-.jan {
-  position: absolute; z-index: 20;
-  display: flex; flex-direction: column;
-  min-width: 280px; min-height: 180px;
-  background: var(--scrim);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-lg);
-  box-shadow: var(--e-float);
-  backdrop-filter: blur(12px);
-  overflow: hidden;
-}
-/* Durante o arrasto o cursor não pode "escapar" para o texto de dentro. */
-.jan-movendo, .jan-movendo * { user-select: none; cursor: grabbing !important; }
-
-.jan-topo {
-  flex: none; display: flex; align-items: center; gap: var(--s-3);
-  padding: var(--s-3) var(--s-4);
-  border-bottom: 1px solid var(--rule);
-  background: var(--surface);
-  cursor: grab;
-}
-.jan-topo:active { cursor: grabbing; }
-.jan-pega { flex: none; display: flex; color: var(--ink-4); }
-.jan-tit {
-  flex: 1; min-width: 0; margin: 0;
-  font-size: var(--t-body); font-weight: var(--w-medium); color: var(--ink);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.jan-sub {
-  font-family: var(--mono); font-size: var(--t-micro); color: var(--ink-3);
-  white-space: nowrap;
-}
-.jan-btn {
-  flex: none; display: flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px; border-radius: 3px;
-  color: var(--ink-3); background: transparent; border: none;
-}
-.jan-btn:hover { color: var(--ink); background: var(--surface-hi); }
-
-.jan-corpo { flex: 1; min-height: 0; overflow: auto; }
-
-/* Puxadores. O de canto é o que se usa; os de borda existem porque redimensionar
-   só pelo canto obriga a acertar 14 px exatos. */
-.jan-puxa { position: absolute; touch-action: none; }
-.jan-puxa-e { left: 0; top: 8px; bottom: 14px; width: 6px; cursor: ew-resize; }
-.jan-puxa-d { right: 0; top: 8px; bottom: 14px; width: 6px; cursor: ew-resize; }
-.jan-puxa-b { left: 8px; right: 14px; bottom: 0; height: 6px; cursor: ns-resize; }
-.jan-puxa-c {
-  right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize;
-}
-/* Duas riscas diagonais: a convenção universal de "isto se puxa". */
-.jan-puxa-c::after {
-  content: ""; position: absolute; right: 3px; bottom: 3px;
-  width: 9px; height: 9px;
-  background:
-    linear-gradient(135deg, transparent 45%, var(--rule-hi) 45%, var(--rule-hi) 58%, transparent 58%),
-    linear-gradient(135deg, transparent 70%, var(--rule-hi) 70%, var(--rule-hi) 83%, transparent 83%);
-}
-.jan-puxa:hover::after { background-color: var(--signal-dim); }
+/* src/css/janela.css — comportamento comum às janelas flutuantes (.win-*).
+ *
+ * As regras `.jan-*` que ficavam aqui foram removidas junto com
+ * `src/components/ui/Janela.tsx`, que ninguém importava. Era uma QUARTA cópia
+ * do arraste de janela, esperando ser usada — e o cabeçalho de `src/arrasto.ts`
+ * conta o que aconteceu quando havia três: o mesmo defeito nas três, corrigido
+ * em duas.
+ *
+ * O comportamento agora mora em `src/janelas.ts` e vale para a sonda e para o
+ * terminal. O que sobra de CSS aqui é o que as duas compartilham: foco e
+ * minimização.
+ */
 
 /* ---- Sistema de Janelas Flutuantes (Floating Window System) ---------------- */
 .win-foco {

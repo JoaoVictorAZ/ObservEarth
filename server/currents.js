@@ -1,35 +1,12 @@
-// server/currents.js
-// -----------------------------------------------------------------------------
-// Processamento e conversão de vetores de correntes oceânicas.
-// -----------------------------------------------------------------------------
-
 const BASE = "https://marine-api.open-meteo.com/v1/marine";
-
-/**
- * Passo da grade, em graus.
- *
- * A fonte é de 8 km; isto aqui é subamostragem dela, não invenção. 1,5° dá
- * 240x120 = 28.800 pontos, que em lotes de 200 são 144 requisições — cabe no
- * teto de um quarto do limite gratuito com folga, e o resultado fica cacheado
- * por 6 h.
- *
- * Corrente aguenta grade mais grossa que vento: os campos são muito mais
- * suaves (0,1 a 2 m/s contra 0 a 70) e as feições que importam — Golfo,
- * Kuroshio, Circumpolar — têm centenas de quilômetros de largura.
- */
 export const PASSO = 1.5;
-export const LOTE = 200;
+export const CORRENTES_SCHEMA = 2;
+export const LOTE = 380;
+export const CONCORRENCIA = 2;
+export const TENTATIVAS = 4;
+export const COBERTURA_MINIMA = 0.55;
 
-/**
- * (velocidade, direção oceanográfica) -> (u, v).
- *
- * u é positivo para LESTE, v positivo para NORTE — a mesma convenção do campo
- * de vento, para que o mesmo shader de advecção sirva aos dois.
- *
- * Como a direção já aponta PARA ONDE a água vai, não há inversão de 180°:
- *   u = vel · sen(θ)      θ = 0° -> (0, +vel), indo para o norte
- *   v = vel · cos(θ)      θ = 90° -> (+vel, 0), indo para o leste
- */
+
 export function uvDaCorrente(velocidade, direcaoGraus) {
   if (velocidade == null || direcaoGraus == null) return null;
   if (!Number.isFinite(velocidade) || !Number.isFinite(direcaoGraus)) return null;
@@ -47,8 +24,52 @@ export function montarPontos(passo = PASSO) {
   return { lats, lngs, nx: lngs.length, ny: lats.length };
 }
 
+const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function emFila(itens, n, trabalho) {
+  let proximo = 0;
+  const trabalhadores = Array.from({ length: Math.max(1, n) }, async () => {
+    for (;;) {
+      const i = proximo++;
+      if (i >= itens.length) return;
+      await trabalho(itens[i], i);
+    }
+  });
+  await Promise.all(trabalhadores);
+}
+
+async function lotePedido(fetchImpl, url, medir, custo) {
+  let ultimoMotivo = "sem tentativa";
+  for (let tentativa = 0; tentativa < TENTATIVAS; tentativa++) {
+    if (tentativa > 0) {
+      await dormir(800 * 2 ** (tentativa - 1));
+    }
+    try {
+      const r = await medir(custo, () => fetchImpl(url, { signal: AbortSignal.timeout(25000) }));
+      if (r.ok) return { ok: true, corpo: await r.json() };
+
+      if (r.status === 429) {
+        const espera = Number(r.headers.get("retry-after"));
+        if (Number.isFinite(espera) && espera > 0) await dormir(Math.min(15000, espera * 1000));
+        ultimoMotivo = "429 (limite de rajada)";
+        continue;
+      }
+      if (r.status >= 500) { ultimoMotivo = `HTTP ${r.status}`; continue; }
+      // 4xx que não é 429: a requisição é que está errada. Insistir não conserta.
+      return { ok: false, motivo: `HTTP ${r.status}`, fatal: true };
+    } catch (e) {
+      if (e?.code === "BUDGET_EXCEEDED") {
+        return { ok: false, motivo: `orçamento por ${e.window} esgotado`, fatal: true, orcamento: true };
+      }
+      ultimoMotivo = e?.name === "TimeoutError" ? "tempo esgotado" : (e?.message ?? "erro de rede");
+    }
+  }
+  return { ok: false, motivo: ultimoMotivo };
+}
+
 export async function buscarCorrentes(fetchImpl, {
   passo = PASSO, lote = LOTE, hora = null, medir = (_n, f) => f(),
+  concorrencia = CONCORRENCIA, coberturaMinima = COBERTURA_MINIMA,
 } = {}) {
   const { lats, lngs, nx, ny } = montarPontos(passo);
   const u = new Float32Array(nx * ny);
@@ -62,67 +83,97 @@ export async function buscarCorrentes(fetchImpl, {
   const lotes = [];
   for (let i = 0; i < pts.length; i += lote) lotes.push(pts.slice(i, i + lote));
 
-  let ok = 0, falhas = 0, foraDeFaixa = 0;
+  let ok = 0, falhas = 0, foraDeFaixa = 0, repetidos = 0;
+  let semOrcamento = false;
+  const motivos = new Map();
 
-  await Promise.all(lotes.map(async (b) => {
+  await emFila(lotes, concorrencia, async (b) => {
+    if (semOrcamento) { falhas++; return; }
+
     const qs = new URLSearchParams({
       latitude: b.map((p) => p[0]).join(","),
       longitude: b.map((p) => p[1]).join(","),
       hourly: "ocean_current_velocity,ocean_current_direction",
-      // Pedir a unidade em vez de supor. O padrão desta API é km/h — supor foi
-      // o que já fez a sonda deste projeto mostrar 58,5 m/s onde havia
-      // 58,5 km/h, um fator de 3,6 no planeta inteiro.
       velocity_unit: "ms",
-      // Célula de MAR. O padrão da API é procurar célula em terra com elevação
-      // parecida; para corrente isso devolveria nulo em quase toda costa.
       cell_selection: "sea",
       forecast_days: "1",
       timezone: "UTC",
     });
 
-    try {
-      const r = await medir(1, () => fetchImpl(`${BASE}?${qs}`, { signal: AbortSignal.timeout(20000) }));
-      if (!r.ok) { falhas++; return; }
-      const corpo = await r.json();
-      const lista = Array.isArray(corpo) ? corpo : [corpo];
-      lista.forEach((loc, i) => {
-        const idx = b[i]?.[2];
-        if (idx === undefined) return;
-        const h = loc?.hourly;
-        if (!h?.time?.length) return;
-        const hi = hora == null
-          ? Math.min(12, h.time.length - 1)
-          : Math.min(hora, h.time.length - 1);
-        const vel = h.ocean_current_velocity?.[hi];
-        const dir = h.ocean_current_direction?.[hi];
-        const uv = uvDaCorrente(vel, dir);
-        // Terra volta como null — é ausência declarada, e a máscara `valid`
-        // é o que impede a partícula de nascer em cima do continente.
-        if (!uv) return;
-        if (Math.abs(uv.u) > TETO_MS || Math.abs(uv.v) > TETO_MS) { foraDeFaixa++; return; }
-        u[idx] = uv.u; v[idx] = uv.v; valid[idx] = 1; ok++;
-      });
-    } catch { falhas++; }
-  }));
+    const url = `${BASE}?${qs}`;
+    if (url.length > 7800) {
+      falhas++;
+      motivos.set("URL longa demais", (motivos.get("URL longa demais") ?? 0) + 1);
+      return;
+    }
+
+    const r = await lotePedido(fetchImpl, url, medir, b.length);
+    if (!r.ok) {
+      falhas++;
+      if (r.orcamento) semOrcamento = true;
+      motivos.set(r.motivo, (motivos.get(r.motivo) ?? 0) + 1);
+      return;
+    }
+
+    const lista = Array.isArray(r.corpo) ? r.corpo : [r.corpo];
+    lista.forEach((loc, i) => {
+      const idx = b[i]?.[2];
+      if (idx === undefined) return;
+      const h = loc?.hourly;
+      if (!h?.time?.length) return;
+      const hi = hora == null
+        ? Math.min(12, h.time.length - 1)
+        : Math.min(hora, h.time.length - 1);
+      const vel = h.ocean_current_velocity?.[hi];
+      const dir = h.ocean_current_direction?.[hi];
+      const uv = uvDaCorrente(vel, dir);
+      if (!uv) return;
+      if (Math.abs(uv.u) > TETO_MS || Math.abs(uv.v) > TETO_MS) { foraDeFaixa++; return; }
+      u[idx] = uv.u; v[idx] = uv.v; valid[idx] = 1; ok++;
+    });
+  });
+
+  const nPontos = nx * ny;
+  const medidoPct = +((ok / nPontos) * 100).toFixed(1);
+  const MAR_ESPERADO = 71;
+  const fracao = medidoPct / MAR_ESPERADO;
+
+  const porqueLotes = () => [...motivos.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([m, n]) => `${n}x ${m}`)
+    .join(", ") || "sem motivo registrado";
 
   if (ok === 0) {
     throw Object.assign(
-      new Error("nenhum ponto de corrente foi medido — fonte indisponível"),
-      { code: "SEM_CORRENTES", status: 502 }
+      new Error(
+        `nenhum ponto de corrente foi medido — ${falhas} de ${lotes.length} lotes falharam ` +
+        `(${porqueLotes()})`,
+      ),
+      { code: "SEM_CORRENTES", status: 502, medidoPct: 0, lotesComFalha: falhas },
     );
   }
 
-  const nPontos = nx * ny;
+  if (fracao < coberturaMinima) {
+    throw Object.assign(
+      new Error(
+        `campo de correntes incompleto: ${medidoPct}% dos pontos medidos, ` +
+        `~${MAR_ESPERADO}% esperados (${falhas} de ${lotes.length} lotes falharam — ${porqueLotes()}). ` +
+        "Um campo com este tamanho de buraco desenharia faixas vazias no lugar de corrente.",
+      ),
+      { code: "CORRENTES_INCOMPLETAS", status: 502, medidoPct, lotesComFalha: falhas },
+    );
+  }
+
   return {
     nx, ny,
     u: Array.from(u), v: Array.from(v), valid: Array.from(valid),
     stepDeg: passo,
-    // Bem abaixo de 100% por construção: 71% do planeta é oceano, então ~29%
-    // dos pontos são terra e voltam nulos. Isso É o resultado certo, e por isso
-    // o número vem acompanhado da fração de mar esperada.
-    measuredPct: +((ok / nPontos) * 100).toFixed(1),
-    marEsperadoPct: 71,
+    esquema: CORRENTES_SCHEMA,
+    measuredPct: medidoPct,
+    marEsperadoPct: MAR_ESPERADO,
+    coberturaDoMar: +fracao.toFixed(3),
     lotesComFalha: falhas,
+    lotesRepetidos: repetidos,
     foraDeFaixa,
     provider: "Copernicus Marine · SMOC (Météo-France) via Open-Meteo",
     dataset: "GLOBAL_ANALYSISFORECAST_PHY_001_024 · 0,08° na origem",

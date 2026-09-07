@@ -1,13 +1,13 @@
 
 
 /** como o dado é desenhado — espelha o `render` de server/fields.js */
-export type Encoding = "suave" | "faixas" | "particulas" | "linhas" | "pontos";
+export type Encoding = "suave" | "faixas" | "particulas" | "linhas" | "pontos" | "malha";
 
 /**
  * Um SLOT é um recurso escasso do globo. Camadas do mesmo slot competem;
  * camadas de slots diferentes compõem.
  */
-export type Slot = "raster" | "flow" | "vector" | "marks";
+export type Slot = "raster" | "flow" | "vector" | "marks" | "relevo";
 
 export interface Family {
   id: string;
@@ -62,6 +62,19 @@ export const FAMILIES: Family[] = [
     accent: "var(--fam-estrutura)",
   },
   {
+    id: "analise",
+    // Esta família não mostra dado: mostra CONTA feita sobre dado. A distinção
+    // merece um grupo próprio porque a regra de leitura é outra — a altura da
+    // malha é uma escolha de visualização, e não uma grandeza medida, ao
+    // contrário de tudo que está nas outras famílias.
+    title: "Análise",
+    nature: "Não é o dado, é uma conta feita sobre ele — relevo do campo, mínimos, máximos e selas.",
+    encoding: "malha",
+    slot: "relevo",
+    exclusive: false,
+    accent: "var(--fam-analise)",
+  },
+  {
     id: "ocorrencia",
     title: "Ocorrências",
     nature: "Eventos e estações em pontos discretos — sismos, focos de calor, monitoramento.",
@@ -101,6 +114,7 @@ export const OVERLAY_LAYERS: LayerEntry[] = [
   { id: "openaq", label: "Qualidade do ar", family: "ocorrencia", unit: "µg/m³", source: "OpenAQ" },
   { id: "hospitals", label: "Hospitais", family: "ocorrencia", source: "OSM" },
   { id: "relevo", label: "Relevo e batimetria", family: "estrutura", unit: "m", source: "Mapzen · SRTM/GEBCO" },
+  { id: "malha", label: "Malha 3D do campo", family: "analise", source: "GFS · valores brutos" },
 ];
 
 /** campos escalares do GFS, repartidos pela codificação que o servidor usa */

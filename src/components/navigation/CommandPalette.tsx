@@ -47,7 +47,16 @@ export const CommandPalette: React.FC<{ onFlyTo?: (lat: number, lng: number) => 
       style={{
         position: "fixed",
         inset: 0,
-        zIndex: 100,
+        // ACIMA DO MODAL DE ANÁLISE, que está em 200.
+        //
+        // Estava em 100. Com o modal aberto, `Ctrl+K` montava a paleta ATRÁS
+        // do fundo desfocado: invisível, mas com o foco preso dentro dela. A
+        // pessoa apertava o atalho, a tela não mudava, e o teclado deixava de
+        // responder ao modal que ela estava vendo.
+        //
+        // A paleta é a superfície de controle mais alta do aplicativo — o
+        // caminho de teclado para tudo. Ela fica por cima de todo o resto.
+        zIndex: 300,
         background: "rgba(4, 6, 10, 0.75)",
         backdropFilter: "blur(12px)",
         display: "flex",

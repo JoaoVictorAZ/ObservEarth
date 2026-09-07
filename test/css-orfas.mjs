@@ -23,6 +23,7 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 let n = 0;
 const ok = (nome, fn) => { fn(); n++; console.log(`  ok  ${nome}`); };
@@ -37,7 +38,12 @@ function arquivos(dir, ext, saida = []) {
   return saida;
 }
 
-const raiz = new URL("../src", import.meta.url).pathname;
+// `new URL(...).pathname` devolve "/C:/Users/..." no Windows, com uma barra na
+// frente da letra da unidade. Juntar isso com o diretório de trabalho produzia
+// "C:\C:\Users\..." e o teste morria com ENOENT — em UMA plataforma só, o que
+// é o pior jeito de uma suíte falhar. `fileURLToPath` faz a conversão certa nas
+// duas, inclusive desfazendo o escape de espaços no caminho.
+const raiz = fileURLToPath(new URL("../src", import.meta.url));
 
 /** todo seletor de classe declarado em qualquer folha do projeto */
 function definidas() {

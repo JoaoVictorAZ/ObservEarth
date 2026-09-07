@@ -12,7 +12,9 @@ import { useProbeStore, type Probe } from "../../store/probeStore";
 import { useChatStore } from "../../store/chatStore";
 import { GlobeEngine } from "../../globe";
 import { MapEngine } from "../../mapa2d";
-import { temRelevo } from "../../tipos";
+import { temRelevo, temMalha } from "../../tipos";
+import { useMalhaStore } from "../../store/malhaStore";
+import { useUIStore } from "../../store/uiStore";
 import { buscarGrade } from "../../windBin";
 import type { Quake, Fire, IsobarSet, WindGrid, MotorGeo } from "../../tipos";
 
@@ -50,14 +52,17 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
   const { dayNight, rotate, windDensity, modo } = useGlobeStore();
   // sobe a cada troca de motor; força todas as camadas a se reaplicarem
   const [geracao, setGeracao] = useState(0);
-  const { day, hour } = useTimelineStore();
+  const { day, hour, playing } = useTimelineStore();
   const {
-    kind, layer, opacity,
+    kind, layer, opacity, fields,
     wind, isobarsOn, quakesOn, firesOn, openaqOn, wbgtOn,
     hospitalsOn, hycomOn, relevoOn,
     setWindInfo, setIsoInfo, setFireInfo, setOpenaqInfo,
     setHospitalInfo, setHycomInfo, setGeoInfo,
   } = useLayerStore();
+
+  const malha = useMalhaStore();
+  const foco = useUIStore((u) => u.foco);
 
   const { setProbe, setProbing } = useProbeStore();
   const gpuOcupada = useChatStore((s) => s.ocupado);
@@ -354,6 +359,10 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
     }
     let alive = true;
     setHycomInfo("Buscando correntes…");
+    // O campo de correntes são 76 requisições à fonte, em fila de 2, e leva
+    // dezenas de segundos numa primeira carga fria. Sem esta linha o painel
+    // fica mudo o tempo todo e parece que o interruptor não fez nada.
+    setHycomInfo("montando o campo de correntes… (76 lotes, primeira carga)");
     fetch("/api/hycom")
       .then(async (r) => {
         const j = await r.json().catch(() => null);
@@ -373,10 +382,27 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
         // atmosférico e fazia corrente e vento saírem com o mesmo desenho.
         eng.setCurrents(data);
         eng.setCurrentsVisible(true);
+        // A COBERTURA É O NÚMERO QUE IMPORTA NESTE CAMPO, e faltava.
+        //
+        // Corrente não existe em terra: ~29% dos pontos voltam nulos por
+        // construção, e uma busca perfeita mede ~71%. Dizer só "0,08° via
+        // Open-Meteo" esconde a diferença entre um campo completo e um campo
+        // com faixas inteiras de latitude faltando — que foi exatamente o que
+        // esteve na tela.
+        const d = data as {
+          provider?: string; stepDeg?: number;
+          measuredPct?: number; marEsperadoPct?: number; coberturaDoMar?: number;
+        };
+        const cobertura = typeof d.coberturaDoMar === "number"
+          ? `${Math.round(d.coberturaDoMar * 100)}% do mar medido`
+          : null;
         setHycomInfo([
-          (data as { provider?: string }).provider ?? "procedência não declarada",
-          (data as { stepDeg?: number }).stepDeg != null
-            ? `${(data as { stepDeg?: number }).stepDeg}°` : null,
+          d.provider ?? "procedência não declarada",
+          d.stepDeg != null ? `${String(d.stepDeg).replace(".", ",")}°` : null,
+          cobertura,
+          d.coberturaDoMar != null && d.coberturaDoMar < 0.85
+            ? "⚠ há regiões sem medida nesta grade"
+            : null,
         ].filter(Boolean).join(" · "));
       })
       .catch((err: Error) => {
@@ -391,6 +417,71 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
 
   // Cede a GPU enquanto o modelo de linguagem baixa ou gera. Ver setPausado.
   useEffect(() => { engRef.current?.setPausado(gpuOcupada); }, [gpuOcupada, geracao]);
+
+  // -------------------------------------------------------------------------
+  // MALHA 3D — a camada de análise
+  // -------------------------------------------------------------------------
+  // Três efeitos, e a separação entre eles é o que evita trabalho à toa:
+  //
+  //   BUSCAR   depende do campo, da data e do detalhe. É rede e é caro.
+  //   DESENHAR depende do que foi buscado. É GPU e é barato.
+  //   AJUSTAR  depende só de controles. Não toca rede nem geometria.
+  //
+  // Juntos num efeito só, arrastar o exagero vertical baixaria 4 MB por quadro.
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    if (!malha.ativa || modo === "mapa") return;
+    // DURANTE A REPRODUÇÃO, a malha NÃO acompanha.
+    //
+    // Cada passo da linha do tempo custaria 326 kB de rede mais ~80 ms de
+    // varredura de pontos críticos, na thread principal. Num reprodutor que
+    // anda de hora em hora isso é uma requisição e um engasgo por quadro — e o
+    // resultado nem seria legível, porque a lista de extremos piscaria inteira
+    // a cada passo.
+    //
+    // A malha fica no último instante carregado até o reprodutor parar, e aí
+    // se atualiza sozinha. É a mesma escolha que o projeto faz com o degrau de
+    // qualidade: sacrificar o que não se consegue ler para preservar o que se
+    // consegue.
+    if (playing) return;
+    // As paradas da rampa vêm do catálogo, para a malha pintar com a MESMA
+    // escala do PNG do mesmo campo. Sem catálogo carregado ainda, não há como
+    // escolher cor — e inventar uma seria a divergência que src/malha/rampa.ts
+    // existe para impedir.
+    const cat = fields.find((f) => f.id === malha.campoId);
+    void malha.carregar(day, hour, cat?.stops ?? null, cat?.render ?? "rampa");
+  }, [malha.ativa, malha.campoId, malha.passo, day, hour, playing, modo, fields, geracao]);
+
+  useEffect(() => {
+    const eng = engRef.current;
+    if (!temMalha(eng)) return;
+    eng.setMalhaVisivel(malha.ativa && modo !== "mapa");
+    eng.setMalha(malha.ativa ? malha.campo : null, malha.ativa ? malha.escala : null);
+  }, [malha.ativa, malha.campo, malha.escala, modo, geracao]);
+
+  useEffect(() => {
+    const eng = engRef.current;
+    if (!temMalha(eng)) return;
+    eng.setExtremos(malha.ativa && malha.mostrarExtremos ? malha.criticos : []);
+  }, [malha.ativa, malha.mostrarExtremos, malha.criticos, geracao]);
+
+  useEffect(() => {
+    const eng = engRef.current;
+    if (!temMalha(eng)) return;
+    eng.setMalhaExagero(malha.exagero);
+    eng.setMalhaArame(malha.arame);
+    eng.setMalhaOpacidade(malha.opacidade);
+  }, [malha.exagero, malha.arame, malha.opacidade, malha.campo, geracao]);
+
+  // Pedido de foco vindo de qualquer painel — ver `foco` em uiStore. Só move a
+  // câmera: NÃO abre a sonda. Voar até um mínimo de pressão para conferir a
+  // forma dele não é a mesma intenção que pedir o dossiê daquele ponto, e
+  // disparar uma requisição de sonda a cada item de lista clicado seria gasto
+  // de cota que ninguém pediu.
+  useEffect(() => {
+    if (!foco) return;
+    engRef.current?.flyTo(foco.lat, foco.lng, foco.altitude);
+  }, [foco, geracao]);
 
   // Relevo: capacidade que só o mapa plano tem. O globo simplesmente não
   // recebe a chamada — e o painel diz por quê, em vez de oferecer um

@@ -120,6 +120,9 @@ export const FIELDS = Object.freeze({
     unit: "hPa",
     pascal: true,        // GRIB value is in Pa → divide by 100
     floor: 920,
+    nota: "Sobre terreno alto — Antártida, Himalaia, Andes — a pressão ao nível "
+        + "do mar é extrapolada através da topografia, não medida. Os extremos "
+        + "globais deste campo costumam ser artefatos dessa redução.",
     stops: [
       [ 920, [100,  20, 120]],  // deep purple — extreme low
       [ 960, [ 60,  80, 200]],  // blue
@@ -140,10 +143,6 @@ export const FIELDS = Object.freeze({
     match: { discipline: 0, category: 6, parameter: 1 },
     unit: "%",
     floor: 8,
-    // LUMINÂNCIA PURA, sem matiz. Nuvem não é uma medida a ser lida em cores:
-    // é um MEIO QUE OBSTRUI. Dar-lhe matiz faz com que ela dispute atenção com
-    // a temperatura ou a chuva que estão por baixo, e o azulado anterior ainda
-    // sugeria "frio" onde só havia cobertura.
     stops: [
       [8, [168, 168, 168]],
       [40, [206, 206, 206]],
@@ -155,8 +154,6 @@ export const FIELDS = Object.freeze({
   },
 
   precip: {
-    // FAIXAS, não rampa. Chuva ocorre em células com borda; interpolar cria um
-    // halo de garoa em volta de cada núcleo que não existe no dado.
     render: "faixas",
     title: "Precipitação acumulada",
     group: "Modelo GFS",
@@ -179,9 +176,6 @@ export const FIELDS = Object.freeze({
   },
 
   wbgt: {
-    // FAIXAS. O WBGT é lido contra limiares de decisão (28 / 31 / 33 °C) —
-    // 27,9 e 28,1 não são "quase iguais", são lados opostos de uma conduta.
-    // Rampa suave apaga exatamente a fronteira que importa.
     render: "faixas",
     title: "Estresse Térmico WBGT",
     group: "Saúde & Risco",
@@ -193,6 +187,9 @@ export const FIELDS = Object.freeze({
     unit: "°C WBGT",
     kelvin: true,
     floor: 18,
+    nota: "Aproximação: bulbo úmido por Stull (2011) e globo estimado como "
+        + "Ta + 2 °C ao sol pleno. Sem radiação e vento medidos, é uma "
+        + "estimativa de risco, não a leitura de um instrumento WBGT.",
     stops: [
       [18, [ 46, 139,  87]],   // green — safe
       [22, [102, 189,  99]],   // light green
@@ -207,15 +204,6 @@ export const FIELDS = Object.freeze({
   },
 });
 
-/**
- * A legenda usa a MESMA função que pinta o pixel.
- *
- * Um campo em faixas pintado por classe mas com legenda interpolada anuncia
- * cores que o mapa nunca desenha. A divergência é de poucos tons — pequena
- * demais para saltar aos olhos e suficiente para a legenda deixar de descrever
- * a imagem. Foi o próprio teste de coerência que pegou isto quando o modo
- * "faixas" entrou.
- */
 export function legendOf(spec) {
   const corDe = spec.render === "faixas" ? stepColor : rampColor;
   return spec.legendAt.map(([v, rotulo]) => [hex(corDe(spec.stops, v)), rotulo]);
@@ -235,19 +223,7 @@ export function renderFieldPNG(spec, values, ni, nj, text = {}) {
       rgba[o + 3] = 0;
       continue;
     }
-    // A CODIFICAÇÃO SEGUE A NATUREZA DO FENÔMENO, não a paleta.
-    //
-    //   "suave"     campo contínuo — temperatura, orvalho, umidade. Interpolar
-    //               é correto: entre dois nós a atmosfera realmente varia
-    //               continuamente.
-    //
-    //   "faixas"    campo de células ou índice com limiar — chuva, WBGT.
-    //               Interpolar inventa dado que não existe (garoa em volta de
-    //               cada núcleo) e apaga limiares de decisão.
-    //
-    // Sem esta distinção, sete camadas diferentes saíam com o mesmo desenho e
-    // só a cor mudava — o que faz um mapa de chuva parecer um mapa de
-    // temperatura pintado de azul.
+
     const passo = spec.render === "faixas";
     const [r, g, b] = passo
       ? stepColor(spec.stops, v)
@@ -274,7 +250,7 @@ export function renderFieldPNG(spec, values, ni, nj, text = {}) {
   };
 }
 
-export async function buildField(fetchImpl, id, dateStr, hour, now = new Date()) {
+export async function extrairValores(fetchImpl, id, dateStr, hour, now = new Date()) {
   const spec = FIELDS[id];
   if (!spec) throw Object.assign(new Error(`campo desconhecido: ${id}`), { code: "UNKNOWN_FIELD" });
 
@@ -310,7 +286,7 @@ export async function buildField(fetchImpl, id, dateStr, hour, now = new Date())
   const { ni, nj } = m.grid;
   let values = m.values;
 
-  // ── Unit conversions ──
+  // ── Conversões de unidade ──
   if (spec.kelvin) {
     values = new Float32Array(values.length);
     for (let i = 0; i < m.values.length; i++) values[i] = m.values[i] - 273.15;
@@ -320,7 +296,7 @@ export async function buildField(fetchImpl, id, dateStr, hour, now = new Date())
     for (let i = 0; i < m.values.length; i++) values[i] = m.values[i] / 100;
   }
 
-  // ── WBGT derived field: combine TMP + RH ──
+  // ── WBGT derivado: combina TMP + RH ──
   if (spec.derived === "wbgt") {
     const mRH = msgs.find(
       (x) => x.discipline === spec.secondMatch.discipline
@@ -330,21 +306,30 @@ export async function buildField(fetchImpl, id, dateStr, hour, now = new Date())
     if (mRH) {
       const wbgtVals = new Float32Array(values.length);
       for (let i = 0; i < values.length; i++) {
-        const tc = values[i];  // already in °C
+        const tc = values[i];  // já em °C
         const rh = mRH.values[i];
-        // Stull (2011) wet-bulb approximation
+        // Aproximação de bulbo úmido de Stull (2011)
         const tw = tc * Math.atan(0.151977 * Math.pow(Math.max(0, rh + 8.313659), 0.5))
                  + Math.atan(tc + rh) - Math.atan(rh - 1.676331)
                  + 0.00391838 * Math.pow(Math.max(0, rh), 1.5) * Math.atan(0.023101 * rh)
                  - 4.686035;
-        // Simplified WBGT outdoor: 0.7*Tw + 0.2*Tg + 0.1*Ta (Tg ≈ Ta+2 for full sun)
+        // WBGT externo simplificado: 0,7·Tw + 0,2·Tg + 0,1·Ta (Tg ≈ Ta+2 ao sol)
         wbgtVals[i] = 0.7 * tw + 0.2 * (tc + 2) + 0.1 * tc;
       }
       values = wbgtVals;
     }
   }
 
-  const source = `NOAA GFS 0.25 · ${label}`;
+  return {
+    spec, values, ni, nj,
+    source: `NOAA GFS 0.25 · ${label}`,
+    label, cycle, fhr, bytes, packing: m.packing,
+  };
+}
+
+export async function buildField(fetchImpl, id, dateStr, hour, now = new Date()) {
+  const { spec, values, ni, nj, source, cycle, fhr, bytes, packing } =
+    await extrairValores(fetchImpl, id, dateStr, hour, now);
 
   const { png, coveredPct, min, max } = renderFieldPNG(spec, values, ni, nj, {
     Source: source,
@@ -362,14 +347,14 @@ export async function buildField(fetchImpl, id, dateStr, hour, now = new Date())
       ny: nj,
       stepDeg: +(360 / ni).toFixed(3),
       dataset: source,
-      cycle: `${cycle.date}${String(cycle.cycle).padStart(2, "0")}`,
+      cycle,
       forecastHour: fhr,
       coveredPct,
       min,
       max,
       gribBytes: bytes,
       pngBytes: png.length,
-      packing: m.packing,
+      packing,
       legend: legendOf(spec),
       builtAt: new Date().toISOString(),
     },
@@ -383,7 +368,11 @@ export function fieldCatalog() {
     group: f.group,
     unit: f.unit,
     legend: legendOf(f),
+    render: f.render ?? "rampa",
+    stops: f.stops,
+    floor: f.floor,
+    nota: f.nota ?? null,
   }));
 }
 
-export const _internal = { rampColor, hex };
+export const _internal = { rampColor, stepColor, hex };

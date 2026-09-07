@@ -1,15 +1,5 @@
-// server/assimilate.js
-// -----------------------------------------------------------------------------
-// Análise objetiva de dados (esquema Cressman/Barnes para assimilação pontual).
-// -----------------------------------------------------------------------------
-
-/** raio de influência padrão, em km — escala de correlação sinótica do vento */
 export const RAIO_KM = 400;
-
-/** limite do controle de qualidade, em m/s, por componente */
 export const LIMITE_QC = 25;
-
-/** validade de uma observação, em ms — 3 h é meia janela do ciclo do GFS */
 export const VALIDADE_MS = 3 * 3600e3;
 
 const R_TERRA = 6371;
@@ -25,14 +15,6 @@ export function distKm(lat1, lng1, lat2, lng2) {
   return 2 * R_TERRA * Math.asin(Math.min(1, Math.sqrt(a)));
 }
 
-/**
- * Peso de Cressman: (R² − d²) / (R² + d²).
- *
- * Vale 1 no ponto observado, cai suavemente e chega EXATAMENTE a 0 no raio.
- * Chegar a zero importa: um peso que só tende a zero deixa um degrau na borda
- * da influência, e esse degrau aparece no mapa como um círculo — artefato que
- * o olho lê como estrutura meteorológica e não é.
- */
 export function pesoCressman(d, R) {
   if (d >= R) return 0;
   const d2 = d * d, R2 = R * R;
@@ -64,16 +46,6 @@ function amostra(grid, lat, lng) {
   return { u: bil(u), v: bil(v) };
 }
 
-/**
- * Controle de qualidade: separa observação utilizável de observação suspeita.
- *
- * Uma sonda que discorda do modelo em 40 m/s não está revelando um fenômeno que
- * o modelo perdeu — está com erro de unidade, de posição ou de horário. Aceitar
- * essa observação espalharia o erro por 400 km de raio.
- *
- * (Este projeto já teve exatamente esse caso: a sonda vinha em km/h rotulada
- * como m/s, discordando do campo por um fator de 3,6 em todo lugar.)
- */
 export function controleQualidade(obs, grid, limite = LIMITE_QC, agora = Date.now()) {
   const aceitas = [], rejeitadas = [];
   for (const o of obs) {
@@ -147,9 +119,7 @@ export function analisar(grid, observacoes, opts = {}) {
       return { ...o, du: o.u - fg.u, dv: o.v - fg.v };
     });
 
-    // Só percorre a janela de nós que o raio alcança, e não a grade inteira.
-    // Varrer 1.038.240 nós por observação por passe seria 3 M de operações por
-    // clique, com 99,9% delas resultando em peso zero.
+
     const dLat = (R / R_TERRA) * (180 / Math.PI);
     for (const o of res) {
       const jc = ((90 - o.lat) / 180) * (ny - 1);
@@ -192,8 +162,6 @@ export function analisar(grid, observacoes, opts = {}) {
       ...grid,
       u: Array.from(u),
       v: Array.from(v),
-      // A PROVENIÊNCIA MUDA. Não é mais "GFS puro" — é GFS analisado. Deixar o
-      // rótulo antigo seria atribuir ao NOAA um campo que ele não produziu.
       dataset: `${grid.dataset ?? "GFS"} · analisado com ${aceitas.length} obs`,
       analyzed: true,
     },
