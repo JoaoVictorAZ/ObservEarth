@@ -26,6 +26,7 @@ RAIZ = f"/Volumes/{CATALOGO}/{ESQUEMA}/{VOLUME}"
 
 # COMMAND ----------
 
+import importlib
 import os
 import sys
 
@@ -40,6 +41,18 @@ while not os.path.exists(os.path.join(d, "pipeline", "contrato", "esquema.json")
 sys.path.insert(0, os.path.join(d, "pipeline"))
 print("repositório:", d)
 
+# `reload` DEPOIS DE CADA PULL, OU VOCÊ RODA O CÓDIGO DE ONTEM.
+#
+# O Python guarda o módulo importado em `sys.modules`. Um Pull do Git troca o
+# ARQUIVO no disco e não toca nesse cache — então `from databricks import ...`
+# devolve a versão antiga, e a correção que você acabou de puxar não existe
+# para este notebook.
+#
+# Custou uma sessão inteira: o erro corrigido continuava aparecendo, e parecia
+# que o conserto estava errado. `restartPython()` também resolve, mas apaga
+# todas as variáveis e obriga a rodar tudo de novo; `reload` não.
+import databricks  # noqa: E402
+importlib.reload(databricks)
 from databricks import salvar, silver_de_binarios  # noqa: E402
 
 # COMMAND ----------

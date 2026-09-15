@@ -24,6 +24,7 @@ REFERENCIA = dbutils.widgets.get("referencia")
 
 # COMMAND ----------
 
+import importlib
 import json
 import os
 import sys
@@ -34,6 +35,13 @@ while not os.path.exists(os.path.join(d, "pipeline", "contrato", "esquema.json")
     assert pai != d, f"não achei a raiz do repositório a partir de {os.getcwd()}"
     d = pai
 sys.path.insert(0, os.path.join(d, "pipeline"))
+
+# `reload` depois de cada Pull — ver a nota longa no `01_silver`. Um Pull troca
+# o arquivo no disco e não mexe em `sys.modules`, então sem isto o notebook roda
+# a versão que estava carregada antes do Pull.
+import databricks, gold_cobertura, gold_normal  # noqa: E402,E401
+for _m in (databricks, gold_cobertura, gold_normal):
+    importlib.reload(_m)
 
 from databricks import confianca_sem_rdd, salvar  # noqa: E402
 from gold_cobertura import cobertura_por_ano  # noqa: E402
