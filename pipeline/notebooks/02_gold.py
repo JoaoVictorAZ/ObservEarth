@@ -2,6 +2,10 @@
 # MAGIC %md
 # MAGIC # 02 · Gold — normais, cobertura e confiança
 # MAGIC
+# MAGIC > O Gold lê as TABELAS que o Silver gravou, e não o DataFrame dele. São
+# MAGIC > Parquet no Unity Catalog: ler de lá custa uma fração de reabrir os
+# MAGIC > 7.955 CSVs e repassar a UDF Python por cima.
+# MAGIC
 # MAGIC Entra: `dim_estacao` e `fato_observacao_diaria`.
 # MAGIC Sai: `gold_normal`, `gold_cobertura`, `gold_confianca`.
 # MAGIC

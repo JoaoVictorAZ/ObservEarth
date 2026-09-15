@@ -66,6 +66,19 @@ from databricks import salvar, silver_de_binarios  # noqa: E402
 
 dim, fato = silver_de_binarios(spark, f"{RAIZ}/csv/")
 
+# `cache()` NÃO É OTIMIZAÇÃO PREMATURA AQUI — é o que impede cinco execuções.
+#
+# Um DataFrame é preguiçoso: a UDF só roda quando alguém pede resultado. E
+# abaixo pedem cinco vezes — `count`, as três células de qualidade e o
+# `salvar`. Sem cache, cada uma reabre os 7.955 arquivos, redecodifica 1,3 GB
+# de latin-1 e reexecuta o parser inteiro.
+#
+# Ninguém percebe isso lendo o notebook, porque cada célula parece barata. O
+# sintoma é a execução demorar cinco vezes mais do que a conta sugere, e o
+# diagnóstico errado é culpar o tamanho do dado.
+dim = dim.cache()
+fato = fato.cache()
+
 print("estações:", dim.count())
 print("dias    :", fato.count())
 display(dim.limit(10))
