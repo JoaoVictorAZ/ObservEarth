@@ -11,6 +11,40 @@ inventado para a interface não ficar vazia. Um campo sem fonte aparece como
 "sem dado", e é assim de propósito — pessoas podem tomar decisões olhando para
 isto.
 
+---
+
+## Se você veio avaliar o MVP de Engenharia de Dados
+
+**O documento é [`docs/MVP.md`](docs/MVP.md)**, com os sete tópicos exigidos.
+O catálogo de dados é [`pipeline/contrato/esquema.json`](pipeline/contrato/esquema.json)
+— legível por máquina, e [`esquema.md`](pipeline/contrato/esquema.md) em prosa.
+Os notebooks estão em [`pipeline/notebooks/`](pipeline/notebooks), em formato-fonte
+do Databricks para aparecerem como código legível aqui no GitHub.
+
+Há três níveis de verificação, e o primeiro custa dois minutos:
+
+| | Comando | O que prova | Precisa de |
+|---|---|---|---|
+| **1** | `npm install && npm test` | ~788 verificações, inclusive o contrato de esquema e a equivalência entre o pipeline e o aplicativo | Node 20+ |
+| **2** | `npm run test:pipeline` | 58 verificações das transformações — parsing do INMET, viés, cobertura, índice de confiança | Python 3.9+ |
+| **3** | `npm run dev` → `localhost:5173` | o produto, com a camada **Estações** ligada: 616 estações reais do INMET saídas do pipeline | Node 20+ |
+
+Nenhum dos três precisa de Spark, de nuvem, de chave de API ou de baixar dado.
+`data/gold/estacoes.json` já vem no repositório justamente para o nível 3 subir
+completo sem 1,3 GB de download.
+
+**Para reproduzir o pipeline inteiro**, incluindo a carga: `docs/MVP.md`
+§ *Anexo — como reproduzir*, e [`docs/DATABRICKS.md`](docs/DATABRICKS.md) para
+a execução na nuvem. O dado bruto não está versionado — `tools/baixar-inmet.mjs`
+o busca da fonte, e é reproduzível.
+
+**Uma ressalva de ambiente que vale o seu tempo:** o caminho local do Spark
+exige Java 8/11/17 e um Python até o 3.11 (PySpark 3.5 quebra no 3.12+, com um
+erro de soquete que não menciona versão nenhuma). `npm run checar` diagnostica
+isso antes de você perder tempo. O Databricks não tem esse problema, e é o
+destino do pipeline.
+
+---
 
 ## Instalação em três minutos
 
@@ -661,12 +695,20 @@ texto com o deslocamento em bytes de cada registro. Lendo o índice primeiro e
 pedindo só as faixas de U e V a 10 m com `Range: bytes=`, o download cai para
 uns 3 MB.
 
-### Pipeline Python (opcional, experimental)
+### Pipeline Python
 
-`pipeline/` guarda o que não faz parte do app em produção: download do ERA5 via
-Copernicus CDS, treino de um operador neural de Fourier, um servidor de
-inferência de modelo próprio, ingestão em lote e um servidor TiTiler. Nada disso
-é necessário para `npm run dev`.
+`pipeline/` tem duas coisas que não devem ser confundidas.
+
+**O pipeline de dados do MVP**, que é entregável e testado: contrato de esquema
+(`contrato/`), Bronze/Silver/Gold do INMET (`silver_inmet.py`, `gold_normal.py`,
+`gold_cobertura.py`, `gold_vies.py`), a ponte serverless do Databricks
+(`databricks.py`), os notebooks (`notebooks/`) e 58 verificações em `test_*.py`.
+Roda com `npm run test:pipeline`, sem Spark. Ver [`docs/MVP.md`](docs/MVP.md).
+
+**E o experimental**, que não faz parte do app nem da entrega: download do ERA5
+via Copernicus CDS, treino de um operador neural de Fourier, um servidor de
+inferência de modelo próprio e um servidor TiTiler. Nada disso é necessário para
+`npm run dev`.
 
 ---
 

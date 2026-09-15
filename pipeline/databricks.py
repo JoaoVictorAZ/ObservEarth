@@ -137,10 +137,30 @@ def silver_de_binarios(spark, caminho: str):
         est, _ = ler_estacao(os.path.basename(caminho), _texto(bytes(dados))[:4096])
         return None if est is None else tuple(est[c.name] for c in dim_t)
 
+    # `recursiveFileLookup` NÃO É OPCIONAL AQUI, e a falta dele é silenciosa.
+    #
+    # Os CSVs ficam em `csv/{ano}/`, um nível abaixo do caminho passado. Sem
+    # esta opção o Spark liga a descoberta de partição e trata `2023/`, `2024/`
+    # como estrutura de partição em vez de conteúdo — e devolve ZERO linhas sem
+    # erro nenhum. O `00_bronze` já tinha a opção; este caminho não, e a
+    # divergência entre os dois leitores só apareceu com dado real no Volume.
+    #
+    # Zero linhas é o pior modo de falha possível: o esquema sai certo, o
+    # `display` desenha as colunas, e parece que o dado é que está vazio.
     bruto = (spark.read.format("binaryFile")
              .option("pathGlobFilter", "*.CSV*")
+             .option("recursiveFileLookup", "true")
              .load(caminho)
              .select("path", "content"))
+
+    # E se ainda assim vier vazio, isso não pode passar por "não há dado".
+    if bruto.limit(1).count() == 0:
+        raise RuntimeError(
+            f"nenhum arquivo casou com *.CSV* em {caminho!r}.\n"
+            "  Confira, nesta ordem:\n"
+            "    1. o `00_bronze` extraiu? Catalog -> Volume -> csv/ deve ter uma pasta por ano\n"
+            "    2. a extensão está em maiúscula? o filtro é *.CSV* e o glob diferencia caixa\n"
+            "    3. o caminho termina em /csv/ e não em /csv/{ano}/")
 
     fato = (bruto
             .select(F.explode(fatos_do_arquivo("path", "content")).alias("r"))
