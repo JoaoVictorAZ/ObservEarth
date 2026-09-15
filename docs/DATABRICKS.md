@@ -19,6 +19,13 @@ existe RDD — e é disso que o caminho local depende.
 | `sparkContext.parallelize(caminhos)` | `spark.read.format("binaryFile")` |
 | `sparkContext.broadcast(estacoes)` | lista no fechamento da UDF |
 | `df.write.parquet(caminho)` | `saveAsTable` no Unity Catalog |
+| `df.cache()` | gravar a tabela e reler dela |
+
+A última linha foi descoberta em execução, e custou uma tentativa: `.cache()`
+responde `PERSIST TABLE is not supported on serverless compute`. Faz sentido —
+cache de RDD depende de executor fixo, e é justamente isso que o serverless não
+tem. A consequência para o `01_silver` é que a checagem de qualidade roda
+**depois** da gravação, contra o Parquet, e não antes contra o DataFrame.
 
 **A lógica não foi reescrita.** `ler_estacao` e `avaliar` são as mesmas funções
 puras, chamadas de dentro de uma UDF. Duas implementações da mesma regra

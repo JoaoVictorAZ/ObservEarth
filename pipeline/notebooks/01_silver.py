@@ -64,20 +64,33 @@ from databricks import salvar, silver_de_binarios  # noqa: E402
 
 # COMMAND ----------
 
-dim, fato = silver_de_binarios(spark, f"{RAIZ}/csv/")
+# NO SERVERLESS, GRAVAR É O CACHE. E ISSO MUDA A ORDEM DO NOTEBOOK.
+#
+# Um DataFrame é preguiçoso: a UDF só roda quando alguém pede resultado. Abaixo
+# pedem CINCO vezes — `count`, as três células de qualidade e o `salvar`. Sem
+# materializar, cada uma reabre os 7.955 arquivos, redecodifica 1,3 GB de
+# latin-1 e reexecuta o parser inteiro. Ninguém percebe lendo o notebook,
+# porque cada célula parece barata.
+#
+# A resposta óbvia seria `.cache()`. **Serverless não tem.**
+#
+#     PERSIST TABLE is not supported on serverless compute
+#
+# É a mesma família de restrição que já tinha tirado o `sparkContext`: o
+# serverless não expõe o que depende de executor fixo, e cache de RDD depende.
+#
+# Então a materialização é a tabela, e a checagem de qualidade passa a rodar
+# DEPOIS da gravação, contra o Parquet — não antes, contra o DataFrame.
+#
+# O portão de qualidade continua fechando: ninguém a jusante lê estas tabelas
+# até o `02_gold`, e ele só roda se as contagens abaixo passarem. O que se
+# perde é a pureza de "não gravar dado ruim"; o que se ganha é a execução
+# terminar. A troca está aqui declarada em vez de escondida.
+print(salvar(dim, CATALOGO, ESQUEMA, "dim_estacao"))
+print(salvar(fato, CATALOGO, ESQUEMA, "fato_observacao_diaria"))
 
-# `cache()` NÃO É OTIMIZAÇÃO PREMATURA AQUI — é o que impede cinco execuções.
-#
-# Um DataFrame é preguiçoso: a UDF só roda quando alguém pede resultado. E
-# abaixo pedem cinco vezes — `count`, as três células de qualidade e o
-# `salvar`. Sem cache, cada uma reabre os 7.955 arquivos, redecodifica 1,3 GB
-# de latin-1 e reexecuta o parser inteiro.
-#
-# Ninguém percebe isso lendo o notebook, porque cada célula parece barata. O
-# sintoma é a execução demorar cinco vezes mais do que a conta sugere, e o
-# diagnóstico errado é culpar o tamanho do dado.
-dim = dim.cache()
-fato = fato.cache()
+dim = spark.table(f"{CATALOGO}.{ESQUEMA}.dim_estacao")
+fato = spark.table(f"{CATALOGO}.{ESQUEMA}.fato_observacao_diaria")
 
 print("estações:", dim.count())
 print("dias    :", fato.count())
@@ -88,9 +101,17 @@ display(dim.limit(10))
 # MAGIC %md
 # MAGIC ## Qualidade — as contagens que a entrega pede
 # MAGIC
-# MAGIC Antes de gravar. `horas_validas` é o campo que impede a mentira mais
-# MAGIC fácil deste dataset: uma máxima calculada com 3 horas do dia não é a
-# MAGIC máxima do dia, e sai com exatamente a mesma cara de um dia completo.
+# MAGIC Contra a tabela já gravada, pelo motivo explicado na célula acima:
+# MAGIC serverless não tem `cache()`, e sem materializar cada uma destas
+# MAGIC agregações reprocessaria os 7.955 CSVs do zero.
+# MAGIC
+# MAGIC **Elas continuam sendo portão.** Se alguma falhar, não siga para o
+# MAGIC `02_gold` — conserte o parser e rode este notebook de novo. O `salvar`
+# MAGIC sobrescreve, então não há resíduo.
+# MAGIC
+# MAGIC `horas_validas` é o campo que impede a mentira mais fácil deste dataset:
+# MAGIC uma máxima calculada com 3 horas do dia não é a máxima do dia, e sai com
+# MAGIC exatamente a mesma cara de um dia completo.
 
 # COMMAND ----------
 
@@ -152,12 +173,11 @@ display(violacoes)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Persistir
-
-# COMMAND ----------
-
-print(salvar(dim, CATALOGO, ESQUEMA, "dim_estacao"))
-print(salvar(fato, CATALOGO, ESQUEMA, "fato_observacao_diaria"))
+# MAGIC ## O que ficou no catálogo
+# MAGIC
+# MAGIC A gravação aconteceu lá em cima — ver a nota sobre `cache()` no
+# MAGIC serverless. Aqui só se confere o que está no Unity Catalog, que é o que
+# MAGIC o `02_gold` vai ler.
 
 # COMMAND ----------
 
