@@ -173,20 +173,54 @@ if (lista !== null) {
 // ---------------------------------------------------------------------------
 console.log("\n4. SCREENSHOTS\n");
 
-const dirImg = cam("docs", "imagens");
+// A CAIXA DO NOME DA PASTA IMPORTA, E SÓ FORA DO WINDOWS.
+//
+// No Windows `docs/imagens` e `docs/Imagens` são a mesma pasta; no GitHub e em
+// qualquer Linux são duas. Uma imagem citada como `imagens/x.png` e guardada em
+// `Imagens/` renderiza na sua máquina e dá 404 na página que o professor abre.
+// Por isso a procura é pela pasta REAL, e a citação é conferida contra o nome
+// exato dela.
+const nomeDir = (existsSync(cam("docs")) ? readdirSync(cam("docs")) : [])
+  .find((f) => f.toLowerCase() === "imagens");
+const dirImg = nomeDir ? cam("docs", nomeDir) : cam("docs", "imagens");
 const imgs = existsSync(dirImg)
   ? readdirSync(dirImg).filter((f) => /\.(png|jpg|jpeg|webp)$/i.test(f)) : [];
+
+// Parêntese no nome do arquivo fecha o link do markdown antes da hora, e a
+// imagem simplesmente não aparece — sem aviso de ninguém.
+const comParenteses = imgs.filter((f) => /[()]/.test(f));
+if (comParenteses.length) {
+  mal(`${comParenteses.length} imagem(ns) com parêntese no nome: ${comParenteses.join(", ")}`,
+      "renomeie: `(` e `)` quebram a sintaxe `![alt](caminho)` do markdown");
+}
 if (imgs.length === 0) {
   talvez("docs/imagens/ vazio ou inexistente",
          "a rubrica pede prova do que rodou por interface — Volume, Catalog, notebooks");
 } else {
-  ok(`${imgs.length} imagem(ns) em docs/imagens/`);
+  ok(`${imgs.length} imagem(ns) em docs/${nomeDir ?? "imagens"}/`);
   const citadas = imgs.filter((f) => mvp && mvp.includes(f));
   if (citadas.length < imgs.length) {
     talvez(`${imgs.length - citadas.length} imagem(ns) não citada(s) no documento`,
-           "imagem que ninguém referencia não é vista por quem corrige");
+           "imagem que ninguém referencia não é vista por quem corrige: " +
+           imgs.filter((f) => !citadas.includes(f)).join(", "));
   } else {
     ok("todas as imagens são citadas no documento");
+  }
+
+  // E o CAMINHO citado tem que bater na caixa, não só o nome do arquivo.
+  if (mvp && nomeDir) {
+    const erradas = imgs.filter((f) => {
+      const certo = `${nomeDir}/${f}`;
+      const re = new RegExp(`\\]\\(\\s*([^)]*${f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "g");
+      return [...mvp.matchAll(re)].some((m) => !m[1].endsWith(certo));
+    });
+    if (erradas.length) {
+      mal(`${erradas.length} imagem(ns) citada(s) com a caixa errada da pasta`,
+          `no GitHub a pasta é '${nomeDir}' e o caminho diferencia maiúscula: ` +
+          erradas.join(", "));
+    } else {
+      ok(`os caminhos citados batem com 'docs/${nomeDir}/'`);
+    }
   }
 }
 

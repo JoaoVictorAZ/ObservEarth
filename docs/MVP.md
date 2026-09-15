@@ -15,6 +15,8 @@ Ele descreve um subsistema de dados em lote construído **dentro** do ObservEart
 
 é porque a contagem só existe depois de rodar sobre os dados completos, e preencher com estimativa seria exatamente o defeito que o pipeline inteiro foi desenhado para impedir. O §7 lista tudo que está nesse estado.
 
+**A execução completa foi feita em 15/09/2026**, no Databricks serverless, sobre 2010–2024: 7.955 arquivos, 616 estações, 2.869.788 dias. Os números de §5.3, §6.1 e §6.4 são dessa execução. O que continua marcado é o **M4** (§6.3), cujo pareamento com o ERA5 não rodou — e por isso não há número de viés aqui.
+
 ---
 
 ## 1. Contexto de Negócios e Perguntas
@@ -88,11 +90,18 @@ E a consequência, registrada porque é incômoda: **quinze anos não é uma nor
 | # | Restrição | Consequência |
 |---|---|---|
 | R1 | Databricks Free Edition restringe internet de saída a domínios confiáveis | `requests.get()` para o INMET pode falhar dentro do notebook |
-| R2 | Verificação por LinkedIn libera o acesso de saída | ⟨PENDENTE — execução real⟩ Se destravou, a coleta é script versionado; se não, é upload manual do ZIP para um Volume do Unity Catalog, com screenshots |
+| R2 | A verificação por LinkedIn **não** liberou a saída | **Medido**: `RemoteDisconnected` nas 15 tentativas de baixar do `portal.inmet.gov.br`. A carga foi upload manual dos ZIPs para um Volume do Unity Catalog |
 | R3 | Serverless-only, 1 SQL warehouse `2X-Small` | Jobs em série, sem cluster customizado |
 | R4 | Sem R e sem Scala | PySpark e SQL — já era o plano |
 | R5 | Sem custom workspace storage | O caminho é **Volumes do Unity Catalog** |
+| R6 | Serverless **não expõe `sparkContext`** | Sem `parallelize`, sem `broadcast`, sem RDD. Ver §4.1 |
+| R7 | Serverless **não tem `cache()`** | `PERSIST TABLE is not supported on serverless compute`. A materialização é a tabela, e a checagem de qualidade roda depois da gravação |
 | R9 | Orçamento próprio: máximo ¼ do free tier de qualquer API | O pareamento com ERA5 gasta ~600 chamadas **uma vez**: cabe |
+
+R6 e R7 têm a mesma raiz: o serverless não expõe o que depende de executor
+fixo. R6 foi previsto no desenho; **R7 foi encontrado batendo**, no meio da
+execução, e está aqui pelo mesmo motivo que R2 — restrição medida vale mais que
+restrição suposta.
 
 ### 2.4 Como a carga roda
 
@@ -103,7 +112,9 @@ python pipeline/silver_inmet.py --entrada 'data/bronze/2024/*.CSV' --saida data/
 
 A camada Bronze é o ZIP baixado e descompactado, **sem transformação nenhuma** — é a definição de Bronze, e é o que permite reprocessar sem baixar de novo. `data/bronze/` está no `.gitignore`: são 90 MB por ano, e repositório não é cache.
 
-⟨PENDENTE — execução real⟩ Screenshots do Volume do Unity Catalog com os ZIPs carregados e as tabelas Bronze registradas.
+![Volume do Unity Catalog com os 15 ZIPs anuais carregados](Imagens/Zips.png)
+
+*`/Volumes/observearth/clima/inmet/zips` — os 15 ZIPs, de 76,8 MB (2021) a 112,4 MB (2018). O upload manual é consequência direta de R2.*
 
 ---
 
@@ -156,7 +167,11 @@ O validador checa sentinela **antes** de checar faixa. Sem essa ordem, `-9999` s
 1. Lê `VARIAVEIS` de `server/climatologia.js` — o objeto que a rota do aplicativo usa de verdade — e compara campo a campo com o contrato. Documentação concorda com o código no dia em que é escrita; um teste concorda todo dia.
 2. Valida `pipeline/contrato/amostra-gold.json`, uma amostra da **saída real do Spark**, com o mesmo validador. Não são duas checagens parecidas em dois lugares: é a regra do aplicativo julgando o que o pipeline produz.
 
-⟨PENDENTE — execução real⟩ Screenshots do Unity Catalog com as tabelas registradas e seus esquemas.
+![DESCRIBE TABLE EXTENDED de fato_observacao_diaria](Imagens/Silver3.png)
+
+*`DESCRIBE TABLE EXTENDED` da tabela de fato no Unity Catalog. As onze colunas do contrato com os tipos que o contrato declara — `data` como `date`, `dia_do_ano` como `int`, as cinco variáveis como `double`, `horas_validas` como `int`. E o registro de que são **2.869.788 linhas em 13.896.189 bytes**, Delta, gerenciada, em `observearth.clima`.*
+
+*O catálogo da §3.2 não é descritivo: é isto.*
 
 ---
 
@@ -221,7 +236,21 @@ Reproduzir: `python pipeline/gold_normal.py --conferir`.
 
 **`ModuleNotFoundError` no executor.** O `cloudpickle` serializa função de módulo importável **por referência** — manda o nome, não o corpo — e o worker tenta importar um módulo que não está no path dele. Vale igual no Databricks: um módulo do repositório não está no path dos workers só por estar no workspace. Corrigido com `addPyFile`.
 
-⟨PENDENTE — execução real⟩ Screenshots dos notebooks no Databricks e das tabelas persistidas no Unity Catalog.
+![Os três notebooks no workspace do Databricks](Imagens/Volumes.png)
+
+*Os três notebooks, versionados num Git folder apontado para o repositório público. É o que amarra cada execução a um commit.*
+
+![Notebook 01_silver executado no Databricks](Imagens/Silver1.png)
+
+*`01_silver` no serverless: a busca da raiz do repositório, o `importlib.reload`, a carga e as 616 estações da dimensão.*
+
+![Notebook 02_gold executado no Databricks](Imagens/Gold1.png)
+
+*`02_gold`: a conferência do percentil contra o gabarito roda **antes** de qualquer gravação — `0 divergências em 15` contra `8` do `percentile_approx` — e só então saem as tabelas Gold.*
+
+![Saída do Gold: normais, cobertura e confiança](Imagens/Gold2.png)
+
+*`gold_normal` com 1.113.133 linhas, `gold_cobertura` e `gold_confianca` persistidas no catálogo.*
 
 ---
 
@@ -246,16 +275,50 @@ Ele valida **forma**, não **verdade**. Uma temperatura de 31,4 °C num dia em q
 
 ### 5.3 Contagens antes e depois
 
-⟨PENDENTE — execução real⟩
+Execução completa no Databricks serverless, 15/09/2026, sobre 2010–2024.
 
 | Métrica | Valor |
 |---|---|
-| Estações lidas / recusadas por formato | |
-| Linhas horárias lidas | |
-| Dias agregados | |
-| Dias com `horas_validas < 18` (agregado nulo) | |
-| Campos vazios convertidos em `null` | |
-| Linhas de `gold_normal` com `n_amostras < 20` | |
+| Arquivos CSV ingeridos (Bronze) | 7.955 |
+| Estações distintas (`dim_estacao`) | 616 |
+| Dias agregados (`fato_observacao_diaria`) | 2.869.788 |
+| Dias completos (`horas_validas ≥ 18`) | 2.392.659 |
+| Dias descartados (agregados nulos) | 477.129 |
+| Período coberto | 2010-01-01 a 2024-12-31 |
+| Linhas de `gold_normal` | 1.113.133 |
+| Linhas de `gold_normal` com `n_amostras < 20` | 24.437 |
+
+**83,4% dos dias-estação são completos.** O complemento não é perda de dado — é
+dado que existe no arquivo e não sustenta um agregado diário.
+
+**Três números iguais, e isso é a prova e não a coincidência.** `dias_descartados`,
+`tmax_nula` e `chuva_nula` deram **477.129** exatamente. É a regra de
+`horas_validas < 18` se manifestando: quando o dia é incompleto, *todos* os
+agregados viram `null` de uma vez. Se a temperatura tivesse sido anulada e a
+chuva não, os números divergiriam — e uma chuva somada sobre um dia de três
+horas passaria por chuva do dia. Igualdade exata entre três contagens
+independentes é mais forte que qualquer uma delas sozinha.
+
+**Nenhuma sentinela atravessou.** As cinco contagens de `-9999`/`-999` em
+`fato_observacao_diaria` deram **zero**. Isso importa porque a ameaça é real e
+medida, não hipotética: o arquivo de 2024 usa campo vazio para ausência, mas
+**2012 usa `-9999`** — a primeira linha de
+`INMET_NE_RN_A302_ARQ.SAO PEDRO E SAO PAULO_01-01-2012` é `-9999` em todas as
+colunas. Um único sentinela que escapasse entraria na média e no percentil sem
+levantar erro e deslocaria a distribuição inteira.
+
+**Os três invariantes do contrato deram zero violações:**
+`minima_acima_da_maxima`, `agregado_em_dia_incompleto` e `dia_do_ano_invalido`.
+
+![As três células de qualidade do 01_silver](Imagens/Silver2.png)
+
+*As contagens de sentinela e de violação de invariante, executadas contra a tabela Delta. Todas em zero.*
+
+**As 24.437 linhas fracas foram publicadas, não removidas.** São normais com
+menos de 20 amostras — estação nova, ou dia do ano com buraco na série. Elas
+saem **com `n_amostras` verdadeiro**, e quem consome decide. Removê-las daria um
+Gold mais limpo e mentiria por omissão: a faixa deixaria de existir sem que
+ninguém soubesse que existia pouca amostra ali.
 
 ### 5.4 Cobertura da suíte
 
@@ -282,7 +345,42 @@ Ele valida **forma**, não **verdade**. Uma temperatura de 31,4 °C num dia em q
 
 Verificado de ponta a ponta com dado sintético de resposta calculável à mão: para uma série em que a temperatura é igual ao dia do ano, ao longo de 3 anos, o alvo 200 recebe os dias 193–207 de cada ano — 45 valores — e os percentis têm que dar exatamente p10 = 194, p50 = 200, p90 = 206. Dão.
 
-⟨PENDENTE — execução real⟩ Faixas reais para uma seleção de estações, com gráfico da envoltória p10–p90 ao longo do ano.
+**E dão no dado real também.** `gold_normal` saiu com 1.113.133 linhas. Para a
+primeira estação da tabela, em `temperature_2m_max`, a envoltória ao longo do
+ano se comporta como tem que se comportar:
+
+| `dia_do_ano` | p10 | p50 | p90 | `n_amostras` |
+|---|---|---|---|---|
+| 31 | 25,54 | 27,8 | 29,8 | 225 |
+| 37 | 25,04 | 27,9 | 30,0 | 225 |
+| 40 | 25,0 | 27,9 | 30,0 | 222 |
+| 45 | 24,6 | 27,6 | 29,8 | 217 |
+
+**`n_amostras = 225` é a confirmação de que a janela é explosão e não filtro.**
+São 15 anos × 15 dias (o alvo mais ±7) = 225. Se a janela tivesse sido
+implementada como agrupamento por `dia_do_ano`, este número seria **15** — uma
+amostra por ano — e os percentis de cauda seriam ruído com cara de faixa. A
+queda para 217 nos dias seguintes é buraco real na série daquela estação, e
+aparece porque `n_amostras` é publicado em vez de suposto.
+
+**A conferência do percentil passou neste runtime.** Antes de gravar qualquer
+Gold, o `02_gold` roda os 15 casos do gabarito calculado à mão:
+
+```
+percentile          0 divergências em 15
+percentile_approx   8 divergências em 15
+```
+
+Os mesmos números medidos localmente em Spark 3.5.3. `percentile_approx` não
+interpola — devolve estatística de ordem — e na amostra `[10,20,30,40,50]` dá
+p10 = 10 onde o correto é 14. O erro encolhe com amostra grande e **vive nas
+caudas**, que é exatamente onde mora a faixa de anomalia do aplicativo. Por isso
+a assertiva roda antes da gravação e derruba o job: uma normal torta sai
+plausível.
+
+![Envoltória p10–p90 ao longo do ano para uma estação](Imagens/Graph1-TempPerDay.png)
+
+*A consulta de `gold_normal` no `02_gold`: 366 linhas, uma por dia do ano, com p10, p50, p90 e `n_amostras`. É a mesma faixa que a sonda do aplicativo desenha atrás do valor do dia.*
 
 ### 6.2 Q2 — dias fora da faixa
 
@@ -362,7 +460,30 @@ Os três fatores saem no Parquet **ao lado** do resultado, para a tela poder diz
 
 **O erro declarado:** a escala de 150 km é a ordem de grandeza da decorrelação da **temperatura** diária. Chuva decorrelaciona em dezenas de km — para precipitação este índice é **otimista**. Corrigir exigiria uma grade por variável; não foi feito, e está escrito no contrato para não virar suposição de quem lê o mapa.
 
-⟨PENDENTE — execução real⟩ Mapa de confiança com as 565 estações, e a contagem de células com confiança abaixo de 0,1.
+**A distribuição real, e ela é mais dura do que eu esperava.** Sobre as 616
+estações e a grade de 0,25°:
+
+| `confianca` | células | `dist_min_km` | `dist_max_km` |
+|---|---|---|---|
+| 0,000 | 2.037 | 10 | 1.696 |
+| 0,001 | 1.294 | 114 | 1.134 |
+| 0,002 | 767 | 37 | 970 |
+| 0,003 | 528 | 15 | 892 |
+| 0,004 | 416 | 69 | 843 |
+| 0,005 | 351 | 36 | 804 |
+
+**Há célula a 1.696 km da estação mais próxima.** Esse é o número que o mapa
+pintava — até agora — com exatamente a mesma cor com que pinta São Paulo.
+
+E há um caso que só o desenho multiplicativo revela: **confiança 0,000 com a
+estação a 10 km.** Perto não basta. Aquela estação tem série curta ou cobertura
+baixa, e o produto zera. Uma média dos três fatores daria algo em torno de 0,3 e
+pintaria a célula como parcialmente conhecida — que é precisamente a mentira que
+§6.4 existe para não contar.
+
+![Distribuição da confiança sobre a grade](Imagens/Graph2-TrustBarOfData.png)
+
+*A distribuição inteira. A massa está à esquerda: a maior parte da grade tem confiança baixa, e até hoje o mapa pintava tudo isso com a mesma cor.*
 
 ---
 
@@ -374,7 +495,32 @@ Os três fatores saem no Parquet **ao lado** do resultado, para a tela poder diz
 
 **E uma suposição do desenho estava errada.** Eu tinha assumido que o campo `elevation` da Open-Meteo era a orografia da célula; a medição mostrou que é a altitude do ponto num DEM fino, e que a rota padrão já rebaixa o valor. Descoberto a tempo, e a correção acabou rendendo uma análise melhor (§6.3) — mas se eu tivesse escrito o pareamento sem medir, o `delta_altitude_m` teria dado perto de zero, a correção não teria o que corrigir, e o número sairia com cara de certo.
 
-**A execução sobre os dados completos não foi feita.** Todas as contagens de §5.3 e os resultados de §6 estão pendentes. O pipeline foi verificado com dado sintético de resposta conhecida — o que prova que a lógica está certa, e **não** prova que os dados reais passam por ela sem surpresa. Essa distinção é importante e não vou dissimulá-la.
+**A execução completa foi feita — e a distinção que este parágrafo alertava se
+confirmou.** O pipeline estava verificado com dado sintético de resposta
+conhecida, o que provava que a lógica estava certa e **não** provava que os
+dados reais passariam por ela sem surpresa. Não passaram. A execução sobre
+2010–2024 revelou quatro defeitos que nenhum teste sintético pegaria:
+
+1. **A chave dos metadados muda de sufixo entre anos.** `DATA DE FUNDACAO:` em
+   2020, `DATA DE FUNDAÇÃO (YYYY-MM-DD):` em 2012. A busca era por igualdade, e
+   `fundacao` saía `null` para metade da série — sem erro nenhum. O fixture era
+   de 2024 e por isso nunca viu o outro formato.
+2. **`recursiveFileLookup` faltava no leitor do Silver.** O Bronze tinha a
+   opção, o Silver não. Resultado: **zero linhas, esquema correto, nenhum erro.**
+3. **Colisão de nome de módulo.** `pipeline/databricks.py` tem o mesmo nome do
+   pacote do SDK. Uma UDF que resolvia `esquema_fato` no *worker* importava o
+   SDK e falhava; a UDF irmã, que capturava o esquema no *driver*, funcionava.
+   A dimensão saiu perfeita e o fato estourou.
+4. **Serverless não tem `cache()`.** Consequência: cada célula de qualidade
+   reprocessaria os 7.955 CSVs, e a ordem do notebook teve que mudar.
+
+Os quatro têm a mesma assinatura: **falham em silêncio ou falham onde não
+parece.** Nenhum deles é bug de lógica — são de ambiente, de formato e de
+fronteira entre processos, e é exatamente por isso que executar de verdade não é
+formalidade.
+
+**O que continua sem execução real é o M4**, e só ele: não há número de viés
+neste documento.
 
 **Validação de plausibilidade física não existe.** §5.2: o contrato valida forma, não verdade. Uma temperatura absurda mas dentro da faixa passa.
 
