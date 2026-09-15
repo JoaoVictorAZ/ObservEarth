@@ -1,18 +1,3 @@
-// test/_grib-fixture.mjs
-// -----------------------------------------------------------------------------
-// CONSTRUTOR DE MENSAGENS GRIB2 SINTETICAS, para teste.
-//
-// Estava dentro de test/grib2.mjs. Foi extraido quando um segundo teste (o dos
-// campos escalares) passou a precisar do mesmo construtor: duas copias do
-// gerador de fixtures divergem na primeira vez que alguem corrige um
-// deslocamento de secao num lado so — e o teste que ficou para tras passa a
-// validar um formato que nao existe.
-//
-// Escreve o gabarito 5.0 (empacotamento simples). O 5.2/5.3 (complexo, com
-// diferenciacao espacial) e exercitado com dados reais em producao; aqui o que
-// interessa e ter um GRIB2 valido e barato de montar.
-// -----------------------------------------------------------------------------
-
 export const be32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0); return b; };
 export const be16 = (n) => { const b = Buffer.alloc(2); b.writeUInt16BE(n & 0xffff); return b; };
 /** GRIB2 usa sinal-magnitude, NAO complemento de dois */

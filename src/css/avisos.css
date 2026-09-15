@@ -1,0 +1,131 @@
+/* src/css/avisos.css
+   -------------------------------------------------------------------------
+   AVISOS DO INMET e a BARRA DE ESTADO DAS FONTES.
+
+   As duas coisas moram na mesma folha porque falam da mesma ideia: o que o app
+   NÃO sabe, e o que uma autoridade diz que é perigoso. É a única cor do
+   sistema que não descreve uma grandeza medida — ela descreve risco e falha, e
+   por isso pode ser âmbar e vermelha sem quebrar a regra 3 do design.
+   ------------------------------------------------------------------------- */
+
+/* ==== janela de avisos =================================================== */
+
+.avisos .probe-corpo { padding-top: var(--s-3); }
+
+.avis { display: flex; flex-direction: column; gap: var(--s-3); }
+
+.avi {
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--r);
+  background: var(--surface);
+  /* Encerrado e vigente NÃO podem parecer a mesma coisa. O que já passou fica
+     recuado; só o que está valendo tem peso. */
+  opacity: 0.55;
+}
+.avi-vigente { opacity: 1; border-color: var(--rule); }
+
+.avi-topo {
+  display: flex; align-items: center; gap: var(--s-3);
+  margin-bottom: var(--s-2);
+}
+.avi-sev {
+  flex: none; width: 3px; height: 14px; border-radius: 2px;
+}
+.avi-evento {
+  margin: 0; flex: 1; min-width: 0;
+  font-size: var(--t-body); font-weight: var(--w-medium); color: var(--ink);
+}
+.avi-grau {
+  flex: none; font-size: var(--t-micro); font-weight: var(--w-medium);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.avi-quando {
+  margin: 0 0 var(--s-2);
+  font-family: var(--mono); font-size: 10px; color: var(--ink-3);
+}
+.avi-desc {
+  margin: 0; font-size: var(--t-small); line-height: 1.5; color: var(--ink-2);
+}
+
+.avi-areas { margin-top: var(--s-2); }
+.avi-areas summary {
+  cursor: pointer; font-size: var(--t-micro); color: var(--ink-3);
+  list-style: none;
+}
+.avi-areas summary::before { content: "▸ "; }
+.avi-areas[open] summary::before { content: "▾ "; }
+.avi-areas p {
+  margin: var(--s-2) 0 0;
+  font-size: var(--t-micro); line-height: 1.6; color: var(--ink-3);
+}
+
+.avi-estado {
+  display: flex; align-items: flex-start; gap: var(--s-2);
+  margin: 0 0 var(--s-4); padding: var(--s-3) var(--s-4);
+  font-size: var(--t-small); line-height: 1.5; color: var(--ink-2);
+  background: var(--surface); border-left: 2px solid var(--warn);
+  border-radius: 0 var(--r) var(--r) 0;
+}
+.avi-estado svg { flex: none; margin-top: 2px; }
+.avi-estado-falha { border-left-color: var(--alert); }
+
+/* "Nenhum aviso" é uma RESPOSTA e não uma tela em branco. */
+.avi-vazio {
+  margin: 0; padding: var(--s-5) var(--s-4);
+  font-size: var(--t-small); line-height: 1.55; color: var(--ink-3);
+  text-align: center;
+}
+
+.avi-proc {
+  margin-top: var(--s-4); padding-top: var(--s-3);
+  border-top: 1px solid var(--rule-soft);
+}
+.avi-proc p {
+  margin: 0 0 var(--s-2);
+  font-size: var(--t-micro); line-height: 1.55; color: var(--ink-3);
+}
+.avi-proc strong { color: var(--ink-2); font-weight: var(--w-medium); }
+.avi-proc-alerta { color: var(--warn) !important; }
+
+/* ==== barra inferior ===================================================== */
+
+.statusbar {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  height: 26px; z-index: 10;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--s-4); padding: 0 12px;
+  background: rgba(4, 6, 10, 0.88);
+  border-top: 1px solid var(--rule-soft);
+  backdrop-filter: blur(6px);
+  font-family: var(--mono); font-size: 11px; color: var(--ink-3);
+}
+.statusbar-lado {
+  display: flex; align-items: center; gap: var(--s-4);
+  min-width: 0;
+}
+.statusbar-lado > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.statusbar-lado strong { color: var(--ink); font-weight: var(--w-medium); }
+
+/* A cor vem do estado real das fontes. Verde só quando é verde. */
+.statusbar-saude {
+  display: flex; align-items: center; gap: 5px;
+  letter-spacing: 0.04em; white-space: nowrap;
+}
+.statusbar-falha {
+  color: var(--warn); max-width: 46ch;
+}
+
+.statusbar-avisos {
+  display: flex; align-items: center; gap: 5px;
+  padding: 2px 8px; border-radius: 3px;
+  font-family: var(--mono); font-size: 11px; font-weight: var(--w-medium);
+  color: var(--void); background: var(--warn);
+  border: none; cursor: pointer; white-space: nowrap;
+  transition: filter var(--m-fast) var(--ease);
+}
+.statusbar-avisos:hover { filter: brightness(1.12); }
+
+@media (max-width: 720px) {
+  .statusbar-falha { display: none; }
+}

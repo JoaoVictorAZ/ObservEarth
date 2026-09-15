@@ -40,6 +40,17 @@
 // -----------------------------------------------------------------------------
 
 export const ORDEM = {
+  /**
+   * O LIMBO da atmosfera. Ver src/globo/atmosfera.ts.
+   *
+   * Negativo porque ele é a única casca que fica ATRÁS de todas as outras: é
+   * uma esfera maior que o planeta, desenhada pelas faces de trás, e o que se
+   * vê dela é só o anel que sobra ao redor do disco. Ela é o único objeto desta
+   * pilha que respeita o teste de profundidade contra o globo — é assim que a
+   * metade da frente some por trás do planeta opaco.
+   */
+  ATMOSFERA: -1,
+
   /** a esfera do globe.gl, com teste de profundidade de verdade */
   BASE: 0,
 

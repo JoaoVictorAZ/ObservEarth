@@ -1,0 +1,107 @@
+/* src/css/regua.css
+   -------------------------------------------------------------------------
+   A RÉGUA — a escala do instrumento.
+
+   Fica ancorada no canto inferior esquerdo, acima da barra de estado. Não é um
+   painel: é um recorte no escuro, com fio de 1px, como manda a regra 2 do
+   sistema. O único elemento colorido dela é a própria escala — que é dado.
+   ------------------------------------------------------------------------- */
+
+.regua {
+  position: absolute;
+  /* DEPOIS DO PAINEL, e não por cima dele.
+     Em 12px a régua caía sobre a coluna de camadas e sobre o rodapé dela —
+     duas superfícies disputando o mesmo canto. A régua pertence ao MAPA, e
+     por isso começa onde o mapa começa. */
+  left: calc(var(--panel-w) + 12px);
+  bottom: 38px;              /* 26 da barra de estado + respiro */
+  z-index: 10;
+  width: min(420px, calc(100vw - 24px));
+  padding: var(--s-3) var(--s-4) var(--s-4);
+  background: var(--scrim);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-lg);
+  backdrop-filter: blur(10px);
+  pointer-events: none;      /* a régua LÊ, não interage: nunca rouba o cursor */
+  user-select: none;
+}
+
+.regua-topo {
+  display: flex; align-items: baseline; gap: var(--s-3);
+  margin-bottom: var(--s-3);
+}
+.regua-tit {
+  margin: 0; min-width: 0;
+  font-size: var(--t-micro); font-weight: var(--w-medium); color: var(--ink-2);
+  text-transform: uppercase; letter-spacing: 0.07em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.regua-un {
+  flex: none;
+  font-family: var(--mono); font-size: var(--t-micro); color: var(--ink-3);
+}
+
+/* A leitura é o elemento mais pesado quando existe — e some inteira quando
+   não existe. Um traço fixo no lugar dela treinaria o olho a ignorar. */
+.regua-leitura {
+  margin-left: auto; flex: none; text-align: right;
+}
+.regua-leitura strong {
+  font-family: var(--mono); font-size: var(--t-lead); font-weight: var(--w-medium);
+  color: var(--ink); font-variant-numeric: tabular-nums;
+}
+.regua-sem {
+  font-size: var(--t-micro); font-style: normal; color: var(--ink-3);
+}
+
+.regua-barra { position: relative; }
+
+.regua-faixa {
+  height: 10px; border-radius: 2px;
+  border: 1px solid var(--rule-soft);
+}
+
+/* O ponteiro fica NA escala, não ao lado dela. É o que transforma um número
+   solto em posição. O anel escuro em volta garante contraste contra qualquer
+   cor da rampa — inclusive o branco do topo das escalas de vento. */
+.regua-ponteiro {
+  position: absolute; top: -3px;
+  width: 2px; height: 16px;
+  margin-left: -1px;
+  background: var(--ink);
+  box-shadow: 0 0 0 1.5px var(--void);
+  border-radius: 1px;
+}
+
+.regua-marcas {
+  position: relative; height: 14px; margin-top: 2px;
+}
+.regua-marca {
+  position: absolute; top: 0;
+  transform: translateX(-50%);
+  font-family: var(--mono); font-size: 9px; color: var(--ink-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+/* As marcas das pontas encostariam para fora da caixa. */
+.regua-marca:first-child { transform: none; }
+.regua-marca:last-child { transform: translateX(-100%); }
+
+.regua-pe {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2) var(--s-4);
+  margin-top: var(--s-3);
+  font-family: var(--mono); font-size: 9px; color: var(--ink-3);
+}
+.regua-coord { color: var(--ink-2); }
+.regua-fonte { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.regua-estado { color: var(--warn); }
+.regua-estado-falha { color: var(--alert); }
+
+/* Com o painel recolhido a régua volta para a borda. A variável não muda
+   sozinha, então quem muda é a classe que o AppShell já aplica. */
+.app-sem-painel .regua { left: 12px; }
+
+@media (max-width: 720px) {
+  .regua { left: 8px; right: 8px; width: auto; bottom: 34px; }
+  .regua-pe { display: none; }
+}

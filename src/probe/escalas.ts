@@ -56,6 +56,51 @@ export const VENTO: readonly Parada[] = [
 /** rajada: mesma escala do vento */
 export const RAJADA = VENTO;
 
+/**
+ * Corrente oceânica à superfície, em m/s.
+ *
+ * ESCALA PRÓPRIA, E NÃO A DO VENTO — e a diferença é de duas ordens de
+ * grandeza. O vento vai a 26 m/s nesta escala; a corrente superficial do
+ * oceano aberto fica quase toda abaixo de 0,25 m/s, e só as correntes de borda
+ * oeste — Golfo, Kuroshio, Agulhas, Brasil — chegam perto de 2 m/s.
+ *
+ * Reaproveitar a rampa do vento colocaria o oceano inteiro nos primeiros 8% da
+ * barra: a Corrente do Golfo sairia da mesma cor que uma poça parada, e a
+ * camada pareceria não ter nenhuma estrutura. Não é economia de código, é
+ * apagar o fenômeno.
+ *
+ * Os limites são de convenção física (0 a 2 m/s), não medidos deste campo —
+ * valor acima do teto encosta na ponta da régua, que é o comportamento certo
+ * de `posicaoDe`. A oceanografia costuma usar cm/s; fica em m/s para a régua
+ * não trocar de unidade entre duas camadas de velocidade.
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUE ESTA ESCALA VARIA SÓ EM CLAREZA, E NÃO EM MATIZ
+ * ---------------------------------------------------------------------------
+ * A primeira versão era um arco-íris como o do vento — e reprovou no piso de
+ * 4,5:1 logo na primeira parada (`#3f5a8a` dava 2,81:1). A regra deste arquivo
+ * é que cor de valor é TEXTO, e eu a quebrei ao acrescentar a escala.
+ *
+ * A correção não é escolher outros seis matizes e recalcular o contraste de
+ * cada um: é escolher uma construção em que o contraste seja CONSEQUÊNCIA.
+ * Aqui os três canais de cada parada são maiores ou iguais aos da anterior —
+ * (79,157,150) → … → (238,248,244) — e luminância relativa é monotônica em
+ * cada canal. Então basta a PRIMEIRA parada passar para todas passarem, e a
+ * primeira foi medida: 6,1:1.
+ *
+ * De brinde, isso resolve o problema de leitura: o vento é um arco-íris de
+ * cinco matizes, e uma segunda escala colorida ao lado dele viraria adivinhação.
+ * Um degradê de clareza num matiz só não se confunde com ele nem de longe.
+ *
+ * As paradas são DENSAS EMBAIXO — 0 / 0,25 / 0,5 e depois saltos de 0,5 —
+ * porque é ali que o oceano vive. Espaçamento uniforme gastaria metade da
+ * escala numa faixa de velocidade que quase não ocorre.
+ */
+export const CORRENTE: readonly Parada[] = [
+  [0, "#4f9d96"], [0.25, "#74c0b4"], [0.5, "#9ad7c6"],
+  [1.0, "#bde5d6"], [1.5, "#d8efe6"], [2.0, "#eef8f4"],
+];
+
 /** umidade relativa, em %: seco a saturado */
 export const UMIDADE: readonly Parada[] = [
   [0, "#e8c48a"], [30, "#d8d88a"], [55, "#9fd8b8"], [80, "#7fc8e0"], [100, "#8ab4f0"],

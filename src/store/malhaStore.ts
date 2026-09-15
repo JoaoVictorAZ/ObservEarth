@@ -114,7 +114,10 @@ export const useMalhaStore = create<MalhaState>((set, get) => ({
   passo: 4,
   exagero: 0.11,
   arame: false,
-  opacidade: 0.93,
+  // 1, e não 0,93: a superfície de análise tapa o que está atrás dela.
+  // Translúcida, ela somava com a textura da Terra e nenhuma das duas
+  // ficava legível. Quem quiser ver o planeta baixa o controle.
+  opacidade: 1,
   mostrarExtremos: true,
   incluirSelas: false,
   proeminenciaSigma: SIGMA_PADRAO,

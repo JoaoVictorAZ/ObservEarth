@@ -91,6 +91,34 @@ export interface MotorGeo {
   dispose(): void;
 
   onClick(fn: (lat: number, lng: number) => void): void;
+
+  /**
+   * A coordenada sob o ponteiro, ou `null` quando ele sai do planeta.
+   *
+   * Está no contrato e não como capacidade opcional porque a régua de cor
+   * depende dela nos DOIS motores: uma legenda que mostra o valor sob o cursor
+   * no globo e fica muda no mapa plano seria pior que legenda nenhuma — a
+   * pessoa aprenderia a não confiar nela.
+   *
+   * O `null` é obrigatório e não é detalhe: fora do disco do planeta não
+   * existe coordenada, e devolver a última conhecida faria a leitura continuar
+   * mostrando um valor de um lugar onde o cursor não está.
+   */
+  onHover(fn: (p: { lat: number; lng: number } | null) => void): void;
+
+  /**
+   * Onde uma coordenada cai NA TELA, em pixels relativos ao contêiner.
+   *
+   * `visivel` é falso quando o ponto está do outro lado do planeta — no globo
+   * ele existe, tem projeção, e está atrás. Sem essa distinção um cartão
+   * ancorado a Tóquio continuaria desenhado sobre a América do Sul, preso a um
+   * ponto que ninguém está vendo.
+   *
+   * Devolve `null` quando não há como projetar (motor não montado, contêiner
+   * de tamanho zero). `null` e `{visivel:false}` são coisas diferentes: uma é
+   * "não sei", a outra é "sei, e está escondido".
+   */
+  projetar(lat: number, lng: number): { x: number; y: number; visivel: boolean } | null;
   onNotice(fn: (msg: string | null) => void): void;
   onStats(fn: (s: FrameStats) => void): void;
 

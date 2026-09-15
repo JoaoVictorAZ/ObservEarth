@@ -1,0 +1,171 @@
+/* src/css/dock.css
+   =========================================================================
+   O PAINEL DE CAMADAS — redesenho
+   -------------------------------------------------------------------------
+   O QUE ESTAVA ERRADO, visto na tela e não deduzido:
+
+   1. O painel abria oferecendo um CATÁLOGO de 39 campos contínuos, um por
+      linha, todos com o mesmo peso. Para descobrir o que estava ligado era
+      preciso rolar a lista inteira procurando o círculo preenchido.
+   2. Cada linha tinha duas alturas: título e uma segunda linha de metadado
+      cinza minúsculo. Multiplicado por 39, o metadado virava textura.
+   3. O cabeçalho de família carregava a REGRA de uso ("um por vez — dividem
+      o mesmo plano de imagem") como subtítulo permanente. Isso é a resposta
+      a uma pergunta que ninguém fez ainda: é tooltip, não cabeçalho.
+   4. Nada dizia se a camada ligada tinha dado fresco, velho ou nenhum.
+
+   O QUE MUDA, e o princípio: O PAINEL ABRE DIZENDO O ESTADO, NÃO OFERECENDO
+   O CATÁLOGO. Primeiro o que está no ar; depois, colapsado, o resto.
+   ========================================================================= */
+
+/* ---- o que está no ar --------------------------------------------------- */
+
+.noar {
+  padding: var(--s-3) var(--s-4) var(--s-4);
+  border-bottom: 1px solid var(--rule);
+}
+.noar-tit {
+  margin: 0 0 var(--s-3);
+  font-size: var(--t-micro); font-weight: var(--w-medium); color: var(--ink-3);
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+.noar-lista { display: flex; flex-direction: column; gap: var(--s-2); }
+
+.noar-item {
+  display: grid;
+  grid-template-columns: 3px auto minmax(0, 1fr) auto;
+  align-items: center; gap: var(--s-3);
+  width: 100%; padding: var(--s-2) var(--s-3);
+  background: var(--surface); border: 1px solid var(--rule-soft);
+  border-radius: var(--r); cursor: pointer; text-align: left;
+  transition: border-color var(--m-fast) var(--ease);
+}
+.noar-item:hover { border-color: var(--rule-hi); }
+/* O fio da família é a única cor: ela diz que TIPO de dado é, e nada mais. */
+.noar-fio { align-self: stretch; border-radius: 2px; background: var(--fam, var(--rule-hi)); }
+
+/* O ponto de estado: fresco, velho, sem dado. 5px, e é tudo que ele precisa. */
+.noar-ponto {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--signal);
+}
+.noar-ponto-velho { background: var(--warn); }
+.noar-ponto-sem { background: var(--alert); }
+
+.noar-txt { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.noar-nome {
+  font-size: var(--t-small); color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.noar-meta {
+  font-family: var(--mono); font-size: 9px; color: var(--ink-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.noar-x {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 3px;
+  color: var(--ink-4); background: transparent; border: none; cursor: pointer;
+}
+.noar-x:hover { color: var(--ink); background: var(--surface-hi); }
+
+.noar-vazio {
+  margin: 0; font-size: var(--t-micro); line-height: 1.5; color: var(--ink-3);
+}
+
+/* ---- famílias ----------------------------------------------------------- */
+
+.fm { border-bottom: 1px solid var(--rule-soft); }
+.fm:last-of-type { border-bottom: none; }
+
+.fm-head {
+  display: flex; align-items: center; gap: var(--s-3);
+  width: 100%; padding: var(--s-3) var(--s-4);
+  background: transparent; border: none; cursor: pointer;
+  color: var(--ink-2); text-align: left;
+}
+.fm-head:hover { background: var(--surface); color: var(--ink); }
+.fm-fio { flex: none; width: 2px; height: 12px; border-radius: 1px; background: var(--fam); }
+/* O nome da família é o cabeçalho INTEIRO. A regra de uso virou `title`. */
+.fm-nome {
+  flex: 1; min-width: 0;
+  font-size: var(--t-micro); font-weight: var(--w-medium);
+  text-transform: uppercase; letter-spacing: 0.07em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.fm-cont {
+  flex: none; font-family: var(--mono); font-size: 9px; color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
+}
+/* Um traço quando a família tem algo ligado: o grupo fechado precisa dizer
+   que guarda algo aceso, senão fechar vira esconder. */
+.fm-aceso .fm-nome { color: var(--ink); }
+.fm-aceso .fm-cont { color: var(--fam); }
+
+.fm-itens { display: flex; flex-direction: column; padding-bottom: var(--s-2); }
+
+/* ---- uma camada --------------------------------------------------------- */
+
+.cm {
+  display: grid;
+  grid-template-columns: 2px minmax(0, 1fr) auto;
+  align-items: center; gap: var(--s-3);
+  width: 100%; padding: 5px var(--s-4) 5px var(--s-5);
+  background: transparent; border: none; cursor: pointer;
+  color: var(--ink-2); text-align: left;
+  transition: background var(--m-fast) var(--ease);
+}
+.cm:hover { background: var(--surface); color: var(--ink); }
+.cm input { position: absolute; opacity: 0; width: 0; height: 0; }
+.cm:focus-visible, .cm:has(input:focus-visible) {
+  outline: 1px solid var(--signal-line); outline-offset: -1px;
+}
+
+/* A MARCA É UM FIO, NÃO UM CÍRCULO.
+   Trinta e nove círculos vazios empilhados no canto esquerdo formavam uma
+   coluna de furos que puxava o olho antes dos nomes. Um fio de 2px só existe
+   quando está ligado — e aí é a única coisa colorida da linha. */
+.cm-fio { align-self: stretch; border-radius: 1px; background: transparent; }
+.cm-on .cm-fio { background: var(--fam); }
+.cm-on { color: var(--ink); background: var(--surface); }
+
+.cm-nome {
+  min-width: 0; font-size: var(--t-small);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* O metadado só aparece na linha ATIVA e no hover. Em 39 linhas ele era
+   textura; em uma linha ele é procedência. */
+.cm-meta {
+  flex: none; font-family: var(--mono); font-size: 9px; color: var(--ink-4);
+  opacity: 0; transition: opacity var(--m-fast) var(--ease);
+  white-space: nowrap;
+}
+.cm:hover .cm-meta, .cm-on .cm-meta { opacity: 1; }
+
+.cm-linha { display: flex; flex-direction: column; }
+.cm-nota {
+  margin: 0 var(--s-4) var(--s-2) var(--s-5);
+  font-size: 9px; line-height: 1.5; color: var(--ink-3);
+}
+.cm-nota-aviso { color: var(--warn); }
+
+/* ---- busca e rodapé ----------------------------------------------------- */
+
+.dk-busca { position: relative; padding: var(--s-3) var(--s-4); }
+.dk-busca input {
+  width: 100%; padding: var(--s-3) var(--s-4);
+  font-family: var(--sans); font-size: var(--t-small);
+  color: var(--ink); background: var(--surface);
+  border: 1px solid var(--rule); border-radius: var(--r);
+  outline: none;
+}
+.dk-busca input::placeholder { color: var(--ink-4); }
+.dk-busca input:focus { border-color: var(--signal-line); background: var(--surface-hi); }
+.dk-achados {
+  display: block; margin-top: var(--s-2);
+  font-family: var(--mono); font-size: 9px; color: var(--ink-3);
+}
+
+.dk-vazio {
+  margin: 0; padding: var(--s-5) var(--s-4);
+  font-size: var(--t-small); line-height: 1.5; color: var(--ink-3); text-align: center;
+}

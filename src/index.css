@@ -25,6 +25,10 @@
 @import "./css/analise.css";
 @import "./css/console.css";
 @import "./css/bloco.css";
+@import "./css/avisos.css";
+@import "./css/regua.css";
+@import "./css/dock.css";
+@import "./css/ancora.css";
 
 :root {
   /* ---- vácuo e superfícies ------------------------------------------- */
@@ -68,6 +72,29 @@
   /* ---- estados (semânticos, não decorativos) ------------------------- */
   --warn: #ffb454;
   --alert: #ff6b57;
+
+  /* ---- ANOMALIA: onde o dia cai na história do lugar ------------------
+     Cinco degraus, do percentil 0 ao 100. É a única escala divergente do
+     sistema, e ela é DADO — a regra 3 continua valendo: se está colorido, é
+     porque significa alguma coisa.
+
+     Frio em azul e calor em âmbar seguiria a convenção, mas a escala serve
+     também para chuva e vento, onde "azul = frio" não quer dizer nada. O que
+     ela codifica é RARIDADE PARA BAIXO e RARIDADE PARA CIMA, e o centro é
+     deliberadamente apagado: um dia normal não deve puxar o olho.
+
+     Contraste medido contra --void (#04060a), critério WCAG 2.1 AA (4,5:1) —
+     todos são usados como TEXTO na leitura de cada linha:
+       --anom-baixo-forte  #6db6ff   9,45:1
+       --anom-baixo        #8fd0e8  11,93:1
+       --anom-normal       #a8b4c2   9,63:1  (é o próprio --ink-2)
+       --anom-alto         #ffc470  12,92:1
+       --anom-alto-forte   #ff8f6b   9,07:1                                 */
+  --anom-baixo-forte: #6db6ff;
+  --anom-baixo: #8fd0e8;
+  --anom-normal: #a8b4c2;
+  --anom-alto: #ffc470;
+  --anom-alto-forte: #ff8f6b;
 
   /* ---- FAMÍLIAS DE CAMADA --------------------------------------------
      Uma cor por NATUREZA de dado, não por camada. Cinco cores no total.
@@ -216,6 +243,11 @@ button { border: none; background: none; cursor: pointer; }
 /* ------------------------------------------------------------ estrutura -- */
 .app { position: relative; width: 100%; height: 100%; background: var(--void); }
 .stage { position: absolute; inset: 0; }
+
+/* A CAIXA DO MOTOR. Cobre o palco inteiro, e é a única coisa que o motor
+   monta e desmonta — o cleanup dele chama `replaceChildren()`, que apagaria
+   qualquer nó do React que dividisse o mesmo pai. Ver GlobeViewport.tsx. */
+.stage-tela { position: absolute; inset: 0; }
 
 .app::after {
   content: "";
@@ -790,18 +822,27 @@ button { border: none; background: none; cursor: pointer; }
   font-family: var(--sans);
   /* contorno escuro: os nomes cruzam deserto claro e oceano escuro na mesma
      vista, então nenhuma cor única funciona sem sombra */
+  /* Sombra curta e forte, e não larga e espalhada: a larga formava um halo
+     escuro em volta de cada nome e os transformava em etiquetas coladas. */
   text-shadow:
-    0 0 3px rgba(0, 0, 0, 0.95),
-    0 1px 2px rgba(0, 0, 0, 0.8);
+    0 0 2px rgba(0, 0, 0, 0.9),
+    0 1px 1px rgba(0, 0, 0, 0.85);
   transition: opacity 0.22s var(--ease);
 }
 
+/* MEDIDO NA TELA. Em 12,5px/600 e 95% de opacidade, com o campo do WBGT
+   pintado por baixo, "REPÚBLICA DEMOCRÁTICA DO CONGO" atravessava o disco em
+   branco quase puro — um adesivo sobre o dado.
+
+   Topônimo é REFERÊNCIA: ele diz onde a pessoa está olhando, e nada mais. Peso
+   menor, opacidade menor e sombra mais curta o devolvem para o segundo plano
+   sem tirar a legibilidade sobre deserto claro. */
 .geo-label--country {
-  font-size: 12.5px;
-  font-weight: 600;
-  letter-spacing: 0.09em;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: rgba(244, 248, 255, 0.95);
+  color: rgba(238, 244, 255, 0.74);
 }
 /* ------------------------------------------------------ TOOLTIP DE FOCO
    O valor medido vem primeiro e maior; procedência por último e apagada.

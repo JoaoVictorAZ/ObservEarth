@@ -24,7 +24,10 @@
 // -----------------------------------------------------------------------------
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import * as THREE from "three";
+import { latDaLinha, lngDaColuna } from "../src/malha/campo.ts";
 
 let n = 0;
 const ok = (nome, fn) => { fn(); n++; console.log(`  ok  ${nome}`); };
@@ -167,6 +170,59 @@ ok("exagero zero devolve a malha exatamente sobre a esfera", () => {
   for (const [lat, lng] of [[0, 0], [45, 90], [-80, -170], [90, 0]]) {
     perto(paraCena(lat, lng, 1 * (1 + 0 * 0.12)).length(), 1, 1e-12, `(${lat},${lng})`);
   }
+});
+
+// -----------------------------------------------------------------------------
+// O ENROLAMENTO DOS TRIANGULOS — o defeito que custou uma versao inteira
+// -----------------------------------------------------------------------------
+// A malha e' uma superficie levantada sobre a esfera. Enquanto o material foi
+// DoubleSide, a ORIENTACAO dos triangulos nao importava: os dois lados
+// desenhavam. Ao trocar para FrontSide, as faces do lado de ca' passaram a ser
+// descartadas -- porque a normal apontava para DENTRO do planeta -- e sobrou
+// so' a metade de tras, visivel apenas no anel em volta do disco.
+//
+// Na tela: a malha "aparecia de lado" e sumia no meio. Nenhum teste pegou,
+// porque nenhum media a orientacao. Este mede, e le a ordem dos indices do
+// PROPRIO fonte, para a correcao nao poder ser desfeita em silencio.
+// -----------------------------------------------------------------------------
+
+const fonteMalha = readFileSync(fileURLToPath(new URL("../src/malha/malha3d.ts", import.meta.url)), "utf8");
+
+ok("a ordem dos indices no fonte e a que aponta para FORA", () => {
+  const m = /idx\.push\(([^)]+)\);/.exec(fonteMalha);
+  assert.ok(m, "nao achei o idx.push no fonte da malha");
+  const ordem = m[1].split(",").map((s) => s.trim());
+  assert.equal(ordem.length, 6, "esperava dois triangulos: " + m[1]);
+
+  const nx = 8, ny = 5;
+  const P = (j, i) => {
+    const la = (latDaLinha(j, ny) * Math.PI) / 180;
+    const lo = (lngDaColuna(i, nx) * Math.PI) / 180;
+    const c = Math.cos(la);
+    return new THREE.Vector3(100 * c * Math.sin(lo), 100 * Math.sin(la), 100 * c * Math.cos(lo));
+  };
+
+  let fora = 0, dentro = 0;
+  for (let j = 0; j < ny - 1; j++) {
+    for (let i = 0; i < nx; i++) {
+      const i1 = (i + 1) % nx;
+      const V = { a: P(j, i), b: P(j, i1), c: P(j + 1, i1), d: P(j + 1, i) };
+      for (const tri of [ordem.slice(0, 3), ordem.slice(3, 6)]) {
+        const [X, Y, Z] = tri.map((k) => V[k]);
+        const n = new THREE.Vector3().subVectors(Y, X).cross(new THREE.Vector3().subVectors(Z, X));
+        (n.dot(X) > 0 ? fora++ : dentro++);
+      }
+    }
+  }
+  assert.equal(dentro, 0,
+    `${dentro} de ${fora + dentro} triangulos apontam para DENTRO: com FrontSide a malha some do meio do disco`);
+});
+
+// Superficie de analise TAPA o que esta atras dela. Translucida, ela somava com
+// a textura da Terra e nenhuma das duas ficava legivel.
+ok("a malha e opaca por padrao e escreve profundidade", () => {
+  assert.match(fonteMalha, /depthWrite:\s*true/, "sem depthWrite a malha nao oclui o planeta");
+  assert.match(fonteMalha, /opc\.opacidade \?\? 1\) < 1/, "voltou a nascer translucida");
 });
 
 console.log(`\n  ${n} verificações da geometria do globo\n`);

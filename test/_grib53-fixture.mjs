@@ -1,27 +1,3 @@
-// test/_grib53-fixture.mjs
-// -----------------------------------------------------------------------------
-// CODIFICADOR GRIB2 GABARITO 5.3 — empacotamento complexo com diferenciação
-// espacial. É o formato que o GFS realmente usa.
-//
-// POR QUE ISTO PRECISA EXISTIR
-// Os testes cobriam apenas o gabarito 5.0 (empacotamento simples). Nenhuma
-// mensagem do GFS usa 5.0. Ou seja: o caminho de código que roda em produção —
-// `unpackComplex`, com grupos e recorrência — nunca foi exercitado por teste
-// nenhum. Todo defeito ali só aparecia como pixel estranho na tela, dias
-// depois, e era diagnosticado por adivinhação.
-//
-// Um codificador é a única forma honesta de testar um decodificador sem rede:
-// gera-se dado conhecido, codifica, decodifica e compara. Se não voltar
-// idêntico, o defeito está no decodificador — e o teste diz em qual etapa.
-//
-// ESTRUTURA DA SEÇÃO 7 PARA O GABARITO 7.3
-//   1. octetos extras: ival1, [ival2], minsd   (sinal-magnitude)
-//   2. NG referências de grupo,   `bits` cada        -> alinha em octeto
-//   3. NG larguras de grupo,      `bitsGW` cada      -> alinha
-//   4. NG comprimentos escalados, `bitsGL` cada      -> alinha
-//   5. os valores, grupo a grupo, `width[g]` bits cada
-// -----------------------------------------------------------------------------
-
 import { be32, be16, sm16, f32be } from "./_grib-fixture.mjs";
 
 /** escreve inteiros de largura variável num fluxo de bits */

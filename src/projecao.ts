@@ -138,6 +138,36 @@ export function aplicarZoom(alturaGraus: number, passos: number): number {
  *
  * `px`/`py` em pixels de canvas, origem no canto superior esquerdo.
  */
+/**
+ * O CAMINHO DE VOLTA: de geográfico para pixel.
+ *
+ * Inversa exata de `daTela`. Existe porque coisas ancoradas ao mapa — o cartão
+ * do ponto sondado, um marcador, uma linha-guia — precisam saber ONDE NA TELA
+ * está uma coordenada, e não o contrário.
+ *
+ * A LONGITUDE TEM QUE SER TRAZIDA PARA PERTO DO CENTRO DA VISTA antes da
+ * conta. Um ponto em −179° com a vista centrada em +179° está a dois graus de
+ * distância, e não a 358: sem o enrolamento, o cartão de um ponto perto do
+ * antimeridiano voaria para fora da tela pelo lado errado.
+ */
+export function naTela(
+  lat: number, lng: number,
+  larguraPx: number, alturaPx: number,
+  v: Vista,
+): { x: number; y: number } {
+  const aspecto = larguraPx / Math.max(1, alturaPx);
+  const gw = larguraGraus(v.alturaGraus, aspecto);
+
+  let dLng = lng - v.lng;
+  while (dLng > 180) dLng -= 360;
+  while (dLng < -180) dLng += 360;
+
+  return {
+    x: (dLng / gw + 0.5) * larguraPx,
+    y: ((v.lat - lat) / v.alturaGraus + 0.5) * alturaPx,
+  };
+}
+
 export function daTela(
   px: number, py: number,
   larguraPx: number, alturaPx: number,

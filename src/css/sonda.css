@@ -79,43 +79,170 @@
   padding: var(--s-4) var(--s-5) var(--s-5);
 }
 
-.prows { display: flex; flex-direction: column; }
+/* =========================================================================
+   AGORA — a medição do instante
+   -------------------------------------------------------------------------
+   Aqui havia dez linhas idênticas: temperatura do ar e elevação barométrica
+   com o mesmo tamanho, o mesmo cinza, a mesma barrinha. Sem hierarquia, a
+   pessoa precisa ler as dez para descobrir qual importa.
 
-.prow {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto;
-  align-items: baseline; gap: var(--s-3) var(--s-4);
-  padding: var(--s-3) 0 var(--s-2);
+   Agora a temperatura tem corpo, o vento tem meio corpo, e as outras oito
+   viram grade densa. A barra saiu de todas: ela marcava a posição numa escala
+   ABSOLUTA fixa, idêntica no Saara e na Groenlândia — comparação com o lugar
+   agora mora no bloco de baixo, onde existe uma referência de verdade.
+   ========================================================================= */
+
+.pb-agora { display: flex; flex-direction: column; gap: var(--s-4); }
+
+.pb-heroi {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: end; gap: var(--s-4);
+  padding-bottom: var(--s-4);
+  border-bottom: 1px solid var(--rule);
+}
+.pb-heroi-temp { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pb-heroi-temp strong {
+  font-family: var(--mono); font-size: 40px; line-height: 1;
+  font-weight: var(--w-medium); color: var(--ink);
+  font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+}
+.pb-heroi-un { font-size: 18px; margin-left: 2px; opacity: 0.65; }
+.pb-heroi-temp small,
+.pb-heroi-vento small {
+  font-family: var(--mono); font-size: var(--t-micro); color: var(--ink-3);
+}
+.pb-heroi-vento { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pb-heroi-rot {
+  display: flex; align-items: center; gap: var(--s-2);
+  font-size: var(--t-micro); color: var(--ink-3); text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.pb-heroi-vento strong {
+  font-family: var(--mono); font-size: 20px; font-weight: var(--w-medium);
+  color: var(--ink); font-variant-numeric: tabular-nums;
+}
+
+.pb-grade {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px; background: var(--rule-soft);
+  border: 1px solid var(--rule-soft); border-radius: var(--r);
+  overflow: hidden;
+}
+.pcel {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: var(--s-3) var(--s-4);
+  background: var(--void); min-width: 0;
+}
+.pcel-rot {
+  display: flex; align-items: center; gap: var(--s-2);
+  font-size: var(--t-micro); color: var(--ink-3); min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pcel-ico { display: flex; flex: none; color: var(--ink-3); }
+.pcel-val {
+  font-family: var(--mono); font-size: var(--t-body); font-weight: var(--w-medium);
+  color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.pcel-val small {
+  margin-left: var(--s-2);
+  font-size: var(--t-micro); font-weight: var(--w-normal); color: var(--ink-3);
+}
+.pcel-sem { font-size: var(--t-micro); color: var(--ink-3); font-style: italic; }
+.pcel-vazio .pcel-rot { color: var(--ink-4); }
+
+/* =========================================================================
+   HOJE CONTRA A NORMAL
+   -------------------------------------------------------------------------
+   A régua de cada linha é a distribuição de 1991–2020 DAQUELE ponto para ESTA
+   data, desenhada em UNIDADE e não em percentil: a banda p10–p90 desenhada em
+   percentil ocuparia sempre de 10% a 90% da largura, seria idêntica para
+   temperatura e para chuva em qualquer lugar do planeta, e não diria nada.
+   Em unidade ela mostra a forma — banda estreita de clima constante, banda
+   larga de lugar com duas estações, e a assimetria da chuva: mediana colada
+   na esquerda, cauda longa até a direita.
+   ========================================================================= */
+
+.pb-normal {
+  margin-top: var(--s-5); padding-top: var(--s-4);
+  border-top: 1px solid var(--rule);
+}
+.pb-tit {
+  display: flex; align-items: center; gap: var(--s-2);
+  margin: 0 0 var(--s-3);
+  font-size: var(--t-micro); font-weight: var(--w-medium); color: var(--ink-3);
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+.pb-estado {
+  margin: 0; font-size: var(--t-small); line-height: 1.55; color: var(--ink-3);
+}
+.pb-estado-falha {
+  padding: var(--s-3) var(--s-4);
+  background: var(--surface); border-left: 2px solid var(--warn);
+  border-radius: 0 var(--r) var(--r) 0; color: var(--ink-2);
+}
+/* A frase do topo é a única linha da sonda que AFIRMA alguma coisa. */
+.pb-frase {
+  margin: 0 0 var(--s-4);
+  font-size: var(--t-body); line-height: 1.45; color: var(--ink);
+  font-weight: var(--w-medium);
+}
+
+/* A fase do ENSO: contexto, e por isso discreta. Ela não é sobre este ponto —
+   é sobre o Pacífico — e competir com a manchete seria trocar a afirmação
+   local por uma planetária que não explica sozinha nada daqui. */
+.pb-enso {
+  margin: 0 0 var(--s-3);
+  font-family: var(--mono); font-size: var(--t-micro);
+  color: var(--ink-3); letter-spacing: 0.01em;
+}
+
+.pnls { display: flex; flex-direction: column; }
+.pnl {
+  padding: var(--s-3) 0;
   border-bottom: 1px solid var(--rule-soft);
 }
-.prow:last-child { border-bottom: none; }
-.prow-rot {
-  display: flex; align-items: center; gap: var(--s-3);
-  font-size: var(--t-small); color: var(--ink-2); min-width: 0;
+.pnl:last-child { border-bottom: none; }
+.pnl-topo {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-4);
 }
-.prow-ico { display: flex; flex: none; color: var(--ink-3); }
-.prow-val {
+.pnl-rot { font-size: var(--t-small); color: var(--ink-2); min-width: 0; }
+.pnl-val {
   font-family: var(--mono); font-size: var(--t-lead); font-weight: var(--w-medium);
-  color: var(--ink); text-align: right; white-space: nowrap;
+  color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.pnl-val small { font-size: var(--t-micro); color: var(--ink-3); margin-left: 1px; }
+.pnl-sem { font-size: var(--t-micro); color: var(--ink-3); font-style: italic; }
+.pnl-vazio .pnl-rot { color: var(--ink-3); }
+
+.pnl-eixo {
+  display: flex; align-items: center; gap: var(--s-3);
+  margin-top: var(--s-2);
+}
+.pnl-lim {
+  flex: none; font-family: var(--mono); font-size: 9px; color: var(--ink-4);
   font-variant-numeric: tabular-nums;
 }
-.prow-val small {
-  display: block; margin-top: 1px;
-  font-size: var(--t-micro); font-weight: var(--w-normal);
-  color: var(--ink-3); font-family: var(--mono);
+.pnl-regua {
+  position: relative; flex: 1; height: 6px;
+  background: var(--rule-soft); border-radius: 3px;
 }
-.prow-forte .prow-val { font-size: 19px; }
-.prow-forte .prow-rot { color: var(--ink); }
-.prow-sem { font-size: var(--t-small); color: var(--ink-3); font-style: italic; text-align: right; }
-.prow-vazio .prow-rot { color: var(--ink-3); }
-
-.prow-faixa {
-  grid-column: 1 / -1; position: relative;
-  height: 2px; margin-top: var(--s-1);
-  background: var(--rule-soft); border-radius: 1px;
+/* O intervalo usual: onde o dia cai em 80% dos anos. */
+.pnl-banda {
+  position: absolute; top: 0; bottom: 0;
+  background: var(--rule-hi); border-radius: 3px; opacity: 0.5;
 }
-.prow-marca {
-  position: absolute; top: -1px; width: 4px; height: 4px;
-  border-radius: 50%; transform: translateX(-50%);
+.pnl-mediana {
+  position: absolute; top: -2px; bottom: -2px; width: 1px;
+  background: var(--ink-3);
+}
+.pnl-marca {
+  position: absolute; top: 50%; width: 9px; height: 9px;
+  margin-top: -4.5px; margin-left: -4.5px;
+  border-radius: 50%; box-shadow: 0 0 0 2px var(--void);
+}
+.pnl-leitura {
+  margin: var(--s-2) 0 0;
+  font-size: var(--t-micro); line-height: 1.5; color: var(--ink-2);
 }
 
 .probe-acoes {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {
   MUNDO_W, MUNDO_H, COPIAS,
   paraMundo, paraGeo, enrolarLng, travarLat, deltaLng, cruzaEmenda,
-  travarVista, larguraGraus, aplicarZoom, daTela,
+  travarVista, larguraGraus, aplicarZoom, daTela, naTela,
   ALTURA_MIN, ALTURA_MAX,
   janelaDaVista, mudouBastante,
 } from "../src/projecao.ts";
@@ -272,6 +272,34 @@ ok("atravessar o antimeridiano nao conta como salto gigante", () => {
   const a = janelaDaVista({ lng: 179, lat: 0, alturaGraus: 20 }, ASP);
   const b = janelaDaVista({ lng: -179.5, lat: 0, alturaGraus: 20 }, ASP);
   assert.equal(mudouBastante(a, b), false, "a volta do mundo virou deslocamento de 358 graus");
+});
+
+// IDA E VOLTA. `naTela` e `daTela` sao inversas, e a unica prova util disso e
+// atravessar as duas e cair no mesmo lugar.
+ok("naTela desfaz daTela em qualquer ponto da vista", () => {
+  const v = { lat: -15, lng: -47, alturaGraus: 60 };
+  const L = 1600, A = 900;
+  for (const [px, py] of [[0, 0], [L, A], [L / 2, A / 2], [123, 777], [1590, 12]]) {
+    const g = daTela(px, py, L, A, v);
+    const s = naTela(g.lat, g.lng, L, A, v);
+    assert.ok(Math.abs(s.x - px) < 1e-6, `x: ${px} -> ${s.x}`);
+    assert.ok(Math.abs(s.y - py) < 1e-6, `y: ${py} -> ${s.y}`);
+  }
+});
+
+// Um ponto em -179 com a vista em +179 esta a DOIS graus, nao a 358. Sem o
+// enrolamento o cartao voaria para fora da tela pelo lado errado.
+ok("a longitude e trazida para perto do centro antes da conta", () => {
+  const v = { lat: 0, lng: 179, alturaGraus: 40 };
+  const L = 1000, A = 1000;
+  const s = naTela(0, -179, L, A, v);
+  assert.ok(s.x > L * 0.5 && s.x < L, `deu ${s.x}: saiu pelo lado errado`);
+});
+
+ok("o centro da vista cai no centro da tela", () => {
+  const v = { lat: 22, lng: -100, alturaGraus: 30 };
+  const s = naTela(22, -100, 800, 600, v);
+  assert.ok(Math.abs(s.x - 400) < 1e-9 && Math.abs(s.y - 300) < 1e-9, JSON.stringify(s));
 });
 
 console.log(mal ? `\n  ${mal} FALHA(S)\n` : `\n  ${n} verificacoes\n`);

@@ -10,6 +10,7 @@ import { SeriesChart } from "./analysis/SeriesChart";
 import { ProfileChart, type Nivel } from "./analysis/ProfileChart";
 import { SpreadChart, type Modelo, type Disp } from "./analysis/SpreadChart";
 import { paraCSV, baixar, type SerieDiaria } from "../analysis/csv";
+import type { Envelope } from "../analysis/normalSerie.ts";
 
 interface AnalysisProps { lat: number; lng: number; place: string; onClose: () => void; }
 
@@ -94,6 +95,11 @@ export default function AnalysisModal({ lat, lng, place, onClose }: AnalysisProp
   const comp = useRota<Comparacao>(
     aba === "modelos" ? `/api/analysis/compare?${q}&horas=48` : null, [q, aba]);
 
+  // A NORMAL NÃO DEPENDE DA JANELA. Ela é a mesma faixa de 366 dias para 1 mês
+  // ou 10 anos, então a busca fica fora de `janela` — trocar de janela não
+  // redispara nada, e o gráfico já nasce com o fundo se ele veio antes.
+  const clima = useRota<Envelope>(aba === "serie" ? `/api/analysis/clima?${q}` : null, [q, aba]);
+
   const exportar = () => {
     if (!serie.dado) return;
     baixar(
@@ -164,10 +170,18 @@ export default function AnalysisModal({ lat, lng, place, onClose }: AnalysisProp
                       rotulo={serie.dado!.rotulos[v]}
                       unidade={serie.dado!.unidades[v]}
                       casas={serie.dado!.unidades[v] === "mm" ? 1 : 1}
+                      normal={clima.dado?.variaveis?.[v] ?? null}
                     />
                   ))}
                 <Procedencia fonte={serie.dado.fonte} nota={serie.dado.nota}
-                  extra={serie.dado.lacunas} />
+                  extra={[
+                    ...(serie.dado.lacunas ?? []),
+                    // A faixa de fundo é outra fonte e outro período. Um gráfico
+                    // com duas procedências e uma só citação é o começo de um
+                    // número sem dono.
+                    ...(clima.dado ? [`${clima.dado.nota} Fonte da faixa: ${clima.dado.fonte}.`] : []),
+                    ...(clima.erro ? [`Faixa histórica indisponível: ${clima.erro.msg}. Os gráficos mostram só o observado.`] : []),
+                  ]} />
               </section>
             ) : null
           )}

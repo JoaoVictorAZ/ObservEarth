@@ -17,6 +17,11 @@ import { useMalhaStore } from "../../store/malhaStore";
 import { useUIStore } from "../../store/uiStore";
 import { buscarGrade } from "../../windBin";
 import type { Quake, Fire, IsobarSet, WindGrid, MotorGeo } from "../../tipos";
+import { useCursorStore } from "../../store/cursorStore.ts";
+import { Ancora } from "./Ancora.tsx";
+import { amostrarVento } from "../../legenda/amostra.ts";
+import { escalaAtiva } from "../../legenda/ativa.ts";
+import { amostrar, type CampoEscalar } from "../../malha/campo.ts";
 
 export interface GlobeViewportRef {
   flyTo: (lat: number, lng: number) => void;
@@ -48,6 +53,10 @@ function isValidWindGrid(g: unknown): g is WindGrid {
 export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const engRef = useRef<MotorGeo | null>(null);
+  // ESTADO, e não só ref: o cartão ancorado precisa saber que o motor trocou
+  // (globo ↔ mapa plano) para reprojetar contra a projeção nova. Uma ref muda
+  // em silêncio e ele continuaria pedindo pixels ao motor desmontado.
+  const [motor, setMotor] = useState<MotorGeo | null>(null);
 
   const { dayNight, rotate, windDensity, modo } = useGlobeStore();
   // sobe a cada troca de motor; força todas as camadas a se reaplicarem
@@ -56,9 +65,9 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
   const {
     kind, layer, opacity, fields,
     wind, isobarsOn, quakesOn, firesOn, openaqOn, wbgtOn,
-    hospitalsOn, hycomOn, relevoOn,
+    hospitalsOn, hycomOn, relevoOn, estacoesOn,
     setWindInfo, setIsoInfo, setFireInfo, setOpenaqInfo,
-    setHospitalInfo, setHycomInfo, setGeoInfo,
+    setHospitalInfo, setHycomInfo, setGeoInfo, setEstacoesInfo,
   } = useLayerStore();
 
   const malha = useMalhaStore();
@@ -99,6 +108,7 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
     const eng: MotorGeo = modo === "mapa" ? new MapEngine() : new GlobeEngine();
     eng.mount(caixa);
     engRef.current = eng;
+    setMotor(eng);
 
     // Falhas internas do globo (contornos que não baixaram, por exemplo) vão
     // para a barra de status. Sem este canal elas eram engolidas por um
@@ -138,9 +148,101 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
       // Container limpo entre motores. Cada um cria a sua própria tela, e o
       // `_destructor` do globe.gl não promete remover o DOM que montou —
       // sem isto, alternar de modo empilharia telas mortas por baixo da viva.
+      //
+      // Isto SÓ é seguro porque `caixa` é `.stage-tela`, uma caixa que só o
+      // motor toca. Enquanto ela era o palco inteiro, esta linha apagava
+      // também o cartão ancorado que o React tinha desenhado ali — e o React
+      // caía ao tentar remover um nó que já não era filho de ninguém.
       caixa.replaceChildren();
     };
   }, [modo]);
+
+  // ---- O VALOR SOB O PONTEIRO ---------------------------------------------
+  //
+  // A grade de vento fica numa ref e não no estado do React de propósito: ela
+  // é lida a cada quadro de ponteiro, e guardá-la em `useState` faria a árvore
+  // inteira re-renderizar a cada 8 MB de Float32Array que chega.
+  const gradeRef = useRef<WindGrid | null>(null);
+  // A grade das correntes tinha que ficar aqui também. Sem isto a camada de
+  // correntes desenhava linhas em movimento no planeta inteiro e a régua não
+  // tinha número nenhum para mostrar — a reclamação de que "a régua não
+  // aparece para todos os efeitos".
+  const correnteRef = useRef<WindGrid | null>(null);
+  const definirCursor = useCursorStore((s) => s.definir);
+  const limparCursor = useCursorStore((s) => s.limpar);
+
+  // -------------------------------------------------------------------------
+  // QUAL GRADE O PONTEIRO LÊ — a MESMA decisão que a régua usa para desenhar.
+  //
+  // `escalaAtiva` é o único lugar que responde isso. Com a regra escrita aqui e
+  // lá, elas divergem no primeiro dia em que alguém mexer numa só, e o sintoma
+  // é cruel: a régua diz "Corrente oceânica" e o número embaixo vem da grade do
+  // vento — plausível, e errado.
+  //
+  // Vai numa REF, e não nas dependências do efeito: o handler de hover é
+  // registrado uma vez só, e ler a ref evita re-registrar a cada troca de
+  // camada (e evita o fechamento velho que viria de não re-registrar).
+  // -------------------------------------------------------------------------
+  const campoPintado = kind === "field" && layer
+    ? fields.find((f) => f.id === layer) ?? null : null;
+  const leituraRef = useRef<{ chave: string | null; campo: CampoEscalar | null }>(
+    { chave: null, campo: null }
+  );
+  leituraRef.current = {
+    chave: escalaAtiva({
+      modo,
+      malha: {
+        ativa: malha.ativa,
+        titulo: malha.campo?.titulo ?? null,
+        unidade: malha.campo?.unidade ?? null,
+        stops: malha.escala?.stops ?? null,
+        modo: malha.escala?.modo ?? "rampa",
+        temValores: !!malha.campo,
+      },
+      campo: campoPintado,
+      correntes: hycomOn,
+      correntesNoCliente: !!correnteRef.current,
+      vento: wind,
+      ventoNoCliente: !!gradeRef.current,
+      stopsVento: [],       // a régua tem as cores; aqui só interessa a chave
+      stopsCorrente: [],
+    })?.chave ?? null,
+    campo: malha.campo,
+  };
+
+  useEffect(() => {
+    const eng = engRef.current;
+    if (!eng) return;
+    eng.onHover((p) => {
+      if (!p) { limparCursor(); return; }
+      // A LEITURA CONTÍNUA SÓ EXISTE ONDE HÁ NÚMERO NO CLIENTE.
+      //
+      // Três camadas têm: o vento e as correntes chegam como Float32Array, e a
+      // malha 3D é o próprio campo escalar que virou geometria. As camadas
+      // pintadas como textura de imagem chegam como pixels, e pixel não é
+      // medida: ler a cor de volta e converter em número inventaria precisão a
+      // partir de uma rampa comprimida em 8 bits. Nesse caso a régua mostra a
+      // escala e diz que não há leitura.
+      const { chave, campo } = leituraRef.current;
+      let valor: number | null = null;
+      let amostravel = false;
+
+      if (chave === "malha" && campo) {
+        // De graça: o mesmo Float32Array que virou relevo responde o valor.
+        valor = amostrar(campo, p.lat, p.lng);
+        amostravel = true;
+      } else if (chave === "corrente" || chave === "vento") {
+        // `amostrarVento` é um amostrador de MÓDULO de campo vetorial — serve
+        // para corrente do mesmo jeito, e a convenção da grade é a mesma.
+        const g = chave === "corrente" ? correnteRef.current : gradeRef.current;
+        amostravel = !!g;
+        valor = g ? amostrarVento(g, p.lat, p.lng) : null;
+      }
+
+      definirCursor({ coord: p, valor, amostravel });
+    });
+    return () => { eng.onHover(() => {}); limparCursor(); };
+  }, [definirCursor, limparCursor, geracao]);
 
   // Evento de clique
   useEffect(() => {
@@ -163,6 +265,9 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
     if (!wind) {
       eng.setWindVisible(false);
       setWindInfo(null);
+      // A grade sai junto com a camada: manter a última faria a régua
+      // continuar lendo vento com a camada de vento desligada.
+      gradeRef.current = null;
       return;
     }
 
@@ -178,6 +283,7 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
         if (!isValidWindGrid(data)) throw new Error("objeto de vento malformado");
         eng.setWindVisible(true);
         eng.setWind(data, `${day}:${hour}`);
+        gradeRef.current = data;
 
         // -------------------------------------------------------------------
         // A PROCEDÊNCIA VEM DA RESPOSTA, NÃO DE UM LITERAL.
@@ -345,6 +451,43 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
     return () => { alive = false; };
   }, [hospitalsOn, setHospitalInfo, geracao]);
 
+  // ---- ESTAÇÕES DO INMET ---------------------------------------------------
+  //
+  // A primeira camada de MEDIÇÃO do aplicativo — até aqui tudo era modelo.
+  //
+  // A rota devolve 503 quando o export não foi gerado, e isso NÃO é falha: é
+  // uma etapa da carga que não rodou. A barra de status precisa dizer isso com
+  // todas as letras, senão "sem estações" vira indistinguível de "não há
+  // estação no Brasil", que é o pior tipo de tela vazia.
+  useEffect(() => {
+    const eng = engRef.current as any;
+    if (!eng?.setEstacoes) return;
+    if (!estacoesOn) {
+      eng.setEstacoes([]);
+      setEstacoesInfo(null);
+      return;
+    }
+    let alive = true;
+    setEstacoesInfo("Lendo estações do INMET…");
+    fetch("/api/estacoes")
+      .then(async (r) => {
+        const j = await r.json().catch(() => null);
+        if (!r.ok || j?.ok === false) throw new Error(j?.hint ?? j?.error ?? `HTTP ${r.status}`);
+        return j;
+      })
+      .then((j) => {
+        if (!alive) return;
+        eng.setEstacoes(j.estacoes ?? []);
+        setEstacoesInfo(`${j.count} estações automáticas · ${j.fonte}`);
+      })
+      .catch((err: Error) => {
+        if (!alive) return;
+        eng.setEstacoes([]);
+        setEstacoesInfo(`sem export de estações — ${err.message}`);
+      });
+    return () => { alive = false; };
+  }, [estacoesOn, setEstacoesInfo, geracao]);
+
   // Correntes Oceânicas HYCOM (reutiliza engine de vento GPU)
   useEffect(() => {
     const eng = engRef.current;
@@ -355,6 +498,9 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
     if (!hycomOn) {
       eng.setCurrentsVisible(false);
       setHycomInfo(null);
+      // A grade sai junto com a camada, como a do vento: manter a última faria
+      // a régua continuar lendo corrente com a camada desligada.
+      correnteRef.current = null;
       return;
     }
     let alive = true;
@@ -382,6 +528,9 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
         // atmosférico e fazia corrente e vento saírem com o mesmo desenho.
         eng.setCurrents(data);
         eng.setCurrentsVisible(true);
+        // Guardada para a leitura contínua da régua. É o mesmo Float32Array
+        // que a GPU vai usar; não custa memória nova.
+        correnteRef.current = data;
         // A COBERTURA É O NÚMERO QUE IMPORTA NESTE CAMPO, e faltava.
         //
         // Corrente não existe em terra: ~29% dos pontos voltam nulos por
@@ -408,6 +557,7 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
       .catch((err: Error) => {
         if (!alive) return;
         eng.setCurrentsVisible(false);
+        correnteRef.current = null;
         setHycomInfo(err.message);
       });
     return () => { alive = false; };
@@ -509,5 +659,32 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
     eng.setImagery(layerTarget, new Date(`${day}T12:00:00Z`), opacity);
   }, [kind, layer, opacity, day, hour, wbgtOn, geracao]);
 
-  return <div className="stage" ref={boxRef} />;
+  return (
+    // -----------------------------------------------------------------------
+    // DUAS CAIXAS, E NÃO UMA. QUEM MANDA NO DOM DE CADA UMA É DIFERENTE.
+    // -----------------------------------------------------------------------
+    // O cartão precisa ficar no palco, porque a posição que `projetar` devolve
+    // é relativa ao contêiner do motor — ancorar noutro elemento deslocaria o
+    // cartão pela altura da barra superior. Mas ele NÃO pode ser irmão da tela
+    // dentro da mesma caixa que o motor limpa.
+    //
+    // Era isso o `NotFoundError: removeChild`. O cleanup da montagem chama
+    // `replaceChildren()` para não empilhar telas mortas ao trocar de motor —
+    // e `replaceChildren` não distingue a tela do WebGL do `<div>` que o React
+    // desenhou ali. Ele apagava os dois. Quando o React ia remover o seu
+    // próprio nó, o nó já não era filho de ninguém, e a árvore inteira caía.
+    //
+    // Em desenvolvimento isso aparecia a cada recarga a quente. Mas o caminho
+    // que importa é o do usuário: trocar globo ↔ mapa plano roda exatamente o
+    // mesmo cleanup. Com a sonda aberta, alternar de modo derrubava o app.
+    //
+    // A correção não é proteger o `replaceChildren`: é o motor ter uma caixa
+    // que só ele toca. `.stage-tela` cobre o palco inteiro (inset 0), então a
+    // geometria não muda em nada e as coordenadas do cartão continuam válidas.
+    // -----------------------------------------------------------------------
+    <div className="stage">
+      <div className="stage-tela" ref={boxRef} />
+      <Ancora motor={motor} />
+    </div>
+  );
 });

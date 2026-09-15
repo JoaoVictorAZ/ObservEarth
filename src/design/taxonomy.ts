@@ -113,8 +113,17 @@ export const OVERLAY_LAYERS: LayerEntry[] = [
   { id: "fires", label: "Focos de calor", family: "ocorrencia", unit: "MW", source: "VIIRS 375 m" },
   { id: "openaq", label: "Qualidade do ar", family: "ocorrencia", unit: "µg/m³", source: "OpenAQ" },
   { id: "hospitals", label: "Hospitais", family: "ocorrencia", source: "OSM" },
+  // A ÚNICA CAMADA DE MEDIÇÃO DIRETA DO APLICATIVO. Todo o resto é modelo
+  // (GFS, ERA5, reanálise) ou satélite; aqui são termômetros, num lugar, com
+  // número de série. Sem unidade: uma estação não é uma grandeza, é um ponto
+  // onde se mede — e é por isso que ela não entra na régua.
+  { id: "estacoes", label: "Estações do INMET", family: "ocorrencia", source: "INMET · rede automática" },
   { id: "relevo", label: "Relevo e batimetria", family: "estrutura", unit: "m", source: "Mapzen · SRTM/GEBCO" },
   { id: "malha", label: "Malha 3D do campo", family: "analise", source: "GFS · valores brutos" },
+  // A única camada do app que não mostra medida, e sim risco declarado por
+  // autoridade. Sem unidade de propósito: severidade é classe, não grandeza.
+  { id: "avisos", label: "Avisos meteorológicos", family: "ocorrencia", source: "INMET · Alert-AS" },
+  { id: "oni", label: "Fase do ENSO (ONI)", family: "analise", unit: "°C", source: "NOAA · CPC" },
 ];
 
 /** campos escalares do GFS, repartidos pela codificação que o servidor usa */

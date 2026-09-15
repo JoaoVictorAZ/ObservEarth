@@ -4,10 +4,23 @@ dist-ssr/
 .vite/
 *.tsbuildinfo
 
+# AQUI HAVIA `*.md`, E ELE ESTAVA ESCONDENDO A DOCUMENTAÇÃO DO PROJETO.
+#
+# README.md e ATTRIBUTION.md sobreviveram só porque foram adicionados ANTES da
+# regra — o .gitignore não desrastreia o que já está rastreado. Mas todo
+# documento novo nascia invisível: ROADMAP-PATCH-MVP.md, FONTES-CANDIDATAS.md e
+# AVALIACAO-3D.md estavam fora do repositório sem nenhum aviso.
+#
+# Isso é sério para a entrega do MVP, que exige repositório público com README
+# de seções obrigatórias: qualquer documento novo seria escrito, salvo, e
+# simplesmente não iria junto. `git add` recusa em silêncio arquivo ignorado.
+#
+# Se a intenção era barrar rascunho, o alvo certo é uma pasta, não a extensão.
+rascunho/
+
 .env
 .env.*
 !.env.example
-
 
 data/*.db
 data/*.db-shm
@@ -32,6 +45,19 @@ venv/
 .ipynb_checkpoints/
 pipeline/saida/
 pipeline/modelos/
+
+# Relatório de medição: é retrato de uma máquina e de um instante, não fonte.
+# O script que o produz (tools/medir-fontes.mjs) esse sim vai no repositório.
+tools/medicao-*.json
+
+# Camada Bronze: dado bruto baixado da fonte. São ~90 MB por ano do INMET, e
+# repositório não é cache — o pipeline rebaixa quando precisa.
+data/bronze/
+
+# `data/gold/estacoes.json` NÃO entra aqui, de propósito: são ~200 kB e é o que
+# faz a camada de estações funcionar para quem clona o repositório sem baixar
+# 1,3 GB de CSV. Derivado, sim — mas derivado pequeno e necessário para a
+# aplicação subir completa.
 
 .claude/
 .agents/

@@ -1,0 +1,305 @@
+{
+  "versao": "1.0.0",
+  "congeladoEm": "2026-09-08",
+  "nota": "Contrato de esquema do Patch MVP. As chaves tecnicas sao as que o ObservEarth ja fala; os nomes em portugues vivem em `rotulo`. Mudanca de nome de campo e mudanca de contrato: exige subir a versao e atualizar test/contrato.mjs.",
+
+  "ausencia": {
+    "regra": "null",
+    "proibidos": [0, -9999, -999, -327.68, ""],
+    "porque": "Zero e uma medida: 0 mm de chuva e um dia seco, 0 m/s e calmaria. Sentinela numerica entra em media e em percentil sem levantar erro nenhum e desloca a distribuicao inteira."
+  },
+
+  "variaveis": {
+    "temperature_2m_mean": { "unidade": "°C",  "feitio": "simetrica",   "rotulo": "temperatura média" },
+    "temperature_2m_max":  { "unidade": "°C",  "feitio": "simetrica",   "rotulo": "temperatura máxima" },
+    "temperature_2m_min":  { "unidade": "°C",  "feitio": "simetrica",   "rotulo": "temperatura mínima" },
+    "precipitation_sum":   { "unidade": "mm",  "feitio": "assimetrica", "rotulo": "precipitação diária" },
+    "wind_speed_10m_max":  { "unidade": "m/s", "feitio": "assimetrica", "rotulo": "vento máximo" }
+  },
+
+  "tabelas": {
+    "dim_estacao": {
+      "camada": "silver",
+      "chave": ["estacao_id"],
+      "campos": {
+        "estacao_id":    { "tipo": "string",    "obrigatorio": true, "padrao": "^[A-Z]\\d{3}$" },
+        "nome":          { "tipo": "string",    "obrigatorio": true },
+        "uf":            { "tipo": "string",    "obrigatorio": true, "tamanho": 2 },
+        "regiao":        { "tipo": "string",    "obrigatorio": true, "dominio": ["N", "NE", "CO", "SE", "S"] },
+        "_dominio_geografico": "MEDIDO EM 15/09/2026, e a versao anterior estava ERRADA. Eu tinha escrito o retangulo do BRASIL CONTINENTAL (lat -34..6, lng -74..-34) e chamado isso de dominio da REDE. Nao e' a mesma coisa: o INMET opera ilhas oceanicas (Trindade em -20,5/-29,3; Sao Pedro e Sao Paulo em 0,9/-29,3) e estacoes na ANTARTIDA. A exportacao real recusou 7 estacoes legitimas por causa disso — e o Silver no Databricks teria recusado as mesmas.",
+        "lat":           { "tipo": "double",    "obrigatorio": true, "min": -90, "max": 6 },
+        "lng":           { "tipo": "double",    "obrigatorio": true, "min": -74, "max": -28 },
+        "_dominio_altitude": "Teto era 1600 m, tirado de nada. O ponto mais alto do pais tem 2995 m (Pico da Neblina) e ha estacao medida a 2450 m. 3000 recusa absurdo sem recusar serra.",
+        "altitude_m":    { "tipo": "double",    "obrigatorio": true, "min": -10, "max": 3000 },
+        "_fora_do_continente": "A caixa larga so e' segura porque quem cai fora do retangulo continental sai MARCADO. Ver `fora_do_continente`: a estacao entra, e fica visivel que ela e' excecao — em vez de virar um ponto solitario no mapa que ninguem sabe explicar.",
+        "fora_do_continente": { "tipo": "bool", "obrigatorio": false },
+        "fundacao":      { "tipo": "date",      "obrigatorio": false, "minData": "2000-01-01" },
+        "rede":          { "tipo": "string",    "obrigatorio": true, "dominio": ["automatica", "convencional"] },
+        "primeiro_dado": { "tipo": "date",      "obrigatorio": false },
+        "ultimo_dado":   { "tipo": "date",      "obrigatorio": false },
+        "anos_uteis":    { "tipo": "int",       "obrigatorio": true, "min": 0, "max": 30 }
+      }
+    },
+
+    "fato_observacao_diaria": {
+      "camada": "silver",
+      "chave": ["estacao_id", "data"],
+      "campos": {
+        "estacao_id":          { "tipo": "string",    "obrigatorio": true },
+        "data":                { "tipo": "date",      "obrigatorio": true },
+        "dia_do_ano":          { "tipo": "int",       "obrigatorio": true, "min": 1, "max": 366 },
+        "temperature_2m_max":  { "tipo": "double",    "obrigatorio": false, "min": -30, "max": 55 },
+        "temperature_2m_min":  { "tipo": "double",    "obrigatorio": false, "min": -30, "max": 45 },
+        "temperature_2m_mean": { "tipo": "double",    "obrigatorio": false, "min": -30, "max": 50 },
+        "precipitation_sum":   { "tipo": "double",    "obrigatorio": false, "min": 0,   "max": 600 },
+        "wind_speed_10m_max":  { "tipo": "double",    "obrigatorio": false, "min": 0,   "max": 100 },
+        "horas_validas":       { "tipo": "int",       "obrigatorio": true, "min": 0, "max": 24 },
+        "ingestao_em":         { "tipo": "timestamp", "obrigatorio": true },
+        "fonte":               { "tipo": "string",    "obrigatorio": true }
+      },
+      "invariantes": [
+        {
+          "nome": "minima nao passa da maxima",
+          "campos": ["temperature_2m_min", "temperature_2m_max"],
+          "regra": "min<=max"
+        },
+        {
+          "nome": "dia incompleto nao produz agregado",
+          "regra": "horas_validas<limiar => agregados null",
+          "limiar": 18,
+          "porque": "Uma maxima calculada com 3 horas do dia nao e a maxima do dia. O numero sai com a mesma cara de um dia completo e ninguem consegue distinguir."
+        }
+      ]
+    },
+
+    "gold_normal": {
+      "camada": "gold",
+      "chave": ["estacao_id", "variavel", "dia_do_ano"],
+      "consumidoPor": ["src/analysis/normalSerie.ts:EnvelopeVar", "src/probe/comparacao.ts:NormalDaRota"],
+      "campos": {
+        "estacao_id": { "tipo": "string", "obrigatorio": true },
+        "variavel":   { "tipo": "string", "obrigatorio": true, "dominioDe": "variaveis" },
+        "dia_do_ano": { "tipo": "int",    "obrigatorio": true, "min": 1, "max": 366 },
+        "p10":        { "tipo": "double", "obrigatorio": false },
+        "p50":        { "tipo": "double", "obrigatorio": false },
+        "p90":        { "tipo": "double", "obrigatorio": false },
+        "media":      { "tipo": "double", "obrigatorio": false },
+        "n_amostras": { "tipo": "int",    "obrigatorio": true, "min": 0 },
+        "anos":       { "tipo": "int",    "obrigatorio": true, "min": 0, "max": 40 },
+        "referencia": { "tipo": "string", "obrigatorio": true, "padrao": "^\\d{4}-\\d{4}$" },
+        "feitio":     { "tipo": "string", "obrigatorio": true, "dominio": ["simetrica", "assimetrica"] },
+        "unidade":    { "tipo": "string", "obrigatorio": true },
+        "rotulo":     { "tipo": "string", "obrigatorio": true }
+      },
+      "invariantes": [
+        {
+          "nome": "percentis em ordem",
+          "campos": ["p10", "p50", "p90"],
+          "regra": "crescente",
+          "porque": "Fora de ordem, a regua desenha a faixa invertida e o ponto cai do lado errado da mediana."
+        },
+        {
+          "nome": "sem amostra nao ha percentil",
+          "regra": "n_amostras=0 => p10,p50,p90,media null",
+          "porque": "Percentil de conjunto vazio nao e zero: nao existe."
+        }
+      ]
+    },
+
+    "gold_vies": {
+      "camada": "gold",
+      "chave": ["estacao_id", "modelo", "variavel", "mes"],
+      "campos": {
+        "estacao_id":           { "tipo": "string", "obrigatorio": true },
+        "modelo":               { "tipo": "string", "obrigatorio": true,
+                                  "dominio": ["ERA5", "ERA5_rebaixado", "GFS"] },
+        "variavel":             { "tipo": "string", "obrigatorio": true, "dominioDe": "variaveis" },
+        "mes":                  { "tipo": "int",    "obrigatorio": true, "min": 1, "max": 12 },
+        "vies_medio":           { "tipo": "double", "obrigatorio": false },
+        "erro_absoluto_medio":  { "tipo": "double", "obrigatorio": false, "min": 0 },
+        "rmse":                 { "tipo": "double", "obrigatorio": false, "min": 0 },
+        "n_pares":              { "tipo": "int",    "obrigatorio": true, "min": 0 },
+        "delta_altitude_m":     { "tipo": "double", "obrigatorio": false },
+        "vies_residual":        { "tipo": "double", "obrigatorio": false },
+        "lapso":                { "tipo": "double", "obrigatorio": false },
+        "lapso_origem":         { "tipo": "string", "obrigatorio": true,
+                                  "dominio": ["ajustado", "nao_aplicavel",
+                                              "padrao:insuficiente", "padrao:sem_espalhamento"] }
+      },
+      "invariantes": [
+        {
+          "nome": "erro absoluto medio nao passa do rmse",
+          "campos": ["erro_absoluto_medio", "rmse"],
+          "regra": "min<=max",
+          "porque": "Desigualdade de Jensen: EAM <= RMSE sempre. Violado, ha erro de agregacao."
+        }
+      ]
+    },
+
+    "gold_confianca": {
+      "camada": "gold",
+      "chave": ["lat", "lng"],
+      "proposito": "A camada que mostra a IGNORANCIA do app. Na Amazonia quase nao ha estacao, e isso tem que ser visivel no mapa em vez de o vazio parecer 'normal'.",
+      "campos": {
+        "_porque_continental": "Esta faixa fica ESTREITA de proposito, ao contrario da de `dim_estacao`. Sao coisas diferentes: la e' dado que CHEGA da fonte e o dominio precisa caber nele; aqui e' uma grade que NOS escolhemos desenhar. Estende-la ate a Antartida seriam milhares de celulas de oceano vazio para dizer o obvio.",
+        "lat":            { "tipo": "double", "obrigatorio": true, "min": -34, "max": 6 },
+        "lng":            { "tipo": "double", "obrigatorio": true, "min": -74, "max": -34 },
+        "estacao_id":     { "tipo": "string", "obrigatorio": false },
+        "dist_km":        { "tipo": "double", "obrigatorio": false, "min": 0 },
+        "n_150km":        { "tipo": "int",    "obrigatorio": true, "min": 0 },
+        "anos":           { "tipo": "int",    "obrigatorio": true, "min": 0, "max": 40 },
+        "completude":     { "tipo": "double", "obrigatorio": false, "min": 0, "max": 1 },
+        "proximidade":    { "tipo": "double", "obrigatorio": true, "min": 0, "max": 1 },
+        "serie":          { "tipo": "double", "obrigatorio": true, "min": 0, "max": 1 },
+        "confianca":      { "tipo": "double", "obrigatorio": true, "min": 0, "max": 1 }
+      },
+      "invariantes": [
+        {
+          "nome": "confianca nao passa de nenhum dos fatores",
+          "campos": ["confianca", "proximidade"],
+          "regra": "min<=max",
+          "porque": "E' um produto de numeros em 0..1: nao pode ser maior que qualquer fator."
+        }
+      ]
+    },
+
+    "gold_cobertura": {
+      "camada": "gold",
+      "chave": ["estacao_id", "ano"],
+      "campos": {
+        "estacao_id":     { "tipo": "string", "obrigatorio": true },
+        "ano":            { "tipo": "int",    "obrigatorio": true, "min": 2000, "max": 2030 },
+        "dias_esperados": { "tipo": "int",    "obrigatorio": true, "min": 365, "max": 366 },
+        "dias_com_dado":  { "tipo": "int",    "obrigatorio": true, "min": 0, "max": 366 },
+        "dias_completos": { "tipo": "int",    "obrigatorio": true, "min": 0, "max": 366 },
+        "cobertura":      { "tipo": "double", "obrigatorio": true, "min": 0, "max": 1 },
+        "confiavel":      { "tipo": "bool",   "obrigatorio": true }
+      },
+      "invariantes": [
+        {
+          "nome": "dia completo e subconjunto de dia com dado",
+          "campos": ["dias_completos", "dias_com_dado"],
+          "regra": "min<=max"
+        }
+      ]
+    }
+  },
+
+  "algoritmos": {
+    "nota": "Os numeros da camada Gold TEM que bater com os que server/climatologia.js produz. Nao basta o esquema coincidir: se o percentil for calculado por outro metodo, os campos casam, o app desenha, e a normal esta errada por decimos sem nada na tela indicando isso.",
+
+    "quantil": {
+      "definicao": "tipo 7",
+      "formula": "ordenar a amostra; pos = p*(n-1); interpolar linearmente entre floor(pos) e ceil(pos)",
+      "referencia": "server/climatologia.js:quantis — o mesmo que R type=7 e numpy 'linear'",
+      "spark": {
+        "usar": "percentile(col, p)",
+        "NAO_usar": "percentile_approx(col, p)",
+        "porque": "percentile_approx nao interpola: devolve estatistica de ordem. O erro nao e' de arredondamento, e vive nas CAUDAS — que e' exatamente onde a faixa de anomalia do app mora.",
+        "medido": {
+          "em": "2026-09-08",
+          "ambiente": "Spark 3.5.3, Java 11, local[2]",
+          "contra": "pipeline/contrato/gabarito-quantis.json (calculado a mao pela formula do tipo 7)",
+          "percentile": "0 divergencias em 15 casos",
+          "percentile_approx": "8 divergencias em 15 casos",
+          "exemplos": [
+            "amostra [10,20,30,40,50]: percentile_approx da p10=10 onde o correto e' 14, e p90=50 onde o correto e' 46",
+            "amostra de chuva [0x8,5,20]: percentile_approx da p90=5,0 onde o correto e' 6,5"
+          ],
+          "reproduzir": "python pipeline/gold_normal.py --conferir",
+          "ressalva": "medido na linha 3.5. O Databricks Free Edition roda outra versao; `--conferir` custa segundos e deve ser rodado la antes da primeira gravacao de Gold."
+        }
+      },
+      "empate": "quantis iguais formam plato (tipico de chuva com muitos zeros); nesse caso nao ha interpolacao possivel e o valor fica na borda de baixo"
+    },
+
+    "janela": {
+      "dias": 7,
+      "regra": "|dia - alvo| <= 7, dando a volta pelo ano com comprimento 365",
+      "referencia": "server/climatologia.js:dentroDaJanela",
+      "porque365": "De 26/dez (dia 360) a 2/jan vao 7 dias. Com 366 a conta da 8, e 26/dez fica fora da janela de 2/jan — a virada do ano perde metade da vizinhanca e o resultado continua parecendo um numero normal.",
+      "erroAceito": "com 365, o dia 366 de ano bissexto sai a distancia zero do dia 1. E' um dia a mais num conjunto de quinze, em dois dias do ano, nos ~7 bissextos de trinta. Corrigir exigiria carregar o ano de cada amostra ate aqui."
+    },
+
+    "referenciaClimatologica": {
+      "padrao": "1991-2020",
+      "inicio": "1991-01-01",
+      "fim": "2020-12-31",
+      "porqueDuas": "1991-2020 e' a referencia da OMM e a que o caminho ERA5/Open-Meteo do app ja usa. Ela NAO existe para a rede automatica do INMET, e o campo `referencia` e' o que impede a tela de afirmar que existe.",
+
+      "inmet": {
+        "escolhida": "2010-2024",
+        "medido": {
+          "em": "2026-09-08",
+          "como": "HEAD nos ZIPs anuais de portal.inmet.gov.br/uploads/dadoshistoricos/{ano}.zip",
+          "tamanhos": { "2000": "0,50 MB", "2010": "85,99 MB", "2020": "98,85 MB", "2024": "98,01 MB" },
+          "leitura": "O ano 2000 tem 1/180 do volume de 2010: a rede automatica praticamente nao existia. Em 2010 ela ja esta madura e o volume estabiliza. Puxar desde 2000 acrescentaria anos que quase nao tem estacao e alongaria a serie no papel sem adensar a amostra.",
+          "custo": "15 anos ~ 1,3 GB de ZIP bruto na camada Bronze"
+        },
+        "consequencia": "15 anos NAO e' uma normal climatologica — a OMM pede 30. As tabelas gold_normal geradas do INMET saem com referencia '2010-2024', e a tela tem que dizer isso. Chamar de 'normal' uma distribuicao de 15 anos e' o tipo de imprecisao que o campo `referencia` existe para tornar impossivel."
+      }
+    },
+
+    "vies": {
+      "nota": "Boa parte do que se chamaria de 'vies do modelo' e' diferenca de ALTITUDE, nao erro de modelo. Uma celula de reanalise tem dezenas de km de lado e UMA altitude media; a estacao pode estar 400 m acima ou abaixo dela. Publicar isso como vies produz um mapa de relevo com nome de mapa de erro — e ele parece plausivel: serras vermelhas, vales azuis, tudo suave.",
+      "modelo": "vies_i = a + b * delta_altitude_i, ajustado por (variavel, mes) entre as estacoes",
+      "b": "a inclinacao — o efeito de altitude, em °C por metro",
+      "a": "o intercepto — o vies que SOBRA depois de tirar a altitude. E' o unico numero que se pode chamar de vies do modelo.",
+      "residual": "vies_residual = vies_medio - b * delta_altitude_m",
+      "porqueAjustado": "O gradiente e' ajustado DO DADO, nao cravado em 6,5 °C/km. Perto da superficie o gradiente nao e' o da atmosfera livre: inversao noturna, vale frio e encosta ensolarada mudam o numero e as vezes trocam o sinal. Cravar seria assumir a resposta; comparar o ajustado com o teorico e' uma das coisas mais informativas que o pipeline produz.",
+      "recuo": "Com menos de 5 estacoes, ou com desvio de altitude abaixo de 50 m, o ajuste e' instavel e o codigo NAO ajusta: usa 0,0065 °C/m e marca `lapso_origem` como `padrao:<motivo>`. Silenciar isso faria um numero teorico passar por medido.",
+      "soTemperatura": "Chuva e vento tambem dependem do relevo — orografia, canal de vale, exposicao — mas nao por uma reta com a altura. Para eles `vies_residual = vies_medio` e `lapso_origem = nao_aplicavel`.",
+      "elevacaoDaCelula": {
+        "origem": "a propria resposta da fonte do modelo (campo `elevation` da Open-Meteo)",
+        "porque": "Usar um modelo digital de terreno nosso mediria a diferenca entre dois DEMs junto com o vies.",
+        "medido": {
+          "em": "2026-09-08",
+          "conclusao": "Por padrao, `elevation` e' a altitude do PONTO, num DEM fino — NAO a media da celula. A suposicao original do M4 estava errada.",
+          "prova": "Cubatao (-23,89; -46,42) devolveu elevation = 5 m e Paranapiacaba (-23,78; -46,30) devolveu 824 m. Sao ~17 km um do outro na escarpa da Serra do Mar: 819 m de diferenca so pode vir de um DEM fino. Brasilia sozinha (1158 contra 1160,96 da estacao) nao decidia nada, porque o planalto e' plano.",
+          "consequencia": "A Open-Meteo REBAIXA o valor por altitude antes de devolver. O que a rota padrao entrega ja esta corrigido para o ponto — nao e' o valor cru do modelo.",
+          "saida": "`elevation=nan` desliga o rebaixamento. MEDIDO no mesmo ponto: Cubatao com `elevation=nan` devolveu elevation = 238 m e tmax = 26,3 °C, contra 5 m e 27,4 °C no padrao. Os 238 m sao a orografia da celula, que e' exatamente o que o M4 precisa.",
+          "gradienteImplicito": "+1,1 °C ao descer 233 m equivale a 4,7 °C/km — NAO os 6,5 da atmosfera padrao. A Open-Meteo usa outro criterio, e isso e' mais um motivo para o M4 ajustar o gradiente do proprio dado em vez de cravar."
+        },
+        "doisModelos": {
+          "porque": "Sao duas perguntas diferentes, e as duas interessam.",
+          "ERA5": "valor cru da celula (`elevation=nan`). Responde: quanto o MODELO erra contra o termometro, depois de separar o efeito de altitude. E' o que se chama de vies de modelo.",
+          "ERA5_rebaixado": "valor da rota padrao, ja rebaixado pela Open-Meteo. Responde: quanto erra O PRODUTO QUE O APLICATIVO REALMENTE CONSOME — a rota /api/climatologia usa esse caminho.",
+          "aDiferenca": "Comparar os dois mede a qualidade do rebaixamento da Open-Meteo. E' o numero que diz se o aplicativo pode confiar na propria rota climatologica, e ele nao existe em lugar nenhum hoje."
+        }
+      }
+    },
+
+    "confianca": {
+      "nota": "NAO e' uma nota magica de 0 a 100. E' um produto de tres fatores em 0..1, cada um com significado proprio, e os tres saem no Parquet ao lado do resultado — para a tela poder dizer POR QUE a confianca e' baixa, e nao so que e'.",
+      "formula": "confianca = proximidade * serie * completude",
+      "fatores": {
+        "proximidade": {
+          "conta": "exp(-dist_km / 150)",
+          "porque": "A escala de 150 km e' a ordem de grandeza da distancia de decorrelacao da TEMPERATURA diaria. Cai a 0,51 em 100 km e a 0,13 em 300 km.",
+          "erroDeclarado": "Chuva decorrelaciona em DEZENAS de km, nao centenas. Com uma escala unica, a confianca fica OTIMISTA para precipitacao. Uma escala por variavel seria mais correta e exigiria uma grade por variavel; ficou por fazer, e esta escrito aqui para nao virar suposicao de quem ler o mapa."
+        },
+        "serie": {
+          "conta": "min(1, anos / 15)",
+          "porque": "15 anos e' o recorte adotado para o INMET (2010-2024). Uma estacao com a serie inteira vale 1; com 5 anos vale 1/3."
+        },
+        "completude": {
+          "conta": "media de `cobertura` dos anos da estacao mais proxima",
+          "porque": "Uma estacao que existe ha 15 anos mas so mediu metade dos dias nao sabe metade do que a serie sugere."
+        }
+      },
+      "porqueProduto": "Multiplicativo, e nao media. Um zero em qualquer fator tem que zerar o resultado: uma estacao a 5 km com 1 ano de dados NAO torna a celula conhecida, e uma media daria 0,5 e pintaria a celula como meio confiavel.",
+      "semEstacao": "Sem nenhuma estacao no alcance, `estacao_id`, `dist_km` e `completude` saem null e a confianca e' 0. Zero aqui e' medida — significa 'nao sabemos nada deste ponto' — e nao ausencia."
+    },
+
+    "minimoDeAmostras": {
+      "valor": 20,
+      "regra": "abaixo disso a normal e' publicada com n_amostras real e a tela decide o que dizer; NAO se apaga a linha nem se completa com nada",
+      "porque": "Uma normal de 6 amostras e' fraca, nao inexistente. Apagar esconderia a fraqueza; completar inventaria dado."
+    }
+  },
+
+  "procedencia": {
+    "obrigatorioEmGold": ["referencia", "unidade"],
+    "porque": "Um numero que chega ao app sem procedencia nao pode ser desenhado. A tela afirma coisas diferentes conforme a referencia seja 1991-2020 ou 2008-2024."
+  }
+}

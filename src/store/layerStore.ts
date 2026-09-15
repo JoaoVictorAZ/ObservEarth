@@ -84,6 +84,8 @@ interface LayerState {
   openaqOn: boolean;
   wbgtOn: boolean;
   hospitalsOn: boolean;
+  /** estações do INMET — a primeira camada de MEDIÇÃO, não de modelo */
+  estacoesOn: boolean;
   hycomOn: boolean;
   relevoOn: boolean;
 
@@ -92,6 +94,7 @@ interface LayerState {
   fireInfo: string | null;
   openaqInfo: string | null;
   hospitalInfo: string | null;
+  estacoesInfo: string | null;
   hycomInfo: string | null;
   /** avisos do próprio motor do globo (contornos, geometria) */
   geoInfo: string | null;
@@ -112,6 +115,7 @@ interface LayerState {
   setOpenaqOn: (on: boolean) => void;
   setWbgtOn: (on: boolean) => void;
   setHospitalsOn: (on: boolean) => void;
+  setEstacoesOn: (on: boolean) => void;
   setHycomOn: (on: boolean) => void;
   setRelevoOn: (on: boolean) => void;
 
@@ -120,6 +124,7 @@ interface LayerState {
   setFireInfo: (info: string | null) => void;
   setOpenaqInfo: (info: string | null) => void;
   setHospitalInfo: (info: string | null) => void;
+  setEstacoesInfo: (info: string | null) => void;
   setHycomInfo: (info: string | null) => void;
   setGeoInfo: (info: string | null) => void;
 }
@@ -141,6 +146,9 @@ export const useLayerStore = create<LayerState>((set, get) => ({
   openaqOn: true,
   wbgtOn: false,
   hospitalsOn: false,
+  // Desligada por padrão, como toda camada de ocorrência. São 565 pontos, e
+  // ligar tudo sozinho tira do usuário a escolha do que olhar.
+  estacoesOn: false,
   relevoOn: false,
   hycomOn: false,
 
@@ -149,6 +157,7 @@ export const useLayerStore = create<LayerState>((set, get) => ({
   fireInfo: null,
   openaqInfo: null,
   hospitalInfo: null,
+  estacoesInfo: null,
   hycomInfo: null,
   geoInfo: null,
 
@@ -175,6 +184,7 @@ export const useLayerStore = create<LayerState>((set, get) => ({
   setOpenaqOn: (openaqOn) => set({ openaqOn }),
   setWbgtOn: (wbgtOn) => set({ wbgtOn }),
   setHospitalsOn: (hospitalsOn) => set({ hospitalsOn }),
+  setEstacoesOn: (estacoesOn) => set({ estacoesOn }),
   setRelevoOn: (relevoOn) => set({ relevoOn }),
   setHycomOn: (hycomOn) => set({ hycomOn }),
 
@@ -183,6 +193,7 @@ export const useLayerStore = create<LayerState>((set, get) => ({
   setFireInfo: (fireInfo) => set({ fireInfo }),
   setOpenaqInfo: (openaqInfo) => set({ openaqInfo }),
   setHospitalInfo: (hospitalInfo) => set({ hospitalInfo }),
+  setEstacoesInfo: (estacoesInfo) => set({ estacoesInfo }),
   setHycomInfo: (hycomInfo) => set({ hycomInfo }),
   setGeoInfo: (geoInfo) => set({ geoInfo }),
 }));

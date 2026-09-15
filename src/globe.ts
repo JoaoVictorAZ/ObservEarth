@@ -13,6 +13,11 @@ import { FronteirasGlobo } from "./fronteiras";
 import { calotaVisivel } from "./calota";
 import { ORDEM } from "./ordemDesenho";
 import { MalhaEscalar, type Escala as EscalaMalha } from "./malha/malha3d";
+import { materialTerra } from "./globo/terra.ts";
+import { vetorSolar } from "./globo/sol.ts";
+import { criarAtmosfera, type Atmosfera } from "./globo/atmosfera.ts";
+import { criarVoo, deveAnimar, fadeDoVento, PARTIDA, CHEGADA, type Voo } from "./globo/entrada.ts";
+import { intersectarRelevo } from "./malha/picking.ts";
 import type { CampoEscalar } from "./malha/campo";
 import type { PontoCritico } from "./malha/extremos";
 
@@ -103,6 +108,8 @@ const rgbCss = ([r, g, b]: [number, number, number]) => `rgb(${r},${g},${b})`;
 interface RingDatum {
   lat: number; lng: number;
   maxR: number; speed: number; period: number; strength: number;
+  /** altura sobre a esfera: acompanha o relevo quando a malha 3D está no ar */
+  alt: number;
   rgb?: string;
 }
 
@@ -274,9 +281,21 @@ export class GlobeEngine {
     pausar: () => this.g?.pauseAnimation?.(),
   });
   private interacting = false;
+  private hoverFn: ((p: { lat: number; lng: number } | null) => void) | null = null;
+  private hoverRaf = 0;
+  private hoverXY: { x: number; y: number } | null = null;
   private baseDpr = 1;
   private statsFn: ((s: FrameStats) => void) | null = null;
   private rawFiresAll: Fire[] = [];
+  /** o material da superfície; null enquanto as texturas não chegam */
+  private terra: THREE.ShaderMaterial | null = null;
+  private atmosfera: Atmosfera | null = null;
+  /** o voo de abertura; null quando não há ou já acabou */
+  private voo: Voo | null = null;
+  /** opacidade pedida pela interface, para o fade de entrada não sobrescrevê-la */
+  private opacidadeVento = 1;
+  /** com a malha 3D levantada, tudo que não é ela recua */
+  private modoAnalise = false;
 
   // ------------------------------------------------------------- ciclo
   mount(container: HTMLElement) {
@@ -284,12 +303,14 @@ export class GlobeEngine {
       .globeImageUrl(TEX.day)
       .bumpImageUrl(TEX.bump)
       .backgroundImageUrl(TEX.stars)
-      .showAtmosphere(true)
-      .atmosphereColor("#8ab4e8")
-      .atmosphereAltitude(0.17)
+      // O HALO DO THREE-GLOBE FICA DESLIGADO. Ele é cor única e opacidade
+      // constante: igual no meio-dia, na meia-noite e em cima do terminador,
+      // que é justamente onde a atmosfera é mais visível de verdade. O que
+      // entra no lugar está em ./globo/atmosfera.ts.
+      .showAtmosphere(false)
       .pointLat("lat").pointLng("lng").pointColor("color")
       .pointAltitude("alt").pointRadius("radius").pointLabel("label")
-      .ringLat("lat").ringLng("lng").ringMaxRadius("maxR")
+      .ringLat("lat").ringLng("lng").ringMaxRadius("maxR").ringAltitude("alt")
       .ringPropagationSpeed("speed").ringRepeatPeriod("period")
       // `d.rgb` deixa cada anel herdar a cor do que ele marca: brasa para foco
       // de calor, laranja padrão para sismo. Sem isso todo anel sairia laranja
@@ -298,9 +319,103 @@ export class GlobeEngine {
         `rgba(${d.rgb ?? "249,115,22"},${(1 - t) * d.strength})`)
 ;
 
-    this.g.onGlobeClick(({ lat, lng }: { lat: number; lng: number }) =>
-      this.clickFn?.(lat, lng)
-    );
+    // O CLIQUE NÃO PODE SER O DO globe.gl.
+    //
+    // `onGlobeClick` intersecta a ESFERA — foi assim que ele nasceu, e é o
+    // certo enquanto não há nada em cima dela. Com o relevo levantado ele
+    // devolve a coordenada errada, e a correção de `geoNoPonto` não chegaria
+    // ao clique se ele continuasse vindo de lá.
+    //
+    // O limiar de arrasto é o mesmo cuidado que o mapa plano já toma: sem ele,
+    // todo giro do planeta terminaria abrindo a sonda num ponto que ninguém
+    // escolheu.
+    {
+      let px = 0, py = 0, andou = 0, apertado = false;
+      // SÓ O CANVAS CONTA COMO "O PLANETA".
+      //
+      // O cartão ancorado mora DENTRO do palco — precisa morar, porque a
+      // posição que `projetar` devolve é relativa a este contêiner. Sem esta
+      // guarda, clicar no botão "Análise completa" do cartão borbulharia até
+      // aqui e sondaria o ponto que está por baixo dele. Os topônimos não dão
+      // problema porque já são `pointer-events: none`.
+      const noPlaneta = (e: Event) => e.target instanceof HTMLCanvasElement;
+
+      container.addEventListener("pointerdown", (e: PointerEvent) => {
+        if (e.button !== 0 || !noPlaneta(e)) return;
+        apertado = true; andou = 0; px = e.clientX; py = e.clientY;
+      });
+      container.addEventListener("pointermove", (e: PointerEvent) => {
+        if (!apertado) return;
+        andou += Math.abs(e.clientX - px) + Math.abs(e.clientY - py);
+        px = e.clientX; py = e.clientY;
+      });
+      container.addEventListener("pointerup", (e: PointerEvent) => {
+        if (!apertado) return;
+        apertado = false;
+        if (andou > 5) return;
+        const p = this.geoNoPonto(container, e.clientX, e.clientY);
+        if (p) this.clickFn?.(p.lat, p.lng);
+      });
+      container.addEventListener("pointercancel", () => { apertado = false; });
+    }
+
+    // ---- COORDENADA SOB O PONTEIRO ----------------------------------------
+    //
+    // O globe.gl expõe clique e não expõe hover, então o raio é lançado à mão.
+    // Contra uma ESFERA ANALÍTICA, e não contra a malha: a interseção
+    // raio–esfera é uma equação de segundo grau, custa nanossegundos e não
+    // depende da resolução da geometria — enquanto um raycast na malha
+    // percorreria os milhares de triângulos do globo a cada movimento.
+    //
+    // Coalescido por quadro. O ponteiro dispara dezenas de eventos por
+    // segundo e a régua só é redesenhada uma vez por quadro; processar todos
+    // seria trabalho jogado fora.
+    const geoNoPonteiro = () => {
+      this.hoverRaf = 0;
+      const xy = this.hoverXY;
+      if (!xy || !this.hoverFn) return;
+      const p = this.geoNoPonto(container, xy.x, xy.y);
+      // FORA DO DISCO NÃO EXISTE COORDENADA. Manter a última faria a leitura
+      // mostrar um valor de um lugar onde o cursor não está.
+      this.hoverFn(p);
+      container.style.cursor = p ? "crosshair" : "";
+    };
+
+    container.addEventListener("pointermove", (e: PointerEvent) => {
+      if (!this.hoverFn) return;
+      // Sobre o cartão, a leitura contínua PARA em vez de reportar o ponto que
+      // está escondido atrás dele. Um número que muda enquanto você lê o
+      // cartão é pior que um número que espera.
+      if (!(e.target instanceof HTMLCanvasElement)) { this.hoverFn(null); return; }
+      this.hoverXY = { x: e.clientX, y: e.clientY };
+      if (!this.hoverRaf) this.hoverRaf = requestAnimationFrame(geoNoPonteiro);
+    });
+    container.addEventListener("pointerleave", () => {
+      this.hoverXY = null;
+      this.hoverFn?.(null);
+      container.style.cursor = "";
+    });
+
+    // ---- AFORDÂNCIA E SEGUNDO VERBO ---------------------------------------
+    //
+    // O globo tinha UM verbo: clicar. Nada na tela dizia que ele era clicável,
+    // e não havia como se aproximar de um ponto sem arrastar e rolar até
+    // acertar. Duas adições pequenas, e as duas são convenção de mapa:
+    //
+    //   cursor        muda sobre o planeta e volta ao normal fora dele
+    //   clique duplo  aproxima no ponto, como em qualquer mapa
+    //
+    // O cursor sai do MESMO cálculo do hover, então ele custa zero: a
+    // coordenada já foi resolvida para a leitura contínua da régua.
+    container.addEventListener("dblclick", (e: MouseEvent) => {
+      if (!(e.target instanceof HTMLCanvasElement)) return;
+      const p = this.geoNoPonto(container, e.clientX, e.clientY);
+      if (!p) return;
+      // Metade da altitude por vez, com piso: pular direto para o chão a cada
+      // duplo clique tira a noção de onde se estava. `flyTo` já interpola.
+      const alt = this.g?.pointOfView?.()?.altitude ?? 1.7;
+      this.flyTo(p.lat, p.lng, Math.max(0.14, alt * 0.5));
+    });
 
 
     // `onPolygonClick` foi removido junto com os polígonos. Ele existia porque
@@ -321,7 +436,23 @@ export class GlobeEngine {
     this.onResize = size;
     window.addEventListener("resize", size);
 
-    this.g.pointOfView({ lat: -15, lng: -48, altitude: 1.70 });
+    // A PRIMEIRA VISTA. Ver ./globo/entrada.ts: a câmera nasce longe, com o
+    // planeta inteiro contra as estrelas, e desce até a altitude de trabalho.
+    // Qualquer interação cancela; `prefers-reduced-motion` nem começa.
+    const reduzido = typeof matchMedia === "function"
+      && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const jaViu = (() => {
+      try { return sessionStorage.getItem("obs:entrada") === "1"; } catch { return false; }
+    })();
+
+    if (deveAnimar({ reduzido, jaViu })) {
+      this.g.pointOfView(PARTIDA);
+      this.voo = criarVoo(performance.now());
+      try { sessionStorage.setItem("obs:entrada", "1"); } catch { /* sem persistência, segue */ }
+    } else {
+      this.g.pointOfView(CHEGADA);
+    }
+
     const c = this.g.controls();
     c.autoRotate = false;
     c.autoRotateSpeed = 0.35;
@@ -329,6 +460,9 @@ export class GlobeEngine {
 
     c.addEventListener("change", () => { this.wake(); this.scheduleLOD(); });
     c.addEventListener("start", () => {
+      // O PRIMEIRO TOQUE MANDA. Uma abertura que ignora a pessoa por dois
+      // segundos e meio é indistinguível de uma tela travada.
+      this.cancelarEntrada();
       this.interacting = true;
       const rnd = this.g?.renderer?.();
       rnd?.setPixelRatio(Math.min(this.baseDpr, TIERS[this.perf.tier].dpr) * 0.7);
@@ -346,7 +480,10 @@ export class GlobeEngine {
     this.fronteiras = new FronteirasGlobo(this.g.scene(), { raio });
     this.fronteiras.onAviso((m) => this.noticeFn?.(m));
     this.malha = new MalhaEscalar(this.g.scene(), { raio });
-    this.applyOcean();
+    this.atmosfera = criarAtmosfera({ raio });
+    this.g.scene().add(this.atmosfera.mesh);
+
+    this.applySuperficie();
     this.applySun();
     this.loop();
     // As fronteiras entram pela pirâmide, junto com a câmera. Ver atualizarPiramide.
@@ -359,6 +496,24 @@ export class GlobeEngine {
     if (!rnd) return;
     rnd.sortObjects = true;
     rnd.logarithmicDepthBuffer = true;
+
+    // TONE MAPPING — a peça que faltava no fim do pipeline.
+    //
+    // Sem ela o renderizador CORTA tudo que passa de 1,0. O glint do mar, as
+    // luzes de cidade e os topos das rampas de cor não ficavam "brilhantes":
+    // ficavam BRANCOS CHAPADOS, sem forma, porque três canais saturados são
+    // sempre a mesma cor. É por isso que o reflexo no oceano parecia uma
+    // mancha e não um reflexo.
+    //
+    // ACES faz o ombro da curva: o realce comprime em vez de cortar, e volta a
+    // ter desenho. A exposição em 1,05 compensa o leve escurecimento que a
+    // própria curva introduz nos tons médios.
+    //
+    // ISTO MUDA A APARÊNCIA DE TODAS AS RAMPAS DE COR, e não só dos realces.
+    // Uma escala calibrada por contraste medido precisa ser reconferida — a
+    // curva é aplicada depois do shader, sobre o resultado de qualquer camada.
+    rnd.toneMapping = THREE.ACESFilmicToneMapping;
+    rnd.toneMappingExposure = 1.05;
     this.baseDpr = window.devicePixelRatio || 1;
     rnd.setPixelRatio(Math.min(this.baseDpr, TIERS[this.perf.tier].dpr));
     this.perf.onTierChange((t) => this.applyTier(t));
@@ -368,14 +523,60 @@ export class GlobeEngine {
   }
 
   /**
-   * Oceano
+   * A SUPERFÍCIE.
+   *
+   * Substitui o MeshPhong padrão do three-globe por um shader que mistura dia e
+   * noite pelo ângulo solar, acende as luzes de cidade no lado escuro e dá
+   * glint ao mar. Ver `./globo/terra.ts` para o porquê de cada parte.
+   *
+   * SE ALGUMA TEXTURA FALHAR, NADA ACONTECE: o material antigo continua no
+   * lugar e o globo fica com a aparência anterior. Uma tela preta porque um
+   * PNG não veio seria pior que uma tela sem crepúsculo.
    */
-  private applyOcean() {
-    const mat = this.g?.globeMaterial?.();
-    if (!mat) return;
+  private applySuperficie() {
+    const carregar = (url: string, srgb: boolean) =>
+      new Promise<THREE.Texture>((ok, erro) => {
+        new THREE.TextureLoader().load(url, (tex) => {
+          if (!tex.image || tex.image.width <= 0) { tex.dispose(); erro(new Error(`textura vazia: ${url}`)); return; }
+          // As máscaras (água, relevo) são DADO e não cor: passá-las por sRGB
+          // aplicaria uma curva gama a um número que não é luminância.
+          tex.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+          tex.anisotropy = 8;
+          ok(tex);
+        }, undefined, () => erro(new Error(`falha ao carregar ${url}`)));
+      });
+
+    Promise.all([
+      carregar(TEX.day, true),
+      carregar(TEX.night, true),
+      carregar(TEX.water, false),
+      carregar(TEX.bump, false),
+    ]).then(([dia, noite, agua, relevo]) => {
+      if (this.disposed || !this.g) {
+        for (const t of [dia, noite, agua, relevo]) t.dispose();
+        return;
+      }
+      const mat = materialTerra({ dia, noite, agua, relevo });
+      this.terra = mat;
+      this.g.globeMaterial(mat);
+      this.applySun();
+      this.wake();
+    }).catch((e) => {
+      // Declarado, não silencioso: sem isto a Terra volta a ser uma bola de
+      // bilhar e ninguém sabe por quê.
+      console.warn("[globe] superfície em modo simples:", e.message);
+      this.applyOceanSimples();
+    });
+  }
+
+  /**
+   * O caminho antigo, mantido como rede: especular no Phong padrão.
+   */
+  private applyOceanSimples() {
+    const mat = this.g?.globeMaterial?.() as any;
+    if (!mat || mat.isShaderMaterial) return;
     new THREE.TextureLoader().load(TEX.water, (tex) => {
       if (this.disposed) { tex.dispose(); return; }
-      // DEFESA: rejeita texturas com dimensões inválidas
       if (!tex.image || tex.image.width <= 0 || tex.image.height <= 0) {
         console.warn("[globe] máscara de água com dimensões inválidas, ignorando");
         tex.dispose(); return;
@@ -407,11 +608,22 @@ export class GlobeEngine {
         return;
       }
 
+      // A CÂMERA ENTRA NO SHADER: o glint do mar é especular, e especular
+      // depende de onde se olha. Sem isto o reflexo fica cravado num ponto e
+      // parece uma mancha na textura.
+      const cam = (this.terra || this.atmosfera) ? this.g?.camera?.() : null;
+      if (cam) {
+        this.terra?.uniforms.uCamera.value.copy(cam.position);
+        this.atmosfera?.material.uniforms.uCamera.value.copy(cam.position);
+      }
+
+      this.tickEntrada(t);
       this.tickImagery(dt);
       this.tickWind(dt);
       this.tickCurrents(dt);
 
-      const animating = this.windOn || this.currentsOn || this.imgFade < 1 || this.interacting;
+      const animating = this.windOn || this.currentsOn || this.imgFade < 1 || this.interacting
+        || !!this.voo;
       if (animating) this.anim.animando();
       else this.anim.ocioseou(90);
 
@@ -565,7 +777,15 @@ export class GlobeEngine {
     cand.sort((a, b) => (b.dot * 3 - b.imp) - (a.dot * 3 - a.imp));
 
     // separacao minima em graus, proporcional a altitude: de longe o globo inteiro cabe na tela e 1 grau e quase nada; de perto, 1 grau e enorme
-    const sepDeg = Math.max(0.45, alt * 3.2);
+    // Separação MAIOR e teto MENOR do que antes, e os dois números vieram de
+    // olhar a tela: com 3,2 e 90 o hemisfério africano inteiro aparecia
+    // rotulado de uma vez, e os nomes longos — "República Democrática do
+    // Congo" — atravessavam o disco por cima do campo de vento.
+    //
+    // Topônimo é REFERÊNCIA, não dado. Ele existe para dizer onde a pessoa
+    // está olhando, e um mapa em que a referência disputa atenção com a medida
+    // trocou o assunto de lugar.
+    const sepDeg = Math.max(0.45, alt * (this.modoAnalise ? 7.0 : 4.6));
     const minSep = Math.cos((sepDeg * Math.PI) / 180);
 
     const kept: Cand[] = [];
@@ -576,14 +796,25 @@ export class GlobeEngine {
       }
       if (clash) continue;
       kept.push(c);
-      if (kept.length >= 90) break;             // teto duro de elementos no DOM
+      if (kept.length >= (this.modoAnalise ? 24 : 55)) break;   // teto duro no DOM
     }
 
     for (const c of kept) {
       // desbota em direcao a borda do cone: o centro fica nitido, a periferia
       const t = (c.dot - focusDot) / (1 - focusDot);
       const op = 0.30 + 0.70 * Math.min(1, Math.max(0, t)) ** 0.65;
-      out.push({ ...c.p, tier: c.tier, alt: c.alt, op: +op.toFixed(2) });
+      // O RÓTULO SOBE PARA O RELEVO. Com a malha levantada, um topônimo na
+      // altitude da esfera fica ENTERRADO debaixo de uma superfície opaca — e
+      // era exatamente essa a queixa: "os nomes ficam atrás".
+      //
+      // A altura própria do rótulo (`c.alt`) continua somando: ela é o
+      // afastamento que impede o texto de rasar a superfície e sumir por
+      // profundidade em algumas placas.
+      out.push({
+        ...c.p, tier: c.tier,
+        alt: c.alt + this.alturaRelevoEm(c.p.lat, c.p.lng),
+        op: +op.toFixed(2),
+      });
     }
 
     if (this.isobarsOn) {
@@ -600,7 +831,7 @@ export class GlobeEngine {
               name: `${c.kind === "L" ? "B" : "A"} ${Math.round(c.hPa)}`,
               lat: c.lat, lng: c.lng,
               tier: c.kind === "L" ? "iso-low" : "iso-high",
-              alt: 0.014,
+              alt: 0.014 + this.alturaRelevoEm(c.lat, c.lng),
               op: 1,
             } as unknown as LabelDatum & { alt: number; op: number });
           }
@@ -611,7 +842,133 @@ export class GlobeEngine {
     this.g.htmlElementsData(out);
   }
 
+  /**
+   * A coordenada sob um ponto da tela, ou `null` fora do disco do planeta.
+   *
+   * Contra uma ESFERA ANALÍTICA, e não contra a malha: a interseção
+   * raio–esfera é uma equação de segundo grau, custa nanossegundos e não
+   * depende da resolução da geometria — enquanto um raycast na malha
+   * percorreria os milhares de triângulos do globo a cada movimento.
+   */
+  private geoNoPonto(el: HTMLElement, cx: number, cy: number): { lat: number; lng: number } | null {
+    if (!this.g || this.disposed) return null;
+    const cam = this.g.camera?.();
+    if (!cam) return null;
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return null;
+
+    const ndc = new THREE.Vector2(
+      ((cx - r.left) / r.width) * 2 - 1,
+      -(((cy - r.top) / r.height) * 2 - 1),
+    );
+    const raio = new THREE.Raycaster();
+    raio.setFromCamera(ndc, cam);
+
+    const R = this.g.getGlobeRadius();
+
+    // O RELEVO VEM PRIMEIRO, e é por isso que este método existe.
+    //
+    // Com a malha 3D levantada, o raio atravessava o pico que a pessoa estava
+    // mirando e ia bater na esfera lá atrás — que naquela direção é outro
+    // lugar do planeta. Mirando uma alta sobre a Argentina em vista oblíqua, a
+    // sonda abria no Atlântico. Ver `src/malha/picking.ts` para por que a
+    // solução é marcha no raio e não `Raycaster` na malha.
+    if (this.malhaOn && this.malha) {
+      const acerto = intersectarRelevo(
+        {
+          o: [raio.ray.origin.x, raio.ray.origin.y, raio.ray.origin.z],
+          d: [raio.ray.direction.x, raio.ray.direction.y, raio.ray.direction.z],
+        },
+        {
+          raio: R,
+          exagero: this.malha.exageroAtual,
+          alturaEm: (lat, lng) => this.malha!.alturaEm(lat, lng),
+        },
+      );
+      if (acerto) return { lat: acerto.lat, lng: acerto.lng };
+    }
+
+    // Plano B: a esfera lisa. Vale quando a malha está desligada, quando o
+    // raio passa por cima de todo o relevo, e quando o trecho que ele
+    // atravessa não tem dado — os três casos em que não existe superfície de
+    // análise para acertar.
+    const esfera = new THREE.Sphere(new THREE.Vector3(0, 0, 0), R);
+    const ponto = new THREE.Vector3();
+    if (!raio.ray.intersectSphere(esfera, ponto)) return null;
+    const g = this.g.toGeoCoords(ponto);
+    return { lat: g.lat, lng: g.lng };
+  }
+
+  /**
+   * A ALTURA DO RELEVO NUM PONTO, em fração do raio. Zero com a malha desligada.
+   *
+   * ---------------------------------------------------------------------------
+   * POR QUE ISTO EXISTE, E O QUE ELE CONSERTA
+   * ---------------------------------------------------------------------------
+   * Com a malha 3D levantada, TUDO que mora no raio da esfera fica enterrado
+   * debaixo dela: os topônimos, as fronteiras, o marcador do clique, os anéis
+   * de sismo, os focos. A superfície de análise é opaca, então o que está por
+   * baixo simplesmente some — e o sintoma é o pior possível, porque o rótulo
+   * continua "existindo" e ninguém entende por que não aparece.
+   *
+   * Uma função só, consultada por todo mundo que precisa marcar um LUGAR. Duas
+   * cópias dessa conta em lugares diferentes seria como o rótulo passa a flutuar
+   * um pouco acima ou abaixo da superfície que ele deveria tocar.
+   *
+   * NÃO se aplica a camadas de CAMPO — vento, correntes, imagem. Elas
+   * descrevem o que acontece na superfície do planeta, não na altura de uma
+   * isóbara desenhada; levantá-las seria afirmar uma geometria que o dado não
+   * tem. Ver o inventário no cabeçalho de `src/malha/picking.ts`.
+   */
+  alturaRelevoEm(lat: number, lng: number): number {
+    if (!this.malhaOn || !this.malha) return 0;
+    const h = this.malha.alturaEm(lat, lng);
+    if (h == null || !Number.isFinite(h)) return 0;
+    return Math.max(0, Math.min(1, h)) * this.malha.exageroAtual;
+  }
+
   onClick(fn: (lat: number, lng: number) => void) { this.clickFn = fn; }
+  onHover(fn: (p: { lat: number; lng: number } | null) => void) { this.hoverFn = fn; }
+
+  /**
+   * Projeção de coordenada para pixel, com teste de horizonte.
+   *
+   * A VISIBILIDADE NÃO É `z < 1` DO NDC. Um ponto do outro lado do planeta
+   * projeta dentro da tela e passa no teste de profundidade do clip — ele só
+   * não é visto porque a Terra é opaca, e o clip não sabe disso.
+   *
+   * A condição certa é geométrica: com a câmera a distância `d` do centro e o
+   * planeta de raio `R`, um ponto da superfície está do lado de cá do horizonte
+   * quando `p̂ · ĉ > R / d`. É o cosseno do ângulo em que a linha de visada
+   * tangencia a esfera.
+   */
+  projetar(lat: number, lng: number) {
+    if (!this.g || this.disposed) return null;
+    const cam = this.g.camera?.();
+    const el = this.g.renderer?.()?.domElement as HTMLCanvasElement | undefined;
+    if (!cam || !el) return null;
+    const w = el.clientWidth, h = el.clientHeight;
+    if (w <= 0 || h <= 0) return null;
+
+    const R = this.g.getGlobeRadius();
+    // O CARTÃO ANCORADO TEM QUE POUSAR NO RELEVO, e não na esfera abaixo dele.
+    // Sem isto, marcar um pico deixava o cartão flutuando deslocado — visível
+    // em vista oblíqua, que é justamente quando o relevo importa.
+    const Rp = R * (1 + this.alturaRelevoEm(lat, lng));
+    const p = llToVec3(lat, lng, Rp);
+    const d = cam.position.length();
+    // O horizonte continua sendo o da ESFERA: é ela que oclui. Um ponto
+    // levantado pode estar visível além do horizonte geométrico do planeta, e
+    // por isso o teste usa o raio do ponto e não o da esfera.
+    const visivel = d > R && p.dot(cam.position) / (Rp * d) > R / d;
+
+    const ndc = p.clone().project(cam);
+    return {
+      x: (ndc.x * 0.5 + 0.5) * w,
+      y: (-ndc.y * 0.5 + 0.5) * h,
+      visivel,
+    };
+  }
   setAutoRotate(on: boolean) { if (this.g) this.g.controls().autoRotate = on; }
   flyTo(lat: number, lng: number, altitude = 1.6) {
     this.g?.pointOfView({ lat, lng, altitude }, 900);
@@ -623,6 +980,38 @@ export class GlobeEngine {
 
   private applySun = () => {
     if (!this.g || this.disposed) return;
+
+    // A CONTA DO SOL MORA EM `./globo/sol.ts`, com teste próprio contra os
+    // solstícios e os equinócios. Estava aqui dentro, escrita à mão, e por isso
+    // nunca tinha sido verificada contra o calendário.
+    const [sx, sy, sz] = vetorSolar(this.time);
+
+    // Caminho novo: o terminador é do shader.
+    if (this.terra) {
+      const u = this.terra.uniforms;
+      u.uSol.value.set(sx, sy, sz);
+      u.uCiclo.value = this.dayNight ? 1 : 0;
+      // Sem ciclo dia/noite não há lado noturno, e luzes de cidade acesas sobre
+      // um planeta inteiramente iluminado seriam sujeira, não informação.
+      u.uCidades.value = this.dayNight ? 1 : 0;
+      if (this.atmosfera) {
+        this.atmosfera.material.uniforms.uSol.value.set(sx, sy, sz);
+        this.atmosfera.material.uniforms.uCiclo.value = this.dayNight ? 1 : 0;
+      }
+
+      // As luzes do three-globe continuam existindo para as OUTRAS cascas —
+      // marcadores, malha, imagens. Neutraliza-se a direcional para que ela não
+      // sombreie duas vezes o que o shader já resolveu.
+      const lights: any[] = this.g.lights ? this.g.lights() : [];
+      for (const l of lights) {
+        if (l.type === "DirectionalLight") l.intensity = 0.35;
+        if (l.type === "AmbientLight") l.intensity = 0.9;
+      }
+      this.wake();
+      return;
+    }
+
+    // Caminho antigo, enquanto as texturas não chegam ou se elas falharem.
     const lights: any[] = this.g.lights ? this.g.lights() : [];
     const dir = lights.find((l) => l.type === "DirectionalLight");
     const amb = lights.find((l) => l.type === "AmbientLight");
@@ -632,18 +1021,24 @@ export class GlobeEngine {
       if (amb) amb.intensity = 1.35;
       return;
     }
-    // ponto subsolar aproximado: onde o Sol está a pino nesta data e hora
-    const d = this.time;
-    const doy = Math.floor((d.getTime() - Date.UTC(d.getUTCFullYear(), 0, 0)) / 86400e3);
-    const decl = -23.44 * Math.cos((2 * Math.PI / 365) * (doy + 10));
-    const hours = d.getUTCHours() + d.getUTCMinutes() / 60;
-    const lng = -15 * (hours - 12);
-    const p = this.g.getCoords(decl, lng, 2);
-    if (dir) { dir.position.set(p.x, p.y, p.z); dir.intensity = 1.5; }
+    const R = this.g.getGlobeRadius() * 2;
+    if (dir) { dir.position.set(sx * R, sy * R, sz * R); dir.intensity = 1.5; }
     if (amb) amb.intensity = 0.12;
   };
 
+  /**
+   * Base clara ou escura.
+   *
+   * Com o shader instalado isto deixou de trocar a textura do planeta inteiro
+   * — o que apagava o dia do outro lado do mundo — e passou a mexer só na
+   * intensidade das luzes de cidade.
+   */
   setBase(style: "day" | "night") {
+    if (this.terra) {
+      this.terra.uniforms.uCidades.value = style === "night" ? 1.6 : 1;
+      this.wake();
+      return;
+    }
     this.g?.globeImageUrl(style === "night" ? TEX.night : TEX.day);
   }
 
@@ -718,13 +1113,16 @@ export class GlobeEngine {
           tex.anisotropy = Math.min(8, rnd.capabilities.getMaxAnisotropy());
         }
 
-        this.piramide?.dispose();
-    this.piramide = null;
-    this.fronteiras?.dispose();
-    this.fronteiras = null;
-    this.malha?.dispose();
-    this.malha = null;
-    this.imgTex?.dispose();
+        // Só a textura ANTERIOR desta camada é descartada aqui.
+        //
+        // Havia neste ponto, coladas por uma substituição em bloco que errou o
+        // alvo, as linhas que destroem a pirâmide de tiles, as fronteiras e a
+        // malha — o conteúdo do `dispose()`. Elas rodavam a CADA imagem de
+        // satélite carregada: ligar uma camada de imagem apagava os tiles de
+        // detalhe e as fronteiras, e como tudo virava `null` sem erro, o
+        // sintoma era "as fronteiras somem quando eu ligo o MODIS". Foram
+        // devolvidas para o `dispose()`, que era de onde tinham saído.
+        this.imgTex?.dispose();
         this.imgTex = tex;
         this.imgMat.uniforms.uMap.value = tex;
         this.imgMesh.visible = true;
@@ -742,17 +1140,74 @@ export class GlobeEngine {
   setMalha(campo: CampoEscalar | null, escala: EscalaMalha | null) {
     this.malha?.definirCampo(campo, escala);
     this.malha?.definirVisivel(this.malhaOn && !!campo);
+    // Campo novo é relevo novo: trocar de variável ou de hora muda a altura de
+    // cada ponto do planeta, e quem já está desenhado precisa acompanhar.
+    this.sincronizarRelevo();
     this.wake();
   }
 
   setMalhaVisivel(on: boolean) {
     this.malhaOn = on;
     this.malha?.definirVisivel(on);
+    this.aplicarModoAnalise(on);
+    this.sincronizarRelevo();
     this.wake();
   }
 
+  /**
+   * MODO ANÁLISE — o que fazer quando existe uma superfície levantada.
+   *
+   * Com a malha 3D no ar, a tela passa a ter DUAS superfícies a poucos
+   * milésimos de raio uma da outra, mais um campo de partículas entre elas,
+   * mais os topônimos por cima de tudo. É informação demais no mesmo lugar, e
+   * o sintoma é exatamente o que se sente ao girar: não dá para saber o que
+   * está na frente.
+   *
+   * A saída não é apagar coisas — é DECIDIR QUEM É O ASSUNTO. Levantada a
+   * malha, ela é. A superfície do planeta recua para cinza escuro e continua
+   * dando referência geográfica; o vento quase some, porque um campo de
+   * partículas atrás de um relevo translúcido é ruído puro; e os topônimos
+   * ficam pela metade.
+   *
+   * Nada é desligado de fato: baixar a malha devolve tudo como estava, e a
+   * preferência de quem mexeu nos controles sobrevive à ida e à volta.
+   */
+  /**
+   * Reapresenta o relevo a quem desenha LINHAS sobre a esfera.
+   *
+   * Pontos e rótulos consultam `alturaRelevoEm` na hora de serem montados, e
+   * por isso se corrigem sozinhos na próxima atualização. As fronteiras são
+   * geometria persistida: elas precisam ser AVISADAS, senão continuam no raio
+   * antigo até o próximo recarregamento de tile.
+   */
+  private sincronizarRelevo() {
+    this.fronteiras?.definirRelevo(
+      this.malhaOn && this.malha ? (lat, lng) => this.alturaRelevoEm(lat, lng) : null,
+    );
+    // Isóbaras são geometria persistida como as fronteiras, mas sem caminho de
+    // reposicionamento incremental: refazê-las é uma passada sobre alguns
+    // milhares de pontos, e acontece só quando o relevo muda — não por quadro.
+    if (this.isobarsOn && this.isobarData) this.setIsobars(this.isobarData);
+    this.refreshPointsAndRings();
+    this.applyLOD(true);
+  }
+
+  private aplicarModoAnalise(on: boolean) {
+    if (this.modoAnalise === on) return;
+    this.modoAnalise = on;
+    if (this.terra) this.terra.uniforms.uAtenuar.value = on ? 1 : 0;
+    this.aplicarOpacidadeVento();
+    this.applyLOD(true);
+  }
+
   /** altura máxima como fração do raio; 0 achata a malha sobre a esfera */
-  setMalhaExagero(x: number) { this.malha?.definirExagero(x); this.wake(); }
+  setMalhaExagero(x: number) {
+    this.malha?.definirExagero(x);
+    // Tudo que marca lugar sobe junto: arrastar o controle de relevo sem isto
+    // deixaria fronteiras e rótulos parados enquanto a superfície se afasta.
+    this.sincronizarRelevo();
+    this.wake();
+  }
   setMalhaArame(on: boolean) { this.malha?.definirArame(on); this.wake(); }
   setMalhaOpacidade(o: number) { this.malha?.definirOpacidade(o); this.wake(); }
 
@@ -860,9 +1315,19 @@ export class GlobeEngine {
     }
     if (!data?.contours?.length || !this.g || !this.isobarsOn) { this.wake(); return; }
 
-    const R = this.g.getGlobeRadius() * 1.014;   // acima da imagem e polígonos, abaixo do vento
+    const R0 = this.g.getGlobeRadius() * 1.014;   // acima da imagem, abaixo do vento
+    const Rbase = this.g.getGlobeRadius();
     const pos: number[] = [];
     const col: number[] = [];
+
+    // AS ISÓBARAS TAMBÉM SOBEM. Elas são linhas de estrutura como as
+    // fronteiras: com a malha 3D no ar e opaca, uma isóbara no raio da esfera
+    // fica enterrada. E há um bônus quando o campo levantado é a própria
+    // pressão — a isóbara passa a correr SOBRE o relevo que ela descreve, e
+    // uma baixa vira uma cratera com as linhas contornando a parede.
+    const raioEm = (lat: number, lng: number) =>
+      R0 + Rbase * this.alturaRelevoEm(lat, lng);
+    const R = R0;   // usado só no corte de emenda, que é uma distância relativa
 
     for (const c of data.contours) {
       const forte = c.major;
@@ -870,8 +1335,8 @@ export class GlobeEngine {
       const a = forte ? 1 : 0.55;
 
       for (let i = 0; i < c.points.length - 1; i++) {
-        const p1 = llToVec3(c.points[i][1], c.points[i][0], R);
-        const p2 = llToVec3(c.points[i + 1][1], c.points[i + 1][0], R);
+        const p1 = llToVec3(c.points[i][1], c.points[i][0], raioEm(c.points[i][1], c.points[i][0]));
+        const p2 = llToVec3(c.points[i + 1][1], c.points[i + 1][0], raioEm(c.points[i + 1][1], c.points[i + 1][0]));
 
         if (p1.distanceToSquared(p2) > (R * 0.5) ** 2) continue;
 
@@ -1014,8 +1479,48 @@ export class GlobeEngine {
 
 
   setWindOpacity(v: number) {
-    if (this.windMat) this.windMat.uniforms.uOpacity.value = v;
+    // A INTERFACE MANDA NO VALOR, a entrada manda no fator.
+    //
+    // Guardar o pedido separado do que vai para o shader é o que impede o fade
+    // de abertura de sobrescrever a preferência: se a pessoa mexer no controle
+    // durante os dois segundos e meio, o valor dela sobrevive ao fim do voo.
+    this.opacidadeVento = v;
+    this.aplicarOpacidadeVento();
     this.wake();
+  }
+
+  private aplicarOpacidadeVento() {
+    if (!this.windMat) return;
+    const fator = this.voo ? fadeDoVento(this.voo.progresso) : 1;
+    // 0,18 e não 0: o escoamento continua legível como contexto por trás da
+    // malha, e desligá-lo de vez faria a camada "sumir" ao levantar o relevo —
+    // que é indistinguível de um defeito para quem acabou de ligar as duas.
+    const analise = this.modoAnalise ? 0.18 : 1;
+    this.windMat.uniforms.uOpacity.value = this.opacidadeVento * fator * analise;
+  }
+
+  /**
+   * Um passo do voo de abertura.
+   *
+   * `pointOfView` sem duração escreve a posição direto, sem a transição interna
+   * do globe.gl — que é o certo aqui: quem interpola é esta função, e duas
+   * interpolações concorrentes sobre a mesma câmera brigam.
+   */
+  private tickEntrada(agora: number) {
+    if (!this.voo || !this.g) return;
+    const q = this.voo.passo(agora);
+    if (!q) { this.voo = null; return; }
+    this.g.pointOfView(q);
+    this.aplicarOpacidadeVento();
+    if (!this.voo.ativo) { this.voo = null; this.aplicarOpacidadeVento(); }
+  }
+
+  /** Cancela a abertura onde ela estiver. Idempotente. */
+  private cancelarEntrada() {
+    if (!this.voo) return;
+    this.voo.cancelar();
+    this.voo = null;
+    this.aplicarOpacidadeVento();
   }
 
   /**
@@ -1054,6 +1559,7 @@ export class GlobeEngine {
   private rawFires: Fire[] = [];
   private rawOpenAQ: any[] = [];
   private rawHospitals: any[] = [];
+  private rawEstacoes: any[] = [];
   private clickTarget: { lat: number; lng: number } | null = null;
 
   setOpenAQ(list: any[]) {
@@ -1075,6 +1581,18 @@ export class GlobeEngine {
 
   clearHospitals() {
     this.rawHospitals = [];
+    this.refreshPointsAndRings();
+  }
+
+  // --------------------------------------------------- estações do INMET
+  setEstacoes(list: any[]) {
+    this.rawEstacoes = list || [];
+    this.refreshPointsAndRings();
+    this.wake();
+  }
+
+  clearEstacoes() {
+    this.rawEstacoes = [];
     this.refreshPointsAndRings();
   }
 
@@ -1152,6 +1670,7 @@ export class GlobeEngine {
       const k = Math.max(0, Math.min(1, (q.mag - 4) / 4));
       return {
         lat: q.lat, lng: q.lng,
+        alt: this.alturaRelevoEm(q.lat, q.lng),
         maxR: 1.5 + k * 7,
         speed: 0.8 + k * 3,
         period: 2600 - k * 1400,
@@ -1164,7 +1683,7 @@ export class GlobeEngine {
       return {
         lat: q.lat, lng: q.lng,
         color: k > 0.5 ? "#ef4444" : "#f97316",
-        alt: 0.008 + k * 0.02,
+        alt: 0.008 + k * 0.02 + this.alturaRelevoEm(q.lat, q.lng),
         radius: 0.14 + k * 0.22,
         label: `M ${q.mag.toFixed(1)} — ${q.place ?? ""}`,
       };
@@ -1198,7 +1717,7 @@ export class GlobeEngine {
       points.push({
         lat: s.lat, lng: s.lng,
         color: haloColor,
-        alt: 0.006,
+        alt: 0.006 + this.alturaRelevoEm(s.lat, s.lng),
         radius: haloRadius,
         label: "",
       });
@@ -1207,7 +1726,7 @@ export class GlobeEngine {
       points.push({
         lat: s.lat, lng: s.lng,
         color: coreColor,
-        alt: 0.009,
+        alt: 0.009 + this.alturaRelevoEm(s.lat, s.lng),
         radius: coreRadius,
         label: `🌫 ${s.name} — AQI ${aqi} (${tierName}) | PM2.5: ${s.pm25 ?? "?"} µg/m³`,
       });
@@ -1216,7 +1735,7 @@ export class GlobeEngine {
       points.push({
         lat: s.lat, lng: s.lng,
         color: "#ffffff",
-        alt: 0.013,
+        alt: 0.013 + this.alturaRelevoEm(s.lat, s.lng),
         radius: 0.08,
         label: "",
       });
@@ -1224,6 +1743,7 @@ export class GlobeEngine {
       // Pulsing ring — speed and size proportional to severity
       rings.push({
         lat: s.lat, lng: s.lng,
+        alt: this.alturaRelevoEm(s.lat, s.lng),
         maxR: 1.5 + severity * 4.5,           // bigger pulse for worse air
         speed: 1.2 + severity * 3.0,           // faster pulse for worse air
         period: 2800 - severity * 1600,         // shorter period = more urgent
@@ -1238,9 +1758,42 @@ export class GlobeEngine {
       points.push({
         lat: h.lat, lng: h.lng,
         color,
-        alt: 0.010,
+        alt: 0.010 + this.alturaRelevoEm(h.lat, h.lng),
         radius: 0.20,
         label: `🏥 ${h.name}${bedStr}${h.emergency ? " · EMERGÊNCIA" : ""}`,
+      });
+    }
+
+    // ---- estações do INMET --------------------------------------------------
+    //
+    // PONTO PEQUENO E DE UMA COR SÓ, de propósito.
+    //
+    // Toda outra camada de ponto deste globo codifica uma GRANDEZA na cor e no
+    // tamanho: magnitude do sismo, AQI da estação de ar, potência radiativa do
+    // foco. Aqui não há grandeza nenhuma — uma estação é um LUGAR onde se mede,
+    // e nada mais. Pintar por altitude ou por anos de série inventaria uma
+    // leitura onde só existe posição, e o olho passaria a procurar padrão numa
+    // escala que não significa nada.
+    //
+    // O que varia é só a opacidade, com os anos de série, porque isso é
+    // procedência e não medida: uma estação de 2023 sabe menos sobre o passado
+    // do que uma de 2010, e é honesto que ela apareça mais discreta.
+    for (const e of this.rawEstacoes) {
+      const anos = Number(e.anos_com_dado) || 0;
+      const maturidade = Math.max(0.35, Math.min(1, anos / 15));
+      const alt = Number(e.altitude_m);
+      points.push({
+        lat: e.lat, lng: e.lng,
+        color: `rgba(226,232,240,${(0.45 + 0.5 * maturidade).toFixed(2)})`,
+        alt: 0.006 + this.alturaRelevoEm(e.lat, e.lng),
+        radius: 0.09,
+        label: `${e.estacao_id} · ${e.nome ?? ""} (${e.uf ?? ""})`
+          + (Number.isFinite(alt) ? ` · ${Math.round(alt)} m` : "")
+          + (anos ? ` · ${anos} ano${anos > 1 ? "s" : ""} de série` : "")
+          // Ilha oceânica e base antártica aparecem longe de tudo. Sem dizer
+          // isso no rótulo, um ponto solitário no Atlântico Sul parece defeito
+          // de coordenada — e a primeira reação certa seria desconfiar dele.
+          + (e.fora_do_continente ? " · fora do Brasil continental" : ""),
       });
     }
 
@@ -1255,7 +1808,7 @@ export class GlobeEngine {
         color: rgbCss(cor),
         // Altitude proporcional: o foco intenso "sai" da esfera e ganha
         // silhueta contra o limbo, que e o que o faz ser notado de longe.
-        alt: 0.006 + k * 0.014,
+        alt: 0.006 + k * 0.014 + this.alturaRelevoEm(f.lat, f.lng),
         radius: 0.05 + k * 0.22,
         label: fireLabel(f),
       });
@@ -1265,6 +1818,7 @@ export class GlobeEngine {
         aneis++;
         rings.push({
           lat: f.lat, lng: f.lng,
+          alt: this.alturaRelevoEm(f.lat, f.lng),
           maxR: 1.2 + k * 5.5,
           speed: 3.4 - k * 2.1,
           period: 900 + k * 2600,
@@ -1278,6 +1832,7 @@ export class GlobeEngine {
       rings.push({
         lat: this.clickTarget.lat,
         lng: this.clickTarget.lng,
+        alt: this.alturaRelevoEm(this.clickTarget.lat, this.clickTarget.lng),
         maxR: 3.5,
         speed: 4.5,
         period: 900,
@@ -1287,7 +1842,9 @@ export class GlobeEngine {
         lat: this.clickTarget.lat,
         lng: this.clickTarget.lng,
         color: "#38bdf8",
-        alt: 0.015,
+        // O MARCADOR DO CLIQUE SOBE JUNTO. Ele existe para dizer "foi AQUI", e
+        // um marcador enterrado sob a superfície de análise não diz nada.
+        alt: 0.015 + this.alturaRelevoEm(this.clickTarget.lat, this.clickTarget.lng),
         radius: 0.35,
         label: `Ponto selecionado (${this.clickTarget.lat.toFixed(2)}°, ${this.clickTarget.lng.toFixed(2)}°)`,
       });
@@ -1302,8 +1859,26 @@ export class GlobeEngine {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
     if (this.labelRaf) cancelAnimationFrame(this.labelRaf);
+    if (this.hoverRaf) cancelAnimationFrame(this.hoverRaf);
     this.ro?.disconnect();
     if (this.onResize) window.removeEventListener("resize", this.onResize);
+    this.piramide?.dispose();
+    this.piramide = null;
+    this.fronteiras?.dispose();
+    this.fronteiras = null;
+    this.malha?.dispose();
+    this.malha = null;
+    this.atmosfera?.descartar();
+    this.atmosfera = null;
+    if (this.terra) {
+      // As texturas são deste material e de mais ninguém: o three-globe passou
+      // a não ter mapa nenhum quando o material foi trocado.
+      for (const k of ["uDia", "uNoite", "uAgua", "uRelevo"]) {
+        (this.terra.uniforms[k]?.value as THREE.Texture | null)?.dispose();
+      }
+      this.terra.dispose();
+      this.terra = null;
+    }
     this.imgTex?.dispose();
     this.windGPU?.dispose();
     this.windMat?.dispose();

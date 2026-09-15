@@ -43,7 +43,7 @@ import * as THREE from "three";
 import { planoDeTiles, tilesEm, type Tile } from "./tiles.ts";
 import type { JanelaVista } from "./calota.ts";
 import { ORDEM } from "./ordemDesenho.ts";
-import { buscarFronteiras, contarSegmentos, COSTA, PAIS, ESTADO } from "./fronteirasBin.ts";
+import { buscarFronteiras, contarSegmentos, COSTA, PAIS, ESTADO, type Fronteiras } from "./fronteirasBin.ts";
 
 /**
  * Peso de cada classe: [r, g, b] já multiplicado pela opacidade.
@@ -62,6 +62,18 @@ const PESO: Record<number, [number, number, number]> = {
 interface ItemTile {
   z: number;
   linha: THREE.LineSegments | null;
+  /**
+   * O tile DECODIFICADO fica guardado.
+   *
+   * Antes ele era jogado fora depois de virar geometria, e isso bastava
+   * enquanto a fronteira morava num raio fixo. Com a malha 3D no ar ela precisa
+   * SUBIR junto — e subir significa recalcular cada vértice a partir das
+   * coordenadas originais. Sem elas, a única saída seria baixar o tile de novo
+   * a cada arrasto do controle de relevo.
+   *
+   * O custo é pequeno: são segmentos de linha, não texturas.
+   */
+  fr: Fronteiras | null;
   vivo: boolean;
   /**
    * O tile terminou de carregar?
@@ -87,6 +99,14 @@ export class FronteirasGlobo {
   private raio: number;
   private tetoVivos: number;
   private nivelAtual = -1;
+  /**
+   * A altura do relevo naquele ponto, em fração do raio. `null` = sem relevo.
+   *
+   * Vem de fora porque quem sabe do campo é a malha, e a fronteira não tem — e
+   * não deve ter — nenhuma noção de campo escalar. Ela só sabe que existe uma
+   * função que diz o quanto o chão subiu ali.
+   */
+  private relevo: ((lat: number, lng: number) => number) | null = null;
   /**
    * O nível que está NA TELA — que não é o mesmo que o nível pedido.
    *
@@ -258,11 +278,12 @@ export class FronteirasGlobo {
   }
 
   private async pedir(t: Tile) {
-    const item: ItemTile = { z: t.z, linha: null, vivo: true, pronto: false };
+    const item: ItemTile = { z: t.z, linha: null, fr: null, vivo: true, pronto: false };
     this.tiles.set(t.chave, item);
 
     try {
       const fr = await buscarFronteiras(`/api/fronteiras/${t.z}/${t.y}/${t.x}`);
+      item.fr = fr;
       // Três razões para descartar o que acabou de chegar, e todas acontecem:
       // a camada morreu, o tile foi despejado enquanto baixava, ou ele foi
       // pedido de novo e este é o pedido velho.
@@ -352,9 +373,53 @@ export class FronteirasGlobo {
   private paraCena(lat: number, lng: number, alvo: THREE.Vector3) {
     const la = (lat * Math.PI) / 180;
     const lo = (lng * Math.PI) / 180;
-    const r = this.raio * 1.0025;
+    // A FRONTEIRA ACOMPANHA O RELEVO. Com a malha 3D levantada e opaca, uma
+    // linha no raio da esfera fica enterrada e a referência geográfica some
+    // justamente no modo em que ela é mais necessária — a superfície de
+    // análise não tem costa nem divisa desenhada.
+    //
+    // A folga de 0,25% continua valendo POR CIMA da altura do relevo: ela é o
+    // que impede a linha de rasar a superfície e sumir por profundidade em
+    // algumas placas.
+    const h = this.relevo ? this.relevo(lat, lng) : 0;
+    const r = this.raio * (1 + h) * 1.0025;
     const c = Math.cos(la);
     alvo.set(r * c * Math.sin(lo), r * Math.sin(la), r * c * Math.cos(lo));
+  }
+
+  /**
+   * Liga (ou desliga) o acompanhamento do relevo e reposiciona o que já existe.
+   *
+   * Reposicionar e não reconstruir: o índice, as cores e a divisão em tiles não
+   * mudam — só as posições. E os tiles já carregados não voltam à rede, que é
+   * a razão de `fr` ficar guardado.
+   */
+  definirRelevo(fn: ((lat: number, lng: number) => number) | null) {
+    this.relevo = fn;
+    for (const item of this.tiles.values()) this.reposicionar(item);
+  }
+
+  private reposicionar(item: ItemTile) {
+    const fr = item.fr, linha = item.linha;
+    if (!fr || !linha) return;
+    const pos = linha.geometry.getAttribute("position") as THREE.BufferAttribute;
+    const p = new THREE.Vector3();
+
+    let lido = 0, escrito = 0;
+    for (let i = 0; i < fr.linhas; i++) {
+      const n = fr.comprimentos[i];
+      for (let k = 0; k < n - 1; k++) {
+        const a = (lido + k) * 2;
+        this.paraCena(fr.coordenadas[a + 1], fr.coordenadas[a], p);
+        pos.setXYZ(escrito, p.x, p.y, p.z);
+        this.paraCena(fr.coordenadas[a + 3], fr.coordenadas[a + 2], p);
+        pos.setXYZ(escrito + 1, p.x, p.y, p.z);
+        escrito += 2;
+      }
+      lido += n;
+    }
+    pos.needsUpdate = true;
+    linha.geometry.computeBoundingSphere();
   }
 
   private descartar(chave: string) {

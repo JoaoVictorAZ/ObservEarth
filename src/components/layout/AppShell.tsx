@@ -26,6 +26,9 @@ import { PointChat } from "../chat/PointChat";
 import { BlocoPanel } from "../bloco/BlocoPanel";
 import { EVENTO_ORGANIZAR } from "../../janelas";
 import { Limite } from "../Limite";
+import { PainelAvisos, type Resposta as RespostaAvisos } from "../avisos/PainelAvisos.tsx";
+import { useFonte } from "../../dados/usarFonte.ts";
+import { ReguaAtiva } from "../instrument/ReguaAtiva.tsx";
 
 const CHAVE_CHAT = "obs:chat:aberto";
 
@@ -51,6 +54,21 @@ function lerChatAberto(): boolean {
 
 export const AppShell: React.FC = () => {
   const globeRef = useRef<GlobeViewportRef>(null);
+  const sidebarOpen = useUIStore((s) => s.sidebarOpen);
+
+  // OS AVISOS SÃO BUSCADOS AQUI, e não dentro da janela deles.
+  //
+  // O contador precisa continuar na barra inferior com a janela fechada — é a
+  // única informação da tela que fala de risco declarado por autoridade, e o
+  // app não pode ficar em silêncio sobre tempestade só porque alguém fechou um
+  // painel. Uma busca, dois consumidores.
+  const [avisosAbertos, setAvisosAbertos] = React.useState(false);
+  const avisos = useFonte<RespostaAvisos>({
+    id: "avisos",
+    rotulo: "Avisos do INMET",
+    url: "/api/avisos",
+    validadeMs: 10 * 60_000,
+  });
   const { analysisTarget, setAnalysisTarget } = useUIStore();
   const { probe } = useProbeStore();
   const { day, hour } = useTimelineStore();
@@ -104,7 +122,7 @@ export const AppShell: React.FC = () => {
   const fecharAnalise = useCallback(() => setAnalysisTarget(null), [setAnalysisTarget]);
 
   return (
-    <div className="app">
+    <div className={`app ${sidebarOpen ? "" : "app-sem-painel"}`}>
       <GlobeViewport ref={globeRef} />
       <TopBar onSearchCoord={handleSearchCoord} />
       <ForecastToolbar />
@@ -118,7 +136,20 @@ export const AppShell: React.FC = () => {
       <Limite nome="O recorte 3D">
         <BlocoPanel />
       </Limite>
-      <StatusBar />
+      <Limite nome="Os avisos meteorológicos">
+        <PainelAvisos
+          aberto={avisosAbertos}
+          aoFechar={() => setAvisosAbertos(false)}
+          dado={avisos.dado}
+          fonte={avisos.fonte}
+          repetir={avisos.repetir}
+        />
+      </Limite>
+      <ReguaAtiva />
+      <StatusBar
+        avisosVigentes={avisos.dado?.vigentes ?? null}
+        aoAbrirAvisos={() => setAvisosAbertos(true)}
+      />
       <CommandPalette onFlyTo={handleSearchCoord} />
 
       {probe && chatAberto && (

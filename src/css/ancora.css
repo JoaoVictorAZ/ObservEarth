@@ -1,0 +1,88 @@
+/* src/css/ancora.css
+   -------------------------------------------------------------------------
+   O CARTÃO ANCORADO.
+
+   Ele mora no espaço da TELA mas pertence ao espaço do MAPA: a posição vem da
+   projeção da coordenada, e por isso ele acompanha o planeta girando. Tudo
+   aqui é fio e vazio, como manda o sistema — o único elemento com peso é o
+   ponto, que marca o lugar.
+   ------------------------------------------------------------------------- */
+
+.anc {
+  position: absolute;
+  z-index: 12;                 /* acima da régua, abaixo das janelas */
+  /* A origem é a COORDENADA. Tudo se posiciona a partir dela. */
+  transform: translate(-50%, -50%);
+  pointer-events: none;        /* só o cartão recebe eventos, e ele reativa */
+}
+
+/* O ponto é a única coisa que fica exatamente sobre o lugar. O anel escuro em
+   volta garante contraste contra qualquer cor de rampa por baixo. */
+.anc-ponto {
+  position: absolute; left: 0; top: 0;
+  width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px;
+  border-radius: 50%;
+  background: var(--signal);
+  box-shadow: 0 0 0 2px var(--void);
+}
+
+/* A haste tira o cartão de cima do lugar de que ele fala. Sem ela, o cartão
+   esconde exatamente o ponto que marca. */
+.anc-haste {
+  position: absolute; left: 0; top: 0;
+  width: 1px; height: 22px;
+  margin-top: -22px;
+  background: linear-gradient(to top, var(--signal-line), transparent);
+}
+
+.anc-cartao {
+  position: absolute; left: 50%; bottom: 22px;
+  transform: translateX(-50%);
+  min-width: 168px; max-width: 260px;
+  padding: var(--s-3) var(--s-4);
+  background: var(--scrim);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
+}
+
+.anc-topo {
+  display: flex; align-items: baseline; gap: var(--s-3);
+  margin-bottom: var(--s-2);
+}
+.anc-lugar {
+  flex: 1; min-width: 0;
+  font-size: var(--t-small); font-weight: var(--w-medium); color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.anc-x {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 3px;
+  color: var(--ink-4); background: transparent; border: none; cursor: pointer;
+}
+.anc-x:hover { color: var(--ink); background: var(--surface-hi); }
+
+/* Três números e mais nada. O cartão é para OLHAR; a janela é para estudar. */
+.anc-nums {
+  margin: 0;
+  font-family: var(--mono); font-size: var(--t-small); color: var(--ink);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.anc-sem {
+  margin: 0; font-size: var(--t-micro); color: var(--ink-3); font-style: italic;
+}
+
+.anc-abrir {
+  display: flex; align-items: center; gap: 4px;
+  margin-top: var(--s-3); padding: 0;
+  font-family: var(--sans); font-size: var(--t-micro);
+  color: var(--signal); background: transparent; border: none; cursor: pointer;
+}
+.anc-abrir:hover { text-decoration: underline; }
+
+@media (max-width: 720px) {
+  /* Em tela estreita o cartão viraria mais obstáculo que leitura: fica só o
+     ponto, e a sonda continua sendo o caminho para o resto. */
+  .anc-cartao { display: none; }
+}

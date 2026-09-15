@@ -25,7 +25,7 @@ import { PerfMonitor, TIERS, type FrameStats } from "./perf";
 import type { Quake, WindGrid, IsobarSet, Fire, MotorGeo } from "./tipos";
 import {
   MUNDO_W, MUNDO_H, COPIAS,
-  aplicarZoom, travarVista, larguraGraus, daTela, enrolarLng, cruzaEmenda,
+  aplicarZoom, travarVista, larguraGraus, daTela, naTela, enrolarLng, cruzaEmenda,
   janelaDaVista, mudouBastante,
   type Vista, type Janela,
 } from "./projecao";
@@ -379,6 +379,7 @@ export class MapEngine implements MotorGeo {
   private clickTarget: { lat: number; lng: number } | null = null;
 
   private clickFn: ((lat: number, lng: number) => void) | null = null;
+  private hoverFn: ((p: { lat: number; lng: number } | null) => void) | null = null;
   private noticeFn: ((msg: string | null) => void) | null = null;
   private statsFn: ((s: FrameStats) => void) | null = null;
 
@@ -597,6 +598,24 @@ export class MapEngine implements MotorGeo {
     });
 
     el.addEventListener("pointermove", (e) => {
+      // A COORDENADA SOB O PONTEIRO sai ANTES do retorno por não estar
+      // arrastando. No mapa plano ela é barata — `daTela` é uma conta de
+      // proporção, sem raio nem esfera — e ela precisa continuar valendo
+      // durante o arrasto: quem puxa o mapa e para com o cursor sobre um
+      // ciclone quer ler o ciclone, não esperar soltar o botão.
+      el.style.cursor = "crosshair";
+      if (this.hoverFn) {
+        const rr = el.getBoundingClientRect();
+        const dentro =
+          e.clientX >= rr.left && e.clientX <= rr.right &&
+          e.clientY >= rr.top && e.clientY <= rr.bottom;
+        this.hoverFn(
+          dentro
+            ? daTela(e.clientX - rr.left, e.clientY - rr.top, this.largura, this.altura, this.vista)
+            : null,
+        );
+      }
+
       if (!arrastando) return;
       const dx = e.clientX - px, dy = e.clientY - py;
       px = e.clientX; py = e.clientY;
@@ -623,6 +642,26 @@ export class MapEngine implements MotorGeo {
     };
     el.addEventListener("pointerup", soltar);
     el.addEventListener("pointercancel", () => { arrastando = false; });
+    el.addEventListener("pointerleave", () => {
+      this.hoverFn?.(null);
+      el.style.cursor = "";
+    });
+
+    // O MESMO SEGUNDO VERBO DO GLOBO. Uma interação que existe num motor e não
+    // no outro é pior que não existir em nenhum: a pessoa aprende o gesto e
+    // ele falha metade das vezes, sem explicação.
+    el.addEventListener("dblclick", (e) => {
+      const r = el.getBoundingClientRect();
+      const g = daTela(e.clientX - r.left, e.clientY - r.top, this.largura, this.altura, this.vista);
+      // NÃO passa por `flyTo`: aquele método recebe altitude em RAIOS de globo
+      // e a multiplica por 17,5 para virar graus. Mandar graus para ele daria
+      // um salto de 17 vezes o pretendido — o mapa pularia para o hemisfério
+      // inteiro a cada duplo clique.
+      this.vista.lat = g.lat;
+      this.vista.lng = enrolarLng(g.lng);
+      this.vista.alturaGraus = Math.max(2, this.vista.alturaGraus * 0.5);
+      this.ajustarCamera();
+    });
 
     el.addEventListener("wheel", (e) => {
       e.preventDefault();
@@ -1361,6 +1400,27 @@ export class MapEngine implements MotorGeo {
   // ----------------------------------------------------------------- avulsos
 
   onClick(fn: (lat: number, lng: number) => void) { this.clickFn = fn; }
+  onHover(fn: (p: { lat: number; lng: number } | null) => void) { this.hoverFn = fn; }
+
+  /**
+   * No plano não existe "do outro lado do planeta": todo ponto é projetável.
+   * `visivel` aqui responde a outra pergunta — se o pixel caiu DENTRO da
+   * viewport — porque quem consome não deve precisar saber qual motor está
+   * ativo para decidir se desenha.
+   */
+  projetar(lat: number, lng: number) {
+    // Motor morto não projeta. Entre o `dispose` e o motor novo alcançar o
+    // React há uma fresta de um quadro em que o laço do cartão ainda pergunta
+    // a este objeto — e `largura`/`altura` sobrevivem ao dispose, então sem
+    // esta linha ele responderia com a projeção de um mapa que não existe
+    // mais. O GlobeEngine já testa `disposed`; aqui faltava.
+    if (this.disposed || this.largura <= 0 || this.altura <= 0) return null;
+    const s = naTela(lat, lng, this.largura, this.altura, this.vista);
+    return {
+      x: s.x, y: s.y,
+      visivel: s.x >= 0 && s.x <= this.largura && s.y >= 0 && s.y <= this.altura,
+    };
+  }
   onNotice(fn: (msg: string | null) => void) { this.noticeFn = fn; }
   onStats(fn: (s: FrameStats) => void) { this.statsFn = fn; }
 

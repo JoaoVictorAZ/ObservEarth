@@ -39,6 +39,23 @@ export const PROVIDERS = {
     share: 0.25,          // -> 1.250
     note: "Sem chave. Usado para radiacao e series climatologicas.",
   },
+  inmet: {
+    label: "INMET Alert-AS",
+    free: 8640,           // sem teto publicado; teto proprio de 1 chamada/10s
+    share: 0.25,          // -> 2.160/dia
+    note:
+      "Sem chave. Feed RSS de avisos meteorologicos. O canal declara dominio " +
+      "publico com reproducao permitida mediante citacao da fonte. Cache de " +
+      "10 min: aviso e a unica camada em que estar velho e problema de seguranca.",
+  },
+  "noaa-cpc": {
+    label: "NOAA Climate Prediction Center",
+    free: 2000,           // sem teto publicado; teto conservador proprio
+    share: 0.25,          // -> 500/dia
+    note:
+      "Sem chave. Arquivo de texto do indice ONI, atualizado uma vez por mes. " +
+      "Cache de 6 h reduz o consumo real a algumas chamadas por dia.",
+  },
 };
 
 import { loadUsage, saveUsage } from "./store.js";

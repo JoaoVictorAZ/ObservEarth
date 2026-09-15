@@ -10,11 +10,17 @@ import { buildField, fieldCatalog } from "./fields.js";
 import { buildCampo } from "./campo.js";
 import { buildIsobars } from "./isobars.js";
 import { buscarSerie } from "./timeseries.js";
+import { buscarClimatologia, baixarArquivo } from "./climatologia.js";
+import { buscarDia } from "./hoje.js";
+import { montarEnvelope } from "./envelope.js";
+import { buscarAvisos } from "./avisos.js";
+import { buscarONI } from "./oni.js";
 import { buscarSondagem } from "./sounding.js";
 import { compararModelos } from "./compare.js";
 import { buscarCorrentes, CORRENTES_SCHEMA } from "./currents.js";
 import { escolherFonte, caminhoDe, VARIAVEIS, beaufort, avisoDeVento } from "./arquivo.js";
 import { registerGeoRoutes, placeAt } from "./geo.js";
+import { registrarRotasEstacoes } from "./estacoes.js";
 import { construirTile as construirFronteiras } from "./fronteiras.js";
 import { describeModelLayer, sortModelLayers } from "./modelNames.js";
 import { parseCapabilities, snapTime, coverageOf } from "./gibsTime.js";
@@ -538,6 +544,11 @@ app.get("/api/isobars", async (req, res) => {
 // ======================================================================
 registerGeoRoutes(app);
 
+// ESTAÇÕES DO INMET — a primeira camada de MEDIÇÃO do aplicativo.
+// Vem de `pipeline/exportar_estacoes.py`, que lê os CSVs já baixados. Não
+// depende de Spark nem de nuvem; ver server/estacoes.js.
+registrarRotasEstacoes(app);
+
 app.get("/api/fronteiras/:z/:y/:x", async (req, res) => {
   const bbox = bboxDoTile(req.params.z, req.params.y, req.params.x);
   if (!bbox) {
@@ -745,6 +756,94 @@ app.get("/api/analysis/timeseries", async (req, res) => {
   } catch (e) {
     // Erro é ERRO. A versão anterior respondia 200 com série inventada.
     res.status(e.status ?? 502).json({ ok: false, error: e.message, code: e.code });
+  }
+});
+
+// A NORMAL DO PONTO — a referência que faltava para os números significarem algo.
+//
+// Trinta anos de série diária são UMA requisição, porque a Open-Meteo cobra por
+// localização e não por volume, e 1991–2020 é um período fechado que não muda
+// mais. Por isso o cache interno de `buscarClimatologia` é de um ano e a chave é
+// arredondada para a grade de 0,25°: cliques no mesmo bairro não custam nada.
+app.get("/api/climatologia", async (req, res) => {
+  const lat = Number(req.query.lat), lng = Number(req.query.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ ok: false, error: "lat e lng obrigatórios" });
+  }
+  const data = String(req.query.date ?? new Date().toISOString().slice(0, 10));
+  const puxar = (u) => metered("open-meteo", 1, () => fetch(u));
+  try {
+    // As duas metades da comparação, em paralelo: são serviços diferentes com
+    // tempos de vida de cache diferentes, e nenhuma depende da outra.
+    const [normais, hoje] = await Promise.all([
+      buscarClimatologia(puxar, lat, lng, data, cached),
+      // O agregado de hoje pode faltar — ponto fora da cobertura, data fora da
+      // janela da previsão — e isso NÃO invalida a normal. A tela sabe mostrar
+      // a distribuição histórica sozinha; o que ela não pode é receber um
+      // valor de hoje inventado para ter o que comparar.
+      buscarDia(puxar, lat, lng, data, cached).catch(() => null),
+    ]);
+    res.json({ ok: true, ...normais, hoje });
+  } catch (e) {
+    // Sem normal é melhor que normal inventada: a sonda sabe desenhar
+    // "sem referência histórica" e não sabe desfazer um percentil falso.
+    res.status(e.status ?? 502).json({ ok: false, error: e.message });
+  }
+});
+
+// O ENVELOPE DO ANO — o fundo do gráfico de série histórica.
+//
+// Zero requisição: `baixarArquivo` compartilha a chave de cache com a sonda, e
+// o envelope é aritmética sobre um arquivo que já está em disco. Por isso ele
+// não passa pelo medidor de orçamento quando o cache está quente — e quando
+// não está, quem paga é o download, que é o mesmo de sempre.
+app.get("/api/analysis/clima", async (req, res) => {
+  const lat = Number(req.query.lat), lng = Number(req.query.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ ok: false, error: "lat e lng obrigatórios" });
+  }
+  try {
+    const diario = await baixarArquivo(
+      (u) => metered("open-meteo", 1, () => fetch(u)), lat, lng, cached,
+    );
+    // O envelope em si é recacheado à parte: são 61 ms de CPU e ~60 kB de JSON,
+    // e o pedido se repete a cada troca de janela na aba de série.
+    const out = await cached(`envelope:${(Math.round(lat * 4) / 4).toFixed(2)}:${(Math.round(lng * 4) / 4).toFixed(2)}`,
+      365 * 24 * HOUR, async () => montarEnvelope(diario));
+    res.json({ ok: true, ...out });
+  } catch (e) {
+    res.status(e.status ?? 502).json({ ok: false, error: e.message });
+  }
+});
+
+// ======================================================================
+// 7.1 CONTEXTO E CONSEQUÊNCIA
+// ======================================================================
+
+// AVISOS DO INMET — a primeira camada do app que não mostra medida, e sim
+// consequência declarada por autoridade. Ver server/avisos.js: o feed NÃO
+// publica geometria, só nomes de mesorregião, e por isso a v1 é lista.
+app.get("/api/avisos", async (req, res) => {
+  try {
+    const out = await buscarAvisos((u) => metered("inmet", 1, () => fetch(u)), cached);
+    res.json({ ok: true, ...out });
+  } catch (e) {
+    // Aviso é a única camada em que estar desatualizado é problema de
+    // segurança e não de estética: falha é falha, e a tela mostra a falha.
+    res.status(e.status ?? 502).json({ ok: false, error: e.message });
+  }
+});
+
+// ONI — o contexto que faz "percentil 92" significar alguma coisa.
+app.get("/api/oni", async (req, res) => {
+  try {
+    const out = await buscarONI((u) => metered("noaa-cpc", 1, () => fetch(u)), cached);
+    // A série inteira são ~900 trimestres desde 1950; a tela quase sempre quer
+    // só o presente. `serie=1` pede o histórico completo.
+    const completo = String(req.query.serie ?? "") === "1";
+    res.json({ ok: true, ...out, serie: completo ? out.serie : out.serie.slice(-24) });
+  } catch (e) {
+    res.status(e.status ?? 502).json({ ok: false, error: e.message });
   }
 });
 

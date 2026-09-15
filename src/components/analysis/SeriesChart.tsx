@@ -1,5 +1,21 @@
+// src/components/analysis/SeriesChart.tsx
+// -----------------------------------------------------------------------------
+// A LINHA, E O QUE ERA ESPERADO ATRÁS DELA
+// -----------------------------------------------------------------------------
+// Este gráfico desenhava uma linha solta. Uma linha de temperatura sobe no verão
+// e desce no inverno, e é isso que ela mostra — a estação do ano. Nada nela
+// distingue um ano quente de um ano comum.
+//
+// Agora a faixa de 1991–2020 (percentil 10 a 90, por dia do ano, neste ponto)
+// fica desenhada atrás, e a leitura muda de "quanto fez" para "quantos dias
+// saíram do que este lugar costuma fazer nesta época". A legenda traz a
+// contagem, porque o olho não conta dias num gráfico de 720 px — e traz junto
+// quantos seriam esperados, senão o número não significa nada.
+// -----------------------------------------------------------------------------
+
 import React, { useId, useMemo } from "react";
 import { pontos, envelope, extremos, trechos, escala, marcas, type Ponto } from "../../analysis/series";
+import { alinhar, contar, frase, type EnvelopeVar } from "../../analysis/normalSerie.ts";
 
 const L = 52;    // canaleta do eixo vertical
 const R = 8;
@@ -16,6 +32,8 @@ interface Props {
   casas?: number;
   /** vão além do qual dois pontos deixam de ser vizinhos (ms) */
   vaoMax?: number;
+  /** a faixa histórica deste ponto; ausente, o gráfico volta a ser só a linha */
+  normal?: EnvelopeVar | null;
 }
 
 const dataCurta = (ms: number) =>
@@ -24,7 +42,7 @@ const dataCurta = (ms: number) =>
 const dataLonga = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
 export const SeriesChart: React.FC<Props> = ({
-  tempo, valores, rotulo, unidade, casas = 1, vaoMax = 2 * 86400e3,
+  tempo, valores, rotulo, unidade, casas = 1, vaoMax = 2 * 86400e3, normal = null,
 }) => {
   // `useId` em vez de um id derivado da cor. O anterior gerava
   // `id="grad-#32d6a5"`, referenciado como `url(#grad-#32d6a5)` — o `#` no meio
@@ -37,8 +55,25 @@ export const SeriesChart: React.FC<Props> = ({
     const ext = extremos(ps);
     if (!cols.length || !ext) return null;
 
-    const lo0 = Math.min(...cols.map((c) => c.min));
-    const hi0 = Math.max(...cols.map((c) => c.max));
+    // A faixa histórica alinhada com AS MESMAS datas da série. A contagem é
+    // feita sobre os dias, não sobre as colunas de pixel: uma coluna pode
+    // conter dez dias, e contar colunas responderia a uma pergunta sobre a
+    // largura da tela em vez de uma sobre o clima.
+    const faixaDias = alinhar(tempo, normal);
+    const cont = contar(valores, faixaDias);
+    const porDia = new Map(faixaDias.map((f) => [f.t, f]));
+    const nrm = normal
+      ? cols.map((c) => porDia.get(c.t) ?? { t: c.t, p10: null, p50: null, p90: null })
+      : [];
+
+    // A escala precisa CABER a faixa, senão um ano ameno desenharia a linha no
+    // meio e a normal cortada pela borda — e o corte pareceria dado.
+    const limites = [
+      ...cols.map((c) => c.min), ...cols.map((c) => c.max),
+      ...nrm.flatMap((p) => [p.p10, p.p90]).filter((v): v is number => v != null),
+    ];
+    const lo0 = Math.min(...limites);
+    const hi0 = Math.max(...limites);
     const esc = escala(lo0, hi0);
     const t0 = cols[0].t, t1 = cols[cols.length - 1].t;
     const spanT = Math.max(1, t1 - t0);
@@ -59,14 +94,27 @@ export const SeriesChart: React.FC<Props> = ({
       return `M ${ida} L ${volta} Z`;
     }) : [];
 
+    // A faixa histórica como área fechada, e a mediana como linha fina. Só onde
+    // os dois percentis existem: um trecho sem normal tem que ficar VAZIO, e
+    // não interpolado até o próximo dia com dado.
+    const bons = nrm.filter((p) => p.p10 != null && p.p90 != null);
+    const areaNormal = bons.length >= 2
+      ? `M ${bons.map((p) => `${x(p.t).toFixed(2)},${y(p.p90 as number).toFixed(2)}`).join(" L ")}` +
+        ` L ${[...bons].reverse().map((p) => `${x(p.t).toFixed(2)},${y(p.p10 as number).toFixed(2)}`).join(" L ")} Z`
+      : null;
+    const medianaNormal = bons.length >= 2
+      ? bons.map((p, i) => `${i ? "L" : "M"} ${x(p.t).toFixed(2)},${y(p.p50 ?? p.p10 as number).toFixed(2)}`).join(" ")
+      : null;
+
     return {
       cols, ext, esc, x, y, linha, faixa, reduziu,
+      areaNormal, medianaNormal, cont,
       nObs: ps.filter((p) => p.v != null).length,
       nFalt: ps.length - ps.filter((p) => p.v != null).length,
       buracos: partes.length - 1,
       t0, t1,
     };
-  }, [tempo, valores, vaoMax]);
+  }, [tempo, valores, vaoMax, normal]);
 
   const f = (v: number) => v.toFixed(casas);
 
@@ -79,8 +127,10 @@ export const SeriesChart: React.FC<Props> = ({
     );
   }
 
-  const { ext, esc, x, y, linha, faixa, reduziu, nObs, nFalt, buracos, t0, t1 } = calc;
+  const { ext, esc, x, y, linha, faixa, reduziu, areaNormal, medianaNormal, cont,
+    nObs, nFalt, buracos, t0, t1 } = calc;
   const ticks = marcas(esc.lo, esc.hi, esc.passo);
+  const leituraNormal = frase(cont, rotulo);
 
   return (
     <figure className="grf">
@@ -119,6 +169,10 @@ export const SeriesChart: React.FC<Props> = ({
           </g>
         ))}
 
+        {/* A NORMAL VEM PRIMEIRO: é fundo, e tem que ficar atrás da observação. */}
+        {areaNormal && <path className="grf-normal" d={areaNormal} />}
+        {medianaNormal && <path className="grf-normal-med" d={medianaNormal} />}
+
         {faixa.map((d, i) => <path key={`f${i}`} className="grf-faixa" d={d} fill={`url(#g${uid})`} />)}
         {linha.map((d, i) => <path key={`l${i}`} className="grf-linha" d={d} />)}
 
@@ -139,7 +193,24 @@ export const SeriesChart: React.FC<Props> = ({
             {buracos} interrupç{buracos > 1 ? "ões" : "ão"}
           </span>
         )}
+        {areaNormal && (
+          <span className="grf-leg-normal" title="Percentil 10 a 90 de 1991–2020, por dia do ano, neste ponto">
+            faixa = normal 1991–2020
+          </span>
+        )}
       </div>
+
+      {/* O olho não conta dias num gráfico de 720 px. A contagem é a leitura. */}
+      {leituraNormal && (
+        <p className="grf-leitura">
+          {leituraNormal}
+          {cont.recorde && (
+            <> Maior desvio: <strong>{f(cont.recorde.valor)} {unidade}</strong> em{" "}
+              {dataLonga(cont.recorde.t)}, {f(cont.recorde.margem)} {unidade}{" "}
+              {cont.recorde.lado === "acima" ? "acima do p90" : "abaixo do p10"}.</>
+          )}
+        </p>
+      )}
     </figure>
   );
 };

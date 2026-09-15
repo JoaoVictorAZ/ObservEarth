@@ -139,4 +139,15 @@ ok("a folga sobre a esfera existe, e é o que impede a cintilação", () => {
   assert.ok(RAIO * 1.0025 - RAIO > 0.2, "a folga sumiu");
 });
 
+// O limbo é uma esfera MAIOR que o planeta, desenhada pelas faces de trás. Se
+// ele subisse na pilha, deixaria de ser um anel ao redor do disco e viraria um
+// véu azul sobre a Terra inteira.
+ok("o limbo da atmosfera fica ATRÁS de todas as cascas", () => {
+  assert.ok(ORDEM.ATMOSFERA < ORDEM.BASE, "a atmosfera taparia o planeta");
+  for (const [k, v] of Object.entries(ORDEM)) {
+    if (k === "ATMOSFERA") continue;
+    assert.ok(ORDEM.ATMOSFERA < v, "atmosfera na frente de " + k);
+  }
+});
+
 console.log(`\n  ${n} verificações da ordem de desenho\n`);

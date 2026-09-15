@@ -245,7 +245,21 @@ const DRAW_FRAG = /* glsl */ `
     vec3 col = ramp(vSpeed);
     col += vec3(0.6, 0.7, 0.85) * core * 0.45;
 
-    gl_FragColor = vec4(col, a * fade * 0.88);
+    // PESO POR VELOCIDADE. Todas as partículas tinham a mesma opacidade, e a
+    // corrente de jato ficava com o mesmo brilho de uma brisa — a diferença só
+    // aparecia na cor. Com o peso, as estruturas saltam do fundo.
+    //
+    // O piso não é zero de propósito: calmaria é informação. A zona de
+    // convergência intertropical, o olho de um ciclone e a sombra de vento de
+    // uma serra são todos ausência de vento, e sumiriam.
+    //
+    // A mesma curva está em ./globo/vento.ts, com teste.
+    float peso = 0.35 + 0.65 * smoothstep(0.05, 0.55, vSpeed);
+
+    // 0,78 e não 0,95: com a trilha mais curta a densidade caiu, mas a
+    // opacidade individual ainda lavava a superfície. O vento é uma camada
+    // SOBRE o planeta, e camada que apaga o que está embaixo não é camada.
+    gl_FragColor = vec4(col, a * fade * peso * 0.78);
   }
 `;
 
@@ -286,8 +300,24 @@ export class WindGPU {
 
   /** graus por segundo por m/s — movimento fluido natural */
   speed = 0.12;
-  /** Decaimento suave de rastro nítido curvilíneo */
-  fade = 0.985;
+  /**
+   * Decaimento do rastro por quadro.
+   *
+   * CORRIGIDO DEPOIS DE VER NA TELA. Eu tinha subido para 0,992 raciocinando
+   * sobre comprimento de rastro — 573 quadros contra 305 — e a conta estava
+   * certa. O resultado, não: com 40 mil partículas deixando rastro de 573
+   * quadros, as trilhas se fecham num TAPETE contínuo. O planeta desaparece
+   * debaixo do próprio campo de vento, e um campo de vento que esconde a Terra
+   * deixou de ser uma camada e virou um fundo.
+   *
+   * 0,986 dá ~327 quadros: longo o bastante para o olho ler a CURVA — que é
+   * onde estão o vórtice e a cisalhadura — e curto o bastante para sobrar
+   * intervalo entre as trilhas.
+   *
+   * A lição, que já é a terceira neste projeto: a conta responde "quanto", e
+   * só a tela responde "quanto é demais".
+   */
+  fade = 0.986;
 
   constructor(renderer: THREE.WebGLRenderer, particles = 131072) {
     if (!renderer) throw new Error("[windGPU] renderer é obrigatório");

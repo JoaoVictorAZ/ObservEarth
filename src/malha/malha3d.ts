@@ -36,7 +36,7 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from "three";
-import { type CampoEscalar, latDaLinha, lngDaColuna, medido } from "./campo.ts";
+import { type CampoEscalar, latDaLinha, lngDaColuna, medido, amostrar } from "./campo.ts";
 import { type Parada, type ModoRampa, corDoValor, sRGBparaLinear } from "./rampa.ts";
 import type { PontoCritico } from "./extremos.ts";
 import { ORDEM } from "../ordemDesenho.ts";
@@ -120,6 +120,10 @@ export class MalhaEscalar {
   private nx = 0;
   private ny = 0;
   private descartada = false;
+  /** onde a MEDIANA do campo cai na escala, 0 a 1; null sem campo */
+  private datum01: number | null = null;
+  /** a casca de referência no nível do datum */
+  private aro: THREE.LineSegments | null = null;
   // Campo comum, e não parâmetro-propriedade do construtor. `private cena:` na
   // assinatura é açúcar do TypeScript que o modo "strip-only" do Node recusa —
   // e com ele este arquivo não podia ser carregado por um teste, que é
@@ -134,10 +138,25 @@ export class MalhaEscalar {
     this.mat = new THREE.ShaderMaterial({
       vertexShader: VERT,
       fragmentShader: FRAG,
-      uniforms: { uOpacity: { value: opc.opacidade ?? 0.92 } },
+      uniforms: { uOpacity: { value: opc.opacidade ?? 1 } },
       vertexColors: true,
-      transparent: (opc.opacidade ?? 0.92) < 1,
-      side: THREE.DoubleSide,   // a malha é vazada: o outro lado precisa existir
+      // OPACA POR PADRÃO, e é uma decisão de leitura e não de estilo.
+      //
+      // Com 0,92 dava para ver a superfície da Terra ATRAVÉS do relevo, e as
+      // duas se somavam num borrão em que nenhuma das duas era legível — foi
+      // exatamente a queixa: "continuo vendo a camada da terra lá embaixo".
+      // Superfície de análise é superfície: ela tapa o que está atrás dela, e
+      // é assim que o olho lê profundidade.
+      transparent: (opc.opacidade ?? 1) < 1,
+      depthWrite: true,
+      // FrontSide, e não DoubleSide.
+      //
+      // Com DoubleSide e opacidade 0,92 dava para ver o AVESSO da malha através
+      // dela mesma: o lado de trás do planeta aparecia por dentro do relevo, e
+      // orbitar virava um exercício de separar o que está na frente do que está
+      // atrás. Uma superfície levantada sobre a esfera é vista por cima; o
+      // outro lado é interior de casca, e interior de casca não é dado.
+      side: THREE.FrontSide,
     });
 
     this.matArame = new THREE.MeshBasicMaterial({
@@ -177,7 +196,87 @@ export class MalhaEscalar {
       this.nx = campo.nx; this.ny = campo.ny;
       this.montarGeometria();
     }
+    this.datum01 = this.medirDatum(campo, escala);
     this.reescrever();
+    this.atualizarAro();
+  }
+
+  /**
+   * ONDE FICA O NÍVEL DE REFERÊNCIA DO CAMPO.
+   *
+   * O relevo já levantava valores altos e deixava valores baixos rentes à
+   * esfera — geometricamente correto e visualmente mudo. Uma depressão só é
+   * lida como depressão se houver uma SUPERFÍCIE DE REFERÊNCIA acima dela; sem
+   * o nível, um vale é apenas um trecho menos alto, e foi exatamente essa a
+   * queixa: "não vejo a depressão".
+   *
+   * O nível é a MEDIANA do campo, e não o meio da escala de cor. As escalas
+   * são recortes generosos — a de pressão vai de 940 a 1050 hPa, e o meio dela
+   * é 995, um valor que quase não ocorre. A mediana real fica perto de 1013, e
+   * é ela que separa "alta" de "baixa" para quem lê carta sinótica.
+   *
+   * Medida por AMOSTRAGEM: uma grade de 0,25° tem mais de um milhão de
+   * células, e ordenar tudo a cada troca de hora custaria mais do que vale
+   * saber a mediana com três casas. O passo é primo em relação a nx para a
+   * amostra não cair sempre na mesma coluna e virar um perfil de meridiano.
+   */
+  private medirDatum(campo: CampoEscalar, escala: Escala): number | null {
+    const total = campo.nx * campo.ny;
+    const passo = Math.max(1, Math.floor(total / 20000) * 2 + 1);
+    const amostra: number[] = [];
+    for (let k = 0; k < total; k += passo) {
+      if (medido(campo, k)) amostra.push(campo.valores[k]);
+    }
+    if (amostra.length < 8) return null;
+    amostra.sort((a, b) => a - b);
+    const mediana = amostra[Math.floor(amostra.length / 2)];
+
+    const faixa = escala.hi - escala.lo;
+    if (!(Math.abs(faixa) > 0)) return null;
+    return Math.max(0, Math.min(1, (mediana - escala.lo) / faixa));
+  }
+
+  /**
+   * A casca de referência: um gradeado fino no raio do datum.
+   *
+   * É o equivalente da linha d'água numa carta batimétrica. Sem ela o olho não
+   * tem contra o que comparar; com ela, o que fura para fora é alta e o que
+   * fica por dentro é baixa, e isso se lê sem legenda.
+   *
+   * Gradeado e não superfície: uma casca opaca esconderia metade da malha, e
+   * uma translúcida somaria mais uma camada ao problema que ela existe para
+   * resolver. Linha não tapa nada.
+   */
+  private atualizarAro() {
+    if (this.descartada) return;
+    const t = this.datum01;
+
+    if (t == null) {
+      if (this.aro) { this.aro.visible = false; }
+      return;
+    }
+
+    if (!this.aro) {
+      const base = new THREE.SphereGeometry(1, 32, 16);
+      const fio = new THREE.WireframeGeometry(base);
+      base.dispose();
+      this.aro = new THREE.LineSegments(
+        fio,
+        new THREE.LineBasicMaterial({
+          color: 0xdfe8f5, transparent: true, opacity: 0.13, depthWrite: false,
+        }),
+      );
+      this.aro.renderOrder = ORDEM.MALHA;
+      this.aro.frustumCulled = false;
+      this.grupo.add(this.aro);
+    }
+
+    // Escalar em vez de refazer a geometria: o controle de relevo é um
+    // deslizante, e reconstruir 1.500 segmentos a cada pixel arrastado seria
+    // trabalho jogado fora a 60 Hz.
+    const r = this.raio * (1 + t * this.exagero);
+    this.aro.scale.setScalar(r);
+    this.aro.visible = true;
   }
 
   /**
@@ -268,7 +367,19 @@ export class MalhaEscalar {
         const c = (j + 1) * nx + i1, d = (j + 1) * nx + i;
         if (!medido(campo, a) || !medido(campo, b) ||
             !medido(campo, c) || !medido(campo, d)) continue;
-        idx.push(a, b, c, a, c, d);
+        // ORDEM a,c,b — e ela é o defeito que me custou uma versão inteira.
+        //
+        // Com a,b,c a normal do triângulo aponta para DENTRO do planeta
+        // (medido: normal · posição < 0). Enquanto o material era DoubleSide
+        // isso não aparecia — os dois lados desenhavam. Ao trocar para
+        // FrontSide, as faces do lado de cá foram descartadas e sobrou apenas
+        // a metade de trás, visível só no anel em volta do disco: a malha
+        // "aparecia de lado" e sumia no meio.
+        //
+        // Inverter o enrolamento põe a normal para fora, que é o que
+        // `computeVertexNormals` propaga e o que a iluminação do shader
+        // espera. `test/malha-geometria.mjs` mede isto.
+        idx.push(a, c, b, a, d, c);
       }
     }
     geo.setIndex(new THREE.BufferAttribute(new Uint32Array(idx), 1));
@@ -346,12 +457,45 @@ export class MalhaEscalar {
   }
 
   /** Reaplica a altura sem refazer cor nem índice — é o que o controle arrasta. */
+  /**
+   * A ALTURA NORMALIZADA numa direção — o que o clique precisa saber.
+   *
+   * Devolve exatamente o que o vértice usa: o valor do campo trazido para 0..1
+   * pela mesma escala. Assim a superfície que o raio encontra é a MESMA que
+   * está desenhada, e não uma reconstrução parecida.
+   *
+   * `null` onde a fonte não mediu. Ausência não é zero, e aqui a diferença é
+   * visível: com zero haveria um chão invisível no nível da esfera e o clique
+   * pousaria onde não há malha nenhuma.
+   */
+  alturaEm(lat: number, lng: number): number | null {
+    const campo = this.campo, escala = this.escala;
+    if (!campo || !escala) return null;
+    const v = amostrar(campo, lat, lng);
+    if (v == null) return null;
+    const faixa = escala.hi - escala.lo;
+    if (!(Math.abs(faixa) > 0)) return 0;
+    return Math.max(0, Math.min(1, (v - escala.lo) / faixa));
+  }
+
+  /** O exagero em vigor, para quem precisa reconstruir a casca. */
+  get exageroAtual() { return this.exagero; }
+
   definirExagero(x: number) {
     this.exagero = Math.max(0, Math.min(0.5, x));
     this.reescrever();
+    // O nível de referência sobe junto: ele é uma altura do MESMO relevo, e
+    // deixá-lo parado enquanto a malha estica faria a linha d'água mentir.
+    this.atualizarAro();
   }
 
   private descartarGeometria() {
+    if (this.aro) {
+      this.grupo.remove(this.aro);
+      this.aro.geometry.dispose();
+      (this.aro.material as THREE.Material).dispose();
+      this.aro = null;
+    }
     if (this.mesh) { this.grupo.remove(this.mesh); this.mesh = null; }
     if (this.arame) { this.grupo.remove(this.arame); this.arame = null; }
     this.geo?.dispose();
