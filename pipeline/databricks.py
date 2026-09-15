@@ -121,12 +121,34 @@ def silver_de_binarios(spark, caminho: str):
             dados = gzip.decompress(dados)
         return dados.decode("latin-1", errors="replace")
 
+    # OS NOMES SAEM AQUI, NO DRIVER, E VIAJAM COMO LISTA DE STRINGS.
+    #
+    # A versão anterior chamava `esquema_fato()` DENTRO da UDF, uma vez por
+    # arquivo. Isso obriga o worker a resolver `esquema_fato` como global do
+    # módulo `databricks` — ou seja, a fazer `import databricks` lá.
+    #
+    # E esse nome COLIDE com o pacote `databricks` do SDK, que existe no
+    # ambiente. No driver o nosso arquivo ganha porque o notebook fez
+    # `sys.path.insert(0, .../pipeline)`; no worker o sys.path é outro, o
+    # import cai no SDK, e o SDK não tem `esquema_fato`.
+    #
+    # A `dim_do_arquivo` nunca teve o problema porque já capturava `dim_t`
+    # calculado no driver. Era assimetria entre duas funções irmãs — e o efeito
+    # foi a dimensão sair perfeita (616 estações) e o fato estourar, que é
+    # justamente o par de sintomas que não sugere "caminho de import".
+    #
+    # Uma lista de strings é dado puro: o cloudpickle a serializa por valor e
+    # nada precisa ser importado do outro lado. De brinde, para de reconstruir
+    # o StructType 7.955 vezes.
+    campos_fato = [c.name for c in fato_t.elementType.fields]
+    campos_dim = [c.name for c in dim_t.fields]
+
     @F.udf(returnType=fato_t)
     def fatos_do_arquivo(caminho, dados):
         if dados is None:
             return []
         _, fatos = ler_estacao(os.path.basename(caminho), _texto(bytes(dados)))
-        return [tuple(f[c.name] for c in esquema_fato()) for f in fatos]
+        return [tuple(f[c] for c in campos_fato) for f in fatos]
 
     @F.udf(returnType=dim_t)
     def dim_do_arquivo(caminho, dados):
@@ -135,7 +157,7 @@ def silver_de_binarios(spark, caminho: str):
         # Só os primeiros 4 kB: o bloco de metadados são 8 linhas. Decodificar
         # 800 kB para ler 8 linhas seria pagar o arquivo inteiro duas vezes.
         est, _ = ler_estacao(os.path.basename(caminho), _texto(bytes(dados))[:4096])
-        return None if est is None else tuple(est[c.name] for c in dim_t)
+        return None if est is None else tuple(est[c] for c in campos_dim)
 
     # `recursiveFileLookup` NÃO É OPCIONAL AQUI, e a falta dele é silenciosa.
     #
