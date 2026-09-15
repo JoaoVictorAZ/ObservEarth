@@ -238,5 +238,54 @@ ok("cabecalho sem a coluna de temperatura e' recusado", lambda: (_ for _ in ()).
     if ler_estacao("x.CSV", CSV.replace("TEMPERATURA DO AR - BULBO SECO, HORARIA (°C)", "OUTRA COISA"))[0] is not None
     else None)
 
+print("\no formato de 2012, que e' outro")
+
+# MEDIDO EM 15/09/2026 no Volume do Databricks, sobre
+# INMET_NE_RN_A302_ARQ.SAO PEDRO E SAO PAULO_01-01-2012_A_31-12-2012.CSV.
+#
+# O fixture de cima veio de 2024. Estes metadados sao de 2012 e diferem em tres
+# pontos, e o terceiro passou despercebido por semanas:
+#
+#   1. acentuacao        REGIÃO / ESTAÇÃO      (`normalizar` ja resolvia)
+#   2. data ISO          2003-11-02            (`fundacao_de` ja resolvia)
+#   3. SUFIXO NA CHAVE   `DATA DE FUNDAÇÃO (YYYY-MM-DD):`  <- este nao
+#
+# A busca no bloco de metadados era por IGUALDADE, entao a chave nao casava e
+# `fundacao` saia None para todos os arquivos daqueles anos. Sem erro nenhum.
+META_2012 = "\n".join([
+    "REGIÃO:;NE", "UF:;RN", "ESTAÇÃO:;ARQ.SAO PEDRO E SAO PAULO",
+    "CODIGO (WMO):;A302", "LATITUDE:;,9", "LONGITUDE:;-29,31666666",
+    "ALTITUDE:;15", "DATA DE FUNDAÇÃO (YYYY-MM-DD):;2003-11-02",
+])
+CSV_2012 = META_2012 + "\n" + CABECALHO + "\n" + "\n".join(linhas_dia) + "\n"
+est12, fatos12 = ler_estacao("INMET_NE_RN_A302_x_2012.CSV", CSV_2012)
+
+ok("o arquivo de 2012 e' aceito", lambda: (_ for _ in ()).throw(
+    AssertionError("recusado")) if est12 is None else None)
+
+ok("a fundacao sai preenchida mesmo com a chave sufixada",
+   lambda: (_ for _ in ()).throw(AssertionError(
+       f"deu {est12['fundacao']!r}; None significa que a chave nao casou"))
+   if est12["fundacao"] != date(2003, 11, 2) else None)
+
+ok("LATITUDE `,9` sem zero a esquerda vira 0,9 e nao None",
+   lambda: (_ for _ in ()).throw(AssertionError(str(est12["lat"])))
+   if est12["lat"] != 0.9 else None)
+
+# -9999 aparece em 2012 e NAO aparece em 2024. Um sentinela que escape entra na
+# media e no percentil sem levantar erro e desloca a distribuicao inteira.
+CSV_SENT = META_2012 + "\n" + CABECALHO + "\n" + "\n".join(
+    linha("2012/01/01", h, -9999, -9999, -9999, -9999, -9999, -9999) for h in range(24)) + "\n"
+_, fatos_sent = ler_estacao("x.CSV", CSV_SENT)
+
+ok("um dia inteiro de -9999 nao vira medida: agregados null, horas_validas 0",
+   lambda: [
+       (_ for _ in ()).throw(AssertionError(f"horas={fatos_sent[0]['horas_validas']}"))
+       if fatos_sent[0]["horas_validas"] != 0 else None,
+       *[(_ for _ in ()).throw(AssertionError(f"{c} = {fatos_sent[0][c]}"))
+         for c in ("temperature_2m_max", "temperature_2m_mean", "wind_speed_10m_max")
+         if fatos_sent[0][c] is not None],
+   ])
+
 print(f"\n  {mal} FALHA(S)\n" if mal else f"\n  {n} verificacoes\n")
 sys.exit(1 if mal else 0)

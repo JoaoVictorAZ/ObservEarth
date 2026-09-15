@@ -153,6 +153,33 @@ def fundacao_de(s: str) -> date | None:
 
 REGIOES = {"N", "NE", "CO", "SE", "S"}
 
+
+def campo_meta(meta: dict[str, str], prefixo: str) -> str:
+    """Lê o bloco de metadados por PREFIXO, e não por igualdade.
+
+    ENCONTRADO EM 15/09/2026, na primeira execução sobre 2010–2015. A chave do
+    INMET muda de sufixo entre anos:
+
+        2020   `DATA DE FUNDACAO:;09/01/12`
+        2012   `DATA DE FUNDAÇÃO (YYYY-MM-DD):;2003-11-02`
+
+    A busca era por igualdade, então em 2012 a chave não casava e `fundacao`
+    saía `None` — para TODOS os arquivos daqueles anos. Sem erro, sem aviso: um
+    campo do contrato virando nulo por metade da série histórica, e a única
+    pista seria alguém reparar que estação antiga não tem data de fundação.
+
+    É o mesmo defeito que `normalizar` já resolvia para o CABEÇALHO das colunas
+    ("PRESSAO" e "PRESSÃO" convivem no mesmo arquivo) e que ninguém tinha
+    aplicado ao bloco de METADADOS. O parser estava meio protegido.
+    """
+    v = meta.get(prefixo)
+    if v is not None:
+        return v
+    for k, val in meta.items():
+        if k.startswith(prefixo):
+            return val
+    return ""
+
 # Como cada campo do contrato sai do CSV. A chave é o trecho normalizado que
 # identifica a coluna; a ordem importa porque o casamento é por prefixo.
 COLUNAS = {
@@ -192,20 +219,20 @@ def ler_estacao(nome_arquivo: str, texto: str) -> tuple[dict | None, list[dict]]
             k, _, v = l.partition(";")
             meta[normalizar(k).rstrip(":")] = v.strip()
 
-    estacao_id = meta.get("CODIGO (WMO)", "").strip()
+    estacao_id = campo_meta(meta, "CODIGO (WMO)").strip()
     if not re.fullmatch(r"[A-Z]\d{3}", estacao_id):
         return None, []
 
-    regiao = meta.get("REGIAO", "").strip().upper()
+    regiao = campo_meta(meta, "REGIAO").strip().upper()
     estacao = {
         "estacao_id": estacao_id,
-        "nome": meta.get("ESTACAO", "").strip(),
-        "uf": meta.get("UF", "").strip().upper()[:2],
+        "nome": campo_meta(meta, "ESTACAO").strip(),
+        "uf": campo_meta(meta, "UF").strip().upper()[:2],
         "regiao": regiao if regiao in REGIOES else None,
-        "lat": numero(meta.get("LATITUDE")),
-        "lng": numero(meta.get("LONGITUDE")),
-        "altitude_m": numero(meta.get("ALTITUDE")),
-        "fundacao": fundacao_de(meta.get("DATA DE FUNDACAO", "")),
+        "lat": numero(campo_meta(meta, "LATITUDE")),
+        "lng": numero(campo_meta(meta, "LONGITUDE")),
+        "altitude_m": numero(campo_meta(meta, "ALTITUDE")),
+        "fundacao": fundacao_de(campo_meta(meta, "DATA DE FUNDACAO")),
         # O ZIP baixado é o da rede automática. Fica declarado, não inferido.
         "rede": "automatica",
     }
