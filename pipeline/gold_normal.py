@@ -269,20 +269,59 @@ def procurar_jdks() -> list[tuple[str, int]]:
     return sorted(set(achados), key=lambda x: -x[1])
 
 
+def java_de(diretorio: str) -> str | None:
+    """O executável dentro de um JAVA_HOME, se ele realmente estiver lá."""
+    if not diretorio:
+        return None
+    exe = os.path.join(diretorio, "bin", "java.exe" if os.name == "nt" else "java")
+    return exe if os.path.exists(exe) else None
+
+
 def garantir_java() -> str | None:
-    """Aponta o JAVA_HOME para um JDK instalado, se ninguém apontou.
+    """Aponta o JAVA_HOME para um JDK instalado, se ninguém apontou — ou se
+    quem apontou, apontou para o vazio.
 
     `setx JAVA_HOME` só vale para janelas NOVAS, e `$env:JAVA_HOME` morre com a
     janela. O resultado prático é que o pipeline funciona num terminal e falha
     no seguinte, com uma mensagem que sugere que o Java sumiu do computador.
 
     Isto não substitui configurar a variável — substitui ter que lembrar dela.
+
+    -------------------------------------------------------------------------
+    E `JAVA_HOME` DEFINIDO NÃO É `JAVA_HOME` VÁLIDO.
+    -------------------------------------------------------------------------
+    A primeira versão desta função devolvia cedo assim que a variável existisse.
+    Se ela apontasse para um JDK desinstalado, para uma pasta renomeada por uma
+    atualização, ou tivesse uma barra a mais, nada aqui percebia — e o erro
+    aparecia lá na frente, vindo do `cmd`, em português, sem traceback:
+
+        O sistema não pode encontrar o caminho especificado.
+
+    Porque `spark-submit.cmd` monta `"%JAVA_HOME%\\bin\\java.exe"` e manda o
+    shell executar. Quem reclama é o `cmd`, não o Python — então não há pilha,
+    não há nome de arquivo, e a mensagem não contém a palavra "java".
+
+    Uma variável apontando para o vazio é PIOR que uma variável ausente: a
+    ausente a gente procura, a errada a gente acredita. Por isso agora a
+    checagem é a existência do executável, não a da variável.
     """
     import shutil
-    if os.environ.get("JAVA_HOME") or shutil.which("java"):
+    atual = os.environ.get("JAVA_HOME", "").strip().strip('"')
+    if atual:
+        if java_de(atual):
+            return None
+        print(f"  (JAVA_HOME aponta para {atual!r}, onde não há bin/java —"
+              " ignorando e procurando um JDK de verdade)")
+        os.environ.pop("JAVA_HOME", None)
+    elif shutil.which("java"):
         return None
     achados = procurar_jdks()
     if not achados:
+        # Dizer isto aqui, alto, custa uma linha e economiza a caçada ao
+        # "caminho especificado" que o cmd vai reclamar daqui a três segundos.
+        print("  NÃO ACHEI NENHUM JDK. O Spark precisa de Java 8, 11 ou 17.")
+        print("    winget install Microsoft.OpenJDK.17")
+        print("    (e abra um terminal NOVO depois — o PATH não volta sozinho)")
         return None
     # A linha 3.5 do PySpark aceita 8, 11 e 17; a 4 exige 17+. Preferir o mais
     # novo dentro de 17 serve às duas, e evita escolher um Java 21 que a 3.5
@@ -293,7 +332,54 @@ def garantir_java() -> str | None:
     return escolhido
 
 
+def conferir_par_python_pyspark() -> None:
+    """Recusa subir Spark num par Python × PySpark que não se entende.
+
+    A CHECAGEM EXISTIA E ESTAVA NO LUGAR ERRADO. Ela morava só em
+    `checar_ambiente.py` — um script que ninguém é obrigado a rodar. Então
+    `test_gold.py`, `silver_inmet.py` e `parear_era5.py` seguiam direto para a
+    parede, e a parede responde assim:
+
+        OSError: [WinError 10038] operação em algo que não é um soquete
+        org.apache.spark.SparkException: Python worker exited unexpectedly
+
+    Quarenta segundos de espera, duzentas linhas de pilha Scala, e nenhuma
+    menção a versão de Python em lugar nenhum. Parece falta de memória, parece
+    firewall, parece dado corrompido. É o soquete do worker sendo fechado de um
+    jeito que o Python novo não aceita.
+
+    Um guarda só protege o caminho em que ele está. Este fica em `sessao()`,
+    que é por onde TODO entry point passa.
+    """
+    try:
+        import pyspark
+    except ImportError:
+        return
+    v = sys.version_info
+    ps = pyspark.__version__
+    maior = int(ps.split(".")[0])
+    # PySpark 3.5 é testado até o Python 3.11; a linha 4 até o 3.12.
+    teto = (3, 11) if maior < 4 else (3, 12)
+    if (v.major, v.minor) <= teto:
+        return
+    raise SystemExit(
+        f"\n  PySpark {ps} não é testado no Python {v.major}.{v.minor}"
+        f" (o teto desta linha é o {teto[0]}.{teto[1]}).\n"
+        "  O worker sobe, processa e quebra ao fechar o soquete — WinError 10038.\n"
+        "\n  Dois caminhos, e o segundo é provavelmente o seu:\n"
+        "    1. um Python compatível SÓ para o pipeline:\n"
+        "         winget install Python.Python.3.11\n"
+        "         py -3.11 -m venv .venv\n"
+        "         .venv\\Scripts\\activate\n"
+        "         pip install pyspark==3.5.3 pyarrow\n"
+        "\n    2. rodar no Databricks, que é o destino do MVP de qualquer jeito —\n"
+        "       lá o runtime já vem casado e nada disto existe. Ver docs/DATABRICKS.md.\n"
+        "\n  O que NÃO depende de Spark continua valendo aqui:\n"
+        "    npm run test:pipeline   (58 verificações, Python puro)\n")
+
+
 def sessao(nome="gold_normal"):
+    conferir_par_python_pyspark()
     garantir_java()
     os.environ.setdefault("SPARK_LOCAL_IP", "127.0.0.1")
 

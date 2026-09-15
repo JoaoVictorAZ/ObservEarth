@@ -44,13 +44,17 @@ O QUE A PRIMEIRA EXECUÇÃO REAL ENSINOU (15/09/2026)
 estações que existiram em algum dos quinze anos e foram desativadas: a
 dimensão é o histórico da rede, não a foto de hoje.
 
-E a checagem recusou sete estações LEGÍTIMAS, por erro meu. Eu tinha escrito o
-retângulo do Brasil continental e chamado isso de domínio da rede. Ver
-`REDE_LAT` abaixo: o INMET opera ilha oceânica e Antártida, e o teto de
-altitude de 1600 m não vinha de lugar nenhum.
+E a checagem de domínio recusou estação legítima DUAS VEZES, por erro meu, e
+das duas pela mesma razão de fundo: eu estava descrevendo uma jurisdição
+descontínua com um retângulo só. Ver `DOMINIOS` abaixo — primeiro o retângulo
+continental (7 recusas, ilha oceânica e Antártida), depois o retângulo esticado
+até o polo mas preso em -74 de longitude (1 recusa, CRIOSFERA a -84 / -79,49).
 
 O guarda estava certo em existir e errado no valor — que é o melhor tipo de
 falha, porque aparece na primeira execução e não no mapa três semanas depois.
+As duas vezes ele recusou gravar em vez de gravar torto, e as duas vezes o que
+saiu do episódio foi um domínio mais fiel à rede do que o que eu teria escrito
+sentado pensando no assunto.
 =============================================================================
 """
 
@@ -127,24 +131,54 @@ def coletar(padrao: str) -> tuple[list[dict], dict]:
 CONT_LAT = (-34.0, 6.0)
 CONT_LNG = (-74.0, -34.0)
 
-# O domínio de verdade: a jurisdição onde o INMET opera.
+# O domínio de verdade: a jurisdição onde o INMET opera — e ela é DESCONTÍNUA.
 #
-# A PRIMEIRA VERSÃO DESTE ARQUIVO USAVA O RETÂNGULO CONTINENTAL E RECUSOU SETE
-# ESTAÇÕES LEGÍTIMAS. Eu tinha escrito "o Brasil vai de -34 a 6 de latitude",
-# que é verdade sobre o CONTINENTE e falso sobre a REDE:
+# ERREI ISTO DUAS VEZES, DE JEITOS DIFERENTES, E AS DUAS VERSÕES ERRADAS ERAM
+# UM RETÂNGULO SÓ.
 #
-#   ilhas oceânicas   Trindade (-20,5 / -29,3), São Pedro e São Paulo
-#                     (0,9 / -29,3), Fernando de Noronha, Atol das Rocas
-#   Antártida         o Programa Antártico Brasileiro opera estações lá
-#   altitude          o teto de 1600 m saiu de lugar nenhum; o ponto mais alto
-#                     do país tem 2995 m e há estação medindo a 2450 m
-REDE_LAT = (-90.0, 6.0)
-REDE_LNG = (-74.0, -28.0)
+#   1ª  o retângulo do Brasil continental. Recusou 7 estações legítimas —
+#       ilha oceânica e Antártida.
+#   2ª  estiquei a latitude até -90 para caber a Antártida e DEIXEI a
+#       longitude em -74. Isso descreve uma fatia que desce até o polo mas
+#       para no meridiano do Acre: uma região onde o Brasil não opera nada.
+#       Recusou CRIOSFERA (-84 / -79,49), o módulo antártico brasileiro.
+#
+# A lição não é "alargue mais". Um retângulo único que cubra a Antártida E o
+# Nordeste tem que cobrir também milhões de km² de Pacífico Sul onde uma
+# coordenada corrompida cairia sem ninguém notar. Alargar para aceitar o
+# verdadeiro passa a aceitar o falso junto.
+#
+# A rede tem três domínios separados, e a estação precisa cair em UM deles.
+# Assim cada faixa fica apertada, e o espaço entre elas continua sendo recusa.
+DOMINIOS = {
+    # Brasil continental.
+    "continente": {"lat": (-34.0, 6.0), "lng": (-74.0, -34.0)},
+    # Ilhas do Atlântico: Trindade e Martim Vaz (-20,5 / -29,3), São Pedro e
+    # São Paulo (0,9 / -29,3), Fernando de Noronha, Atol das Rocas.
+    "ilhas": {"lat": (-21.0, 5.0), "lng": (-34.0, -25.0)},
+    # Programa Antártico Brasileiro: Comandante Ferraz (-62,08 / -58,39) na
+    # península, CRIOSFERA (-84 / -79,49) no interior do continente.
+    "antartida": {"lat": (-90.0, -60.0), "lng": (-90.0, -20.0)},
+}
+
+# O teto de 1600 m saiu de lugar nenhum. O ponto mais alto do país tem 2995 m,
+# há estação medindo a 2450 m, e CRIOSFERA fica a 1285 m no platô antártico.
 REDE_ALT = (-10.0, 3000.0)
+
+CONT_LAT = DOMINIOS["continente"]["lat"]
+CONT_LNG = DOMINIOS["continente"]["lng"]
 
 
 def dentro(v, faixa) -> bool:
     return v is not None and faixa[0] <= v <= faixa[1]
+
+
+def dominio_de(lat, lng) -> str | None:
+    """Em qual domínio da rede este ponto cai, se cair em algum."""
+    for nome, d in DOMINIOS.items():
+        if dentro(lat, d["lat"]) and dentro(lng, d["lng"]):
+            return nome
+    return None
 
 
 def conferir(estacoes: list[dict]) -> tuple[list[str], list[dict]]:
@@ -170,10 +204,12 @@ def conferir(estacoes: list[dict]) -> tuple[list[str], list[dict]]:
         i, nome, uf = e["estacao_id"], e.get("nome") or "?", e.get("uf") or "??"
         etiqueta = f"{i} · {nome} ({uf})"
 
-        if not dentro(e["lat"], REDE_LAT):
-            recusas.append(f"{etiqueta}: lat {e['lat']} impossível")
-        if not dentro(e["lng"], REDE_LNG):
-            recusas.append(f"{etiqueta}: lng {e['lng']} impossível")
+        dom = dominio_de(e["lat"], e["lng"])
+        if dom is None:
+            recusas.append(f"{etiqueta}: ({e['lat']}, {e['lng']}) não cai em"
+                           " nenhum domínio da rede"
+                           f" ({' · '.join(DOMINIOS)})")
+        e["dominio"] = dom
         if e["regiao"] not in ("N", "NE", "CO", "SE", "S"):
             recusas.append(f"{etiqueta}: regiao {e['regiao']!r} fora do domínio")
         if e["altitude_m"] is not None and not dentro(e["altitude_m"], REDE_ALT):
@@ -187,7 +223,7 @@ def conferir(estacoes: list[dict]) -> tuple[list[str], list[dict]]:
             recusas.append(f"{etiqueta}: lat e lng parecem TROCADAS "
                            f"({e['lat']}, {e['lng']})")
 
-        fora = not (dentro(e["lat"], CONT_LAT) and dentro(e["lng"], CONT_LNG))
+        fora = dom is not None and dom != "continente"
         e["fora_do_continente"] = fora
         if fora:
             incomuns.append(e)
@@ -220,7 +256,8 @@ def main() -> int:
         for e in incomuns:
             print(f"    {e['estacao_id']} · {e.get('nome')} ({e.get('uf')})"
                   f"  {e['lat']:.2f}, {e['lng']:.2f}"
-                  + (f"  {e['altitude_m']:.0f} m" if e.get("altitude_m") is not None else ""))
+                  + (f"  {e['altitude_m']:.0f} m" if e.get("altitude_m") is not None else "")
+                  + f"  [{e['dominio']}]")
         print("    (confira pelo nome: ilha oceânica e base antártica são esperadas)")
 
     saida = Path(a.saida)

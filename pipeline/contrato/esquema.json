@@ -26,9 +26,16 @@
         "nome":          { "tipo": "string",    "obrigatorio": true },
         "uf":            { "tipo": "string",    "obrigatorio": true, "tamanho": 2 },
         "regiao":        { "tipo": "string",    "obrigatorio": true, "dominio": ["N", "NE", "CO", "SE", "S"] },
-        "_dominio_geografico": "MEDIDO EM 15/09/2026, e a versao anterior estava ERRADA. Eu tinha escrito o retangulo do BRASIL CONTINENTAL (lat -34..6, lng -74..-34) e chamado isso de dominio da REDE. Nao e' a mesma coisa: o INMET opera ilhas oceanicas (Trindade em -20,5/-29,3; Sao Pedro e Sao Paulo em 0,9/-29,3) e estacoes na ANTARTIDA. A exportacao real recusou 7 estacoes legitimas por causa disso — e o Silver no Databricks teria recusado as mesmas.",
+        "_dominio_geografico": "ERRADO DUAS VEZES, as duas por ser UM retangulo so. (1) 15/09/2026: escrevi o retangulo do BRASIL CONTINENTAL (lat -34..6, lng -74..-34) e chamei de dominio da REDE — recusou 7 estacoes legitimas de ilha oceanica e Antartida. (2) Mesmo dia: estiquei a lat ate -90 e DEIXEI a lng em -74, o que descreve uma fatia que desce ao polo mas para no meridiano do Acre — recusou CRIOSFERA (-84 / -79,49), o modulo antartico brasileiro instalado em 2012, a 1285 m. A licao nao e' alargar mais: um retangulo unico que cubra a Antartida E o Nordeste cobre tambem milhoes de km2 de Pacifico Sul onde uma coordenada corrompida cairia sem ninguem notar. O dominio da rede e' DESCONTINUO — ver `dominios` abaixo.",
+        "_dominios_e_a_regra": "`min`/`max` de lat e lng sao o ENVELOPE, e sozinhos aceitam demais. A regra e' cair em UM dos `dominios`. Quem valida deve usar `dominios`; o envelope existe so para tipagem e para recusar absurdo grosseiro.",
+        "dominios": {
+          "continente": { "lat": [-34, 6],   "lng": [-74, -34] },
+          "ilhas":      { "lat": [-21, 5],   "lng": [-34, -25] },
+          "antartida":  { "lat": [-90, -60], "lng": [-90, -20] }
+        },
         "lat":           { "tipo": "double",    "obrigatorio": true, "min": -90, "max": 6 },
-        "lng":           { "tipo": "double",    "obrigatorio": true, "min": -74, "max": -28 },
+        "lng":           { "tipo": "double",    "obrigatorio": true, "min": -90, "max": -20 },
+        "dominio":       { "tipo": "string",    "obrigatorio": false, "dominio": ["continente", "ilhas", "antartida"] },
         "_dominio_altitude": "Teto era 1600 m, tirado de nada. O ponto mais alto do pais tem 2995 m (Pico da Neblina) e ha estacao medida a 2450 m. 3000 recusa absurdo sem recusar serra.",
         "altitude_m":    { "tipo": "double",    "obrigatorio": true, "min": -10, "max": 3000 },
         "_fora_do_continente": "A caixa larga so e' segura porque quem cai fora do retangulo continental sai MARCADO. Ver `fora_do_continente`: a estacao entra, e fica visivel que ela e' excecao — em vez de virar um ponto solitario no mapa que ninguem sabe explicar.",
