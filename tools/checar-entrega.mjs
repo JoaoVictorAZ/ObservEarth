@@ -198,7 +198,10 @@ if (imgs.length === 0) {
          "a rubrica pede prova do que rodou por interface — Volume, Catalog, notebooks");
 } else {
   ok(`${imgs.length} imagem(ns) em docs/${nomeDir ?? "imagens"}/`);
-  const citadas = imgs.filter((f) => mvp && mvp.includes(f));
+  // As imagens do PRODUTO são citadas no README, as da EXECUÇÃO no MVP.md.
+  // Conferir só um dos dois acusaria falsamente metade delas.
+  const textos = [mvp ?? "", le("README.md") ?? ""].join("\n");
+  const citadas = imgs.filter((f) => textos.includes(f));
   if (citadas.length < imgs.length) {
     talvez(`${imgs.length - citadas.length} imagem(ns) não citada(s) no documento`,
            "imagem que ninguém referencia não é vista por quem corrige: " +
@@ -208,11 +211,11 @@ if (imgs.length === 0) {
   }
 
   // E o CAMINHO citado tem que bater na caixa, não só o nome do arquivo.
-  if (mvp && nomeDir) {
+  if (nomeDir) {
     const erradas = imgs.filter((f) => {
       const certo = `${nomeDir}/${f}`;
       const re = new RegExp(`\\]\\(\\s*([^)]*${f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "g");
-      return [...mvp.matchAll(re)].some((m) => !m[1].endsWith(certo));
+      return [...textos.matchAll(re)].some((m) => !m[1].endsWith(certo));
     });
     if (erradas.length) {
       mal(`${erradas.length} imagem(ns) citada(s) com a caixa errada da pasta`,

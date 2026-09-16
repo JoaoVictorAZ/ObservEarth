@@ -272,6 +272,38 @@ ok("LATITUDE `,9` sem zero a esquerda vira 0,9 e nao None",
    lambda: (_ for _ in ()).throw(AssertionError(str(est12["lat"])))
    if est12["lat"] != 0.9 else None)
 
+# ALTITUDE COM LETRA, MEDIDO EM 16/09/2026 sobre os arquivos reais de 2016-2018.
+#
+#     ALTITUDE:;F
+#
+# 17 estacoes, 51 arquivos. Sao instalacoes militares da Amazonia e da faixa de
+# fronteira -- DTCEA, PEF, CRMN. O campo nao esta VAZIO: tem a letra F.
+#
+# O parser aguenta (float("F") levanta ValueError, `numero` devolve None) e a
+# estacao entra sem altitude. O que este teste fixa e' que ela ENTRA: recusar o
+# arquivo apagaria 17 estacoes da regiao que menos tem estacao.
+META_ALT_LIXO = META_2012.replace("ALTITUDE:;15", "ALTITUDE:;F")
+CSV_ALT_LIXO = META_ALT_LIXO + "\n" + CABECALHO + "\n" + "\n".join(linhas_dia) + "\n"
+est_alt, fatos_alt = ler_estacao("INMET_N_RO_S104_DTCEA VILHENA_2018.CSV", CSV_ALT_LIXO)
+
+ok("`ALTITUDE:;F` nao derruba o arquivo: a estacao entra sem altitude",
+   lambda: [
+       (_ for _ in ()).throw(AssertionError("recusou a estacao")) if est_alt is None else None,
+       (_ for _ in ()).throw(AssertionError(f"altitude={est_alt['altitude_m']!r}"))
+       if est_alt["altitude_m"] is not None else None,
+       (_ for _ in ()).throw(AssertionError("perdeu os fatos")) if not fatos_alt else None,
+   ])
+
+# E o resto do cabecalho tem que sobreviver: o campo podre e' UM campo, nao o
+# bloco. Se `ler_estacao` abortasse no primeiro erro, lat/lng iriam junto -- e
+# a estacao sumiria do mapa por causa da altitude.
+ok("os outros campos sobrevivem ao campo podre",
+   lambda: [
+       (_ for _ in ()).throw(AssertionError(str(est_alt["lat"]))) if est_alt["lat"] != 0.9 else None,
+       (_ for _ in ()).throw(AssertionError(str(est_alt["estacao_id"])))
+       if est_alt["estacao_id"] != "A302" else None,
+   ])
+
 # -9999 aparece em 2012 e NAO aparece em 2024. Um sentinela que escape entra na
 # media e no percentil sem levantar erro e desloca a distribuicao inteira.
 CSV_SENT = META_2012 + "\n" + CABECALHO + "\n" + "\n".join(

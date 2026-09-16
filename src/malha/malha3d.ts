@@ -36,7 +36,7 @@
 // -----------------------------------------------------------------------------
 
 import * as THREE from "three";
-import { type CampoEscalar, latDaLinha, lngDaColuna, medido, amostrar } from "./campo.ts";
+import { type CampoEscalar, latDaLinha, lngDaColuna, medido, amostrarNaMalha } from "./campo.ts";
 import { type Parada, type ModoRampa, corDoValor, sRGBparaLinear } from "./rampa.ts";
 import type { PontoCritico } from "./extremos.ts";
 import { ORDEM } from "../ordemDesenho.ts";
@@ -69,6 +69,10 @@ const FRAG = /* glsl */ `
     // ali ainda há dado, e dado que some é indistinguível de dado que falta.
     float luz = 0.42 + 0.58 * pow(face, 0.8);
     gl_FragColor = vec4(vCor * luz, uOpacity);
+    // vCor vem LINEAR (sRGBparaLinear, mais abaixo neste arquivo). O
+    // framebuffer e' sRGB, e ShaderMaterial NAO recebe este chunk sozinho:
+    // sem ele a rampa inteira sai escura e dessaturada. Ver test/cor-saida.mjs.
+    #include <colorspace_fragment>
   }
 `;
 
@@ -471,11 +475,19 @@ export class MalhaEscalar {
   alturaEm(lat: number, lng: number): number | null {
     const campo = this.campo, escala = this.escala;
     if (!campo || !escala) return null;
-    const v = amostrar(campo, lat, lng);
-    if (v == null) return null;
     const faixa = escala.hi - escala.lo;
     if (!(Math.abs(faixa) > 0)) return 0;
-    return Math.max(0, Math.min(1, (v - escala.lo) / faixa));
+    const inv = 1 / faixa;
+    // `amostrarNaMalha`, e não `amostrar`. A malha é feita de TRIÂNGULOS, e a
+    // bilinear é uma superfície curva que só coincide com eles nos quatro
+    // cantos — no meio da célula a diferença é o termo de torção. Quem pousa na
+    // altura bilinear flutua sobre a superfície desenhada, pouco e sempre.
+    //
+    // E a normalização vai como `porVertice` porque a malha limita CADA VÉRTICE
+    // antes de interpolar. Fazer o contrário diverge em toda célula com um
+    // canto saturado. Ver a nota longa em src/malha/campo.ts.
+    return amostrarNaMalha(campo, lat, lng,
+      (v) => Math.max(0, Math.min(1, (v - escala.lo) * inv)));
   }
 
   /** O exagero em vigor, para quem precisa reconstruir a casca. */

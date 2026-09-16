@@ -140,6 +140,19 @@ export interface MotorGeo {
    */
   setPausado(on: boolean): void;
 
+  /**
+   * Redesenha AGORA e devolve a vista em PNG (data URL), ou `null`.
+   *
+   * Está no contrato, e não como capacidade opcional, porque o botão da barra é
+   * o mesmo nos dois modos — e um botão que salva o globo e devolve arquivo
+   * vazio no mapa plano é pior que botão nenhum.
+   *
+   * O redesenho faz parte do método de propósito: fora dele o buffer do WebGL
+   * já foi descartado e a leitura sai em branco, sem erro nenhum. Ver
+   * `src/captura.ts`.
+   */
+  capturar(): string | null;
+
   setAutoRotate(on: boolean): void;
   setDayNight(on: boolean): void;
   setTime(d: Date): void;

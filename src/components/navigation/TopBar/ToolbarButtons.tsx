@@ -4,6 +4,7 @@ import { usePerfStore } from "../../../store/perfStore";
 import { TIERS } from "../../../perf";
 import { RefreshCw, Home, Camera, Activity, Sun, Map, Globe2 } from "lucide-react";
 import { entrar, sair, noTopo } from "../../../pilhaDialogos";
+import { capturarVista, nomeDoArquivo, pareceVazio } from "../../../captura";
 
 export const ToolbarButtons: React.FC<{ onSearchCoord?: (lat: number, lng: number) => void }> = ({ onSearchCoord }) => {
   const { rotate, toggleRotate, dayNight, toggleDayNight, modo, toggleModo } = useGlobeStore();
@@ -35,14 +36,43 @@ export const ToolbarButtons: React.FC<{ onSearchCoord?: (lat: number, lng: numbe
     };
   }, [aberto]);
 
-  const capturar = () => {
-    const canvas = document.querySelector("canvas");
-    if (!canvas) return;
-    const a = document.createElement("a");
-    a.download = `observearth-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "")}.png`;
-    a.href = canvas.toDataURL("image/png");
-    a.click();
+  // A CAPTURA PRECISA DE UM QUADRO PRÓPRIO, E DE UMA RECUSA.
+  //
+  // A versão anterior pegava `document.querySelector("canvas")` e chamava
+  // `toDataURL` no meio do clique. Isso salva um PNG VAZIO — o buffer do WebGL
+  // já foi descartado pelo compositor — e salva sem erro nenhum, o que é o pior
+  // dos mundos: o download acontece, o arquivo existe, e só quem abre descobre.
+  //
+  // Agora quem desenha e lê é o motor, dentro de um `requestAnimationFrame`, e
+  // o resultado é conferido antes de virar download. Ver src/captura.ts.
+  const [salvando, setSalvando] = useState(false);
+  const [aviso, setAviso] = useState<string | null>(null);
+
+  const capturar = async () => {
+    setSalvando(true);
+    setAviso(null);
+    try {
+      const png = await capturarVista();
+      if (pareceVazio(png)) {
+        // Recusar é o ponto. Baixar um arquivo vazio ensina a pessoa a
+        // desconfiar do botão sem nunca dizer o que houve.
+        setAviso("a vista não pôde ser capturada");
+        return;
+      }
+      const a = document.createElement("a");
+      a.download = nomeDoArquivo();
+      a.href = png as string;
+      a.click();
+    } finally {
+      setSalvando(false);
+    }
   };
+
+  useEffect(() => {
+    if (!aviso) return;
+    const t = setTimeout(() => setAviso(null), 4000);
+    return () => clearTimeout(t);
+  }, [aviso]);
 
   const t = stats?.tier ?? 0;
   const degrau = TIERS[t as 0 | 1 | 2];
@@ -105,9 +135,18 @@ export const ToolbarButtons: React.FC<{ onSearchCoord?: (lat: number, lng: numbe
         >
           <Home size={14} strokeWidth={1.5} />
         </button>
-        <button className="icone-btn" onClick={capturar} title="Salvar a vista atual em PNG">
+        <button
+          className="icone-btn"
+          onClick={capturar}
+          disabled={salvando}
+          aria-busy={salvando}
+          title={aviso ?? "Salvar a vista atual em PNG"}
+        >
           <Camera size={14} strokeWidth={1.5} />
         </button>
+        {/* A recusa precisa ser VISÍVEL. Um botão que não faz nada e não diz
+            nada é indistinguível de um botão quebrado. */}
+        {aviso && <span className="ferramentas-aviso" role="status">{aviso}</span>}
       </div>
 
       <span className="ferramentas-fio" aria-hidden="true" />

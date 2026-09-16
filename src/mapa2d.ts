@@ -1387,6 +1387,23 @@ export class MapEngine implements MotorGeo {
   /** No plano, "rotação automática" é deriva em longitude. */
   setAutoRotate(on: boolean) { this.girando = on; }
 
+  /**
+   * A vista em PNG. Redesenha antes de ler — ver `src/captura.ts`.
+   *
+   * O mapa plano tem a mesma armadilha do globo: sem o `render` explícito aqui,
+   * `toDataURL` lê um buffer já descartado pelo compositor e devolve uma imagem
+   * vazia, sem erro nenhum.
+   */
+  capturar(): string | null {
+    if (!this.renderer || this.disposed) return null;
+    try {
+      this.renderer.render(this.scene, this.camera);
+      return this.renderer.domElement.toDataURL("image/png");
+    } catch {
+      return null;
+    }
+  }
+
   setPausado(on: boolean) {
     this.pausado = on;
     this.quadrosCedidos = 0;

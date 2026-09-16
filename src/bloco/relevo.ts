@@ -32,7 +32,7 @@
 // -----------------------------------------------------------------------------
 
 import {
-  mercY, alturaTerrarium, tilesMercator, TILE_PX, type Tile,
+  mercY, alturaTerrarium, tilesMercator, TILE_PX, LAT_MERC, type Tile,
 } from "../tiles.ts";
 import type { CampoEscalar } from "../malha/campo.ts";
 
@@ -80,6 +80,53 @@ export function pixelNoTile(
  * disso amplia pixel interpolado e gasta requisição para não acrescentar
  * informação — o mesmo raciocínio de `NIVEL_MAX` para a imagem de satélite.
  */
+/**
+ * OS TRÊS NÍVEIS DE DETALHE.
+ *
+ * `amostras` é quantos pontos a grade tem no lado maior; `tiles` é o teto de
+ * requisições. Os dois andam juntos: pedir mais tiles sem adensar a grade
+ * baixa dado que ninguém amostra, e adensar a grade sem mais tiles amplia o
+ * mesmo pixel várias vezes.
+ *
+ * O custo que muda entre eles é de VÉRTICE, não de rede: no modo detalhe a
+ * malha tem ~590 mil vértices contra ~37 mil no leve. Uma GPU moderna desenha
+ * isso sem esforço; uma integrada de notebook antigo, não — por isso o leve
+ * existe, e por isso o padrão é o médio.
+ */
+export const QUALIDADES = {
+  leve:    { amostras: 192, tiles: 16, rotulo: "Leve" },
+  medio:   { amostras: 384, tiles: 40, rotulo: "Médio" },
+  detalhe: { amostras: 768, tiles: 96, rotulo: "Detalhe" },
+} as const;
+
+export type Qualidade = keyof typeof QUALIDADES;
+
+/**
+ * A RESOLUÇÃO DA FONTE numa latitude, em metros — o teto do que existe.
+ *
+ * Esta função é o que separa "mais detalhe" de "mais pixels". Acima de certo
+ * nível de tile, o que se recebe não é dado mais fino: é o mesmo dado
+ * interpolado, com aparência de precisão que ele não tem.
+ *
+ * Os números vêm da composição da Mapzen, e são aproximados de propósito —
+ * a fonte varia por região e o valor exato de cada célula não é publicado:
+ *
+ *   ~10 m   3DEP, nos Estados Unidos continentais
+ *   ~30 m   SRTM, entre 60°N e 56°S — é o caso do Brasil inteiro
+ *   ~90 m   fora da cobertura do SRTM, em latitudes altas
+ *   ~450 m  GEBCO, no oceano aberto
+ *
+ * Devolver 30 para o Brasil é conservador e honesto. Fingir um número por
+ * célula seria inventar uma precisão que a fonte não declara — e é justamente
+ * o que a tela precisa AVISAR quando a malha passa disso.
+ */
+export function resolucaoDaFonteM(lat: number, submerso = false): number {
+  if (submerso) return 450;
+  const a = Math.abs(lat);
+  if (a > 60) return 90;
+  return 30;
+}
+
 export function nivelDoBloco(larguraGraus: number, alvo = 256): number {
   if (!Number.isFinite(larguraGraus) || larguraGraus <= 0) return 0;
   const grausPorPixelDesejado = larguraGraus / Math.max(16, alvo);
@@ -173,12 +220,49 @@ export function caixaEmVolta(lat: number, lng: number, ladoKm: number): Caixa {
   const meiaLat = (ladoKm / 2) / 111.32;
   const cos = Math.max(0.08, Math.cos((lat * Math.PI) / 180));
   const meiaLng = meiaLat / cos;
-  return {
-    latSul: Math.max(-85, lat - meiaLat),
-    latNorte: Math.min(85, lat + meiaLat),
-    lngOeste: lng - meiaLng,
-    lngLeste: lng + meiaLng,
-  };
+
+  // O CLAMPE ANTERIOR PODIA INVERTER A CAIXA, e invertia em silêncio.
+  //
+  // Ele era `latSul: max(-85, lat - meia)` e `latNorte: min(85, lat + meia)`.
+  // Medido em 16/09/2026, recorte de 500 km em 88,81°S:
+  //
+  //     latSul  = max(-85, -91,06) = -85,00
+  //     latNorte = min( 85, -86,56) = -86,56
+  //
+  // O sul ficou ao NORTE do norte. A caixa passou a descrever uma região
+  // impossível, `tamanhoKm` devolveu 459×175 km para um pedido de 500×500, e
+  // nada em lugar nenhum reclamou — o cabeçalho do painel exibia as dimensões
+  // erradas como se fossem o que a pessoa pediu.
+  //
+  // Agora a caixa DESLIZA para dentro do limite em vez de ser espremida por
+  // duas pontas independentes. Fora do alcance do Mercator a altura pedida é
+  // preservada; o que muda é onde ela cai — e quem chama precisa saber disso,
+  // por isso existe `temCoberturaDeRelevo`.
+  let sul = lat - meiaLat;
+  let norte = lat + meiaLat;
+  if (norte > LAT_MERC) { sul -= norte - LAT_MERC; norte = LAT_MERC; }
+  if (sul < -LAT_MERC) { norte = Math.min(LAT_MERC, norte + (-LAT_MERC - sul)); sul = -LAT_MERC; }
+  // Recorte mais alto que a própria faixa do Mercator: sobra a faixa inteira.
+  if (sul > norte) { sul = -LAT_MERC; norte = LAT_MERC; }
+
+  return { latSul: sul, latNorte: norte, lngOeste: lng - meiaLng, lngLeste: lng + meiaLng };
+}
+
+/**
+ * Existe tile de elevação nesta latitude?
+ *
+ * Os tiles `terrarium` são Web Mercator, e o Web Mercator **termina em
+ * ±85,0511°** — além disso o `y` da projeção vai para o infinito. Não é falta
+ * de dado da Mapzen nem uma lacuna que alguém possa preencher depois: é a
+ * projeção não alcançar o polo, por construção.
+ *
+ * Distinguir isto de "o tile não respondeu" importa. Uma é uma falha de rede,
+ * que passa; a outra é um limite permanente, e insistir não adianta. A tela
+ * precisa dizer qual das duas é — foi por não dizer que um recorte a 88,8°S
+ * parecia defeito de cobertura.
+ */
+export function temCoberturaDeRelevo(lat: number): boolean {
+  return Number.isFinite(lat) && Math.abs(lat) <= LAT_MERC;
 }
 
 /** Dimensões físicas do bloco, em quilômetros. */
@@ -224,8 +308,37 @@ export interface RelevoPronto {
   tilesFalhos: number;
   minimo: number | null;
   maximo: number | null;
-  /** resolução aproximada do dado de origem, em metros por amostra */
+  /**
+   * A faixa em que o terreno de fato vive — ver a nota em `montarRelevo`.
+   *
+   * Num recorte grande, o mínimo e o máximo são a fossa e o pico: 2% do dado
+   * consumindo 80% da escala. `p2`/`p98` são a faixa do outro 96%, e é sobre
+   * ela que a cor rende.
+   */
+  p2: number | null;
+  p98: number | null;
+  mediana: number | null;
+  /** metros por amostra da grade — o que ESTE bloco desenha */
   resolucaoM: number;
+  /** metros por célula da FONTE — o teto do que existe ali */
+  fonteM: number;
+  qualidade: Qualidade;
+  /**
+   * A região precisava de mais tiles do que o teto permitiu.
+   *
+   * Importa dizer: quando isto é verdade, parte do recorte fica sem cobertura
+   * e a malha sai vazada — e o buraco parece falta de dado da fonte, quando é
+   * uma escolha nossa de orçamento.
+   */
+  tetoDeTiles: boolean;
+  /**
+   * Quantas células foram recusadas por serem degraus impossíveis.
+   *
+   * Sai para a tela porque é informação sobre a FONTE, não sobre o desenho:
+   * um recorte com muitos picos removidos tem DEM ruim ali, e quem estiver
+   * medindo uma encosta precisa saber disso antes de confiar no número.
+   */
+  picosRemovidos: number;
 }
 
 /**
@@ -235,13 +348,23 @@ export interface RelevoPronto {
  * que a GPU desenha sem esforço e que já resolve um vale de 500 m num bloco de
  * 100 km.
  */
-export async function montarRelevo(cx: Caixa, n = 192): Promise<RelevoPronto> {
+export async function montarRelevo(
+  cx: Caixa, qualidade: Qualidade = "medio",
+): Promise<RelevoPronto> {
+  const q = QUALIDADES[qualidade] ?? QUALIDADES.medio;
+  const n = q.amostras;
   const larguraGraus = cx.lngLeste - cx.lngOeste;
   const z = nivelDoBloco(larguraGraus, n);
 
   const lista = tilesMercator(cx.lngOeste, cx.latSul, cx.lngLeste, cx.latNorte, z);
-  // TETO DE REQUISIÇÕES. Um bloco não pode custar mais que uma vista do mapa.
-  const usar = lista.slice(0, 24);
+  // TETO DE REQUISIÇÕES, por nível de qualidade.
+  //
+  // O orçamento suporta mesmo o teto do modo detalhe: o limite do projeto para
+  // a Mapzen é de 10.000 tiles por dia (¼ do limite gratuito) e o cache do
+  // servidor é de 7 dias, porque relevo não muda. Noventa e seis tiles por
+  // bloco dão mais de cem recortes distintos por dia, e recorte repetido não
+  // custa nada.
+  const usar = lista.slice(0, q.tiles);
 
   const carregados = await Promise.all(usar.map(carregarTile));
   const tiles = carregados.filter((t): t is TileDecodificado => !!t);
@@ -274,6 +397,97 @@ export async function montarRelevo(cx: Caixa, n = 192): Promise<RelevoPronto> {
   // resolve um morro ou só a serra inteira.
   const resolucaoM = (largura * 1000) / Math.max(1, nx);
 
+  // ---------------------------------------------------------------------------
+  // DESPIQUE: um valor isolado e impossível não é relevo, é defeito do DEM.
+  // ---------------------------------------------------------------------------
+  // MEDIDO EM 16/09/2026, recorte de 30 km sobre Copacabana: altitudes de
+  // −3.111 a 3.447 m. O ponto mais alto da cidade do Rio é o Pico da Tijuca com
+  // 1.021 m, e o fundo a 15 km da praia está perto de −50. Os dois extremos são
+  // impossíveis, e vieram de células isoladas.
+  //
+  // O estrago não é só o pico feio. A amplitude inflada de 6.558 m entra em
+  // TUDO que se calcula a partir dela: a escala de cor, o intervalo de curvas,
+  // a profundidade da parede, o vão da camada de análise. O Pão de Açúcar, com
+  // 396 m reais, vira 6% da vertical e some — **o artefato achata o relevo
+  // verdadeiro.** É por isso que despicar vem antes de qualquer estatística.
+  //
+  // O CRITÉRIO É INCLINAÇÃO, E NÃO RARIDADE. Um pico real é raro e tem encosta:
+  // o vizinho acompanha. Um pixel corrompido é um degrau vertical isolado.
+  // Filtrar por percentil cortaria o Pão de Açúcar junto; filtrar por
+  // declividade contra a mediana dos vizinhos não corta.
+  //
+  // O limiar sai da resolução: `4 × resolucaoM` é uma inclinação de ~76°, mais
+  // íngreme que qualquer encosta que um DEM de 30 m consiga resolver. O piso de
+  // 80 m evita cortar falésia em recorte muito fino.
+  const limiarPico = Math.max(80, resolucaoM * 4);
+  let picosRemovidos = 0;
+  const viz: number[] = [];
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      const k = j * nx + i;
+      if (!valido[k]) continue;
+      viz.length = 0;
+      for (let dj = -1; dj <= 1; dj++) {
+        for (let di = -1; di <= 1; di++) {
+          if (di === 0 && dj === 0) continue;
+          const jj = j + dj, ii = i + di;
+          if (jj < 0 || jj >= ny || ii < 0 || ii >= nx) continue;
+          const kk = jj * nx + ii;
+          if (valido[kk]) viz.push(valores[kk]);
+        }
+      }
+      // Menos de cinco vizinhos: é borda ou região vazada, e a mediana ali seria
+      // frágil demais para condenar um ponto.
+      if (viz.length < 5) continue;
+      viz.sort((a, b) => a - b);
+      const mediana = viz[viz.length >> 1];
+      if (Math.abs(valores[k] - mediana) > limiarPico) {
+        // Vira AUSÊNCIA, e não a mediana. Substituir pelo vizinho inventaria um
+        // valor plausível onde o sensor não entregou nada — e a malha vazada
+        // diz a verdade: aqui não se sabe.
+        valido[k] = 0;
+        picosRemovidos++;
+      }
+    }
+  }
+
+  // O mínimo e o máximo precisam ser refeitos: eles foram medidos ANTES do
+  // despique e carregam justamente os valores que acabaram de ser recusados.
+  if (picosRemovidos > 0) {
+    mn = null; mx = null;
+    for (let k = 0; k < valores.length; k++) {
+      if (!valido[k]) continue;
+      const h = valores[k];
+      if (mn == null || h < mn) mn = h;
+      if (mx == null || h > mx) mx = h;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // OS PERCENTIS, E POR QUE O MÍNIMO E O MÁXIMO NÃO BASTAM
+  // ---------------------------------------------------------------------------
+  // Um recorte de 500 km sobre o Rio vai de −3.114 a 2.224 m. Mas quase todo o
+  // terreno que a pessoa está olhando — a Baixada, a baía, a serra litorânea —
+  // vive entre 0 e 800. A fossa e o pico de Itatiaia são 2% do recorte e
+  // consomem 80% da faixa.
+  //
+  // Esticar a cor do mínimo ao máximo entrega a escala inteira aos extremos e
+  // achata tudo que está no meio. É o mesmo defeito que já apareceu na rampa
+  // absoluta e na escala mundial do campo, pela terceira vez: **o que é raro
+  // rouba a faixa do que é frequente.**
+  //
+  // Os percentis dão à cor a faixa onde o dado de fato está. O que passar
+  // deles não some — satura na cor da ponta, que é a leitura certa para um
+  // valor extremo: "mais fundo que o resto", "mais alto que o resto".
+  const amostras: number[] = [];
+  for (let k = 0; k < valores.length; k++) if (valido[k]) amostras.push(valores[k]);
+  amostras.sort((a, b) => a - b);
+  const pct = (p: number): number | null => {
+    if (!amostras.length) return null;
+    const i = Math.min(amostras.length - 1, Math.max(0, Math.round(p * (amostras.length - 1))));
+    return amostras[i];
+  };
+
   return {
     campo: {
       nx, ny, valores, valido,
@@ -287,7 +501,23 @@ export async function montarRelevo(cx: Caixa, n = 192): Promise<RelevoPronto> {
     tilesFalhos: falhos,
     minimo: mn,
     maximo: mx,
+    p2: pct(0.02),
+    p98: pct(0.98),
+    mediana: pct(0.5),
     resolucaoM,
+    qualidade,
+    // O TETO DA FONTE, ao lado da resolução obtida.
+    //
+    // Os dois juntos respondem a única pergunta que importa ao subir a
+    // qualidade: isto é mais dado, ou é o mesmo dado esticado? Sem o segundo
+    // número, "amostra de 12 m" parece precisão de 12 m — e num terreno
+    // brasileiro, onde a fonte é SRTM de 30 m, isso seria falso.
+    fonteM: resolucaoDaFonteM(
+      (cx.latNorte + cx.latSul) / 2,
+      (mx ?? 0) < 0,
+    ),
+    tetoDeTiles: usar.length >= q.tiles && lista.length > q.tiles,
+    picosRemovidos,
   };
 }
 

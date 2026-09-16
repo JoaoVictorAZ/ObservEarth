@@ -11,6 +11,8 @@ inventado para a interface não ficar vazia. Um campo sem fonte aparece como
 "sem dado", e é assim de propósito — pessoas podem tomar decisões olhando para
 isto.
 
+![O globo com o vento do GFS animado em GPU](docs/Imagens/app-globo.png)
+
 ---
 
 ## Se você veio avaliar o MVP de Engenharia de Dados
@@ -459,6 +461,8 @@ sustentar a derivada, e é justamente ali que fica o vórtice polar.
 No rodapé da sonda, *Recorte 3D da região* arranca um paralelepípedo do planeta
 em volta do ponto e o põe sobre a mesa, com câmera livre.
 
+![O Recorte 3D: um bloco do terreno com a superfície do campo flutuando acima](docs/Imagens/app-recorte3d.png)
+
 **Por que um bloco, e não mais uma camada no globo.** O globo é ótimo para ver
 *onde* e ruim para ver *quanto* em vertical: a câmera orbita o centro da Terra,
 e o relevo cabe em milésimos de raio. Levantá-lo até ficar visível transforma o
@@ -469,11 +473,22 @@ bloco da geologia, que existe há um século e meio exatamente por isso.
 O que aparece, de baixo para cima:
 
 - **As paredes do corte**, com estratos a cada intervalo redondo de altitude e
-  uma linha distinta no nível do mar. Elas não são enfeite: são o único lugar
-  do bloco onde a escala vertical pode ser *lida* em vez de estimada — contar
-  faixas dá a altura sem eixo, sem rótulo e sem legenda. E a linha de zero
-  precisa mesmo se distinguir, porque a batimetria entra no mesmo raster: um
-  bloco de cidade costeira mostra o fundo do mar.
+  uma linha distinta no nível do mar. A linha de zero precisa mesmo se
+  distinguir, porque a batimetria entra no mesmo raster: um bloco de cidade
+  costeira mostra o fundo do mar.
+
+  *A ideia original era que contar estratos desse a altura sem eixo nem legenda.
+  Não funciona: contar faixas em perspectiva, com o bloco girando, é estimar com
+  passos a mais. Está no caminho para virar uma régua com rótulos — ver
+  [`docs/COMPARACAO-GEV.md`](docs/COMPARACAO-GEV.md) e o plano de redesenho.*
+- **A lâmina d'água no zero**, quando há profundidade no recorte. Ela não
+  carrega dado: existe porque **o nível do mar é a única referência absoluta que
+  um bloco tem** — toda outra altura ali é relativa a uma escolha nossa (o
+  exagero, a profundidade da parede, o vão da camada de análise). A costa não é
+  um traço pintado por cima: é a interseção da lâmina com o terreno, desenhada
+  pela geometria. O que está submerso escurece com a profundidade, como a água
+  faz com a luz, então dá para ler um banco de areia contra um canal sem contar
+  faixas.
 - **O terreno**, em metros de verdade, tingido com a rampa hipsométrica de
   qualquer atlas físico — azul de profundidade, verde de planície, ocre de
   planalto, branco de neve. O salto no zero é brusco de propósito: −1 m e +1 m
@@ -559,6 +574,16 @@ Sobrepostos a qualquer camada: **vento**, **isóbaras**, **terremotos** (USGS ao
 vivo), **incêndios** (FIRMS), **qualidade do ar** (OpenAQ), **WBGT** e
 **hospitais**.
 
+E **estações** — 616 pontos de medição real do INMET, saídos do pipeline de
+dados descrito em [`docs/MVP.md`](docs/MVP.md). A opacidade de cada ponto varia
+com quantos anos de série ele tem.
+
+![A camada de estações do INMET sobre o Brasil](docs/Imagens/app-estacoes.png)
+
+*O vazio da Amazônia é o achado, não um defeito do desenho. Até esta camada
+existir, o mapa pintava a bacia com a mesma confiança com que pinta São Paulo —
+porque o dado vinha de modelo, e modelo nunca diz "não sei".*
+
 E uma família à parte, **Análise**, que não mostra dado: mostra conta feita
 sobre dado. Hoje ela tem a **malha 3D do campo**, com os mínimos, máximos e
 selas — ver [Malha 3D](#malha-3d--a-camada-de-análise). Ela é um grupo próprio
@@ -579,6 +604,12 @@ Cada parâmetro traz o valor, uma conversão secundária (°F, km/h, escala
 Beaufort) e uma barra de faixa colorida. Onde a fonte não reportou nada, a
 linha diz **"sem dado"** — nunca zero, nunca uma média plausível.
 
+![A sonda aberta sobre um ponto, com as barras de faixa por parâmetro](docs/Imagens/app-sonda.png)
+
+*Você lê "quente" ou "ventania" na posição da barra antes de ler o número. E a
+régua no rodapé diz de onde veio cada valor — ciclo do GFS, passagem do
+satélite, hora da observação.*
+
 ### Análise completa
 
 **Série histórica** — agregados diários do ERA5 em janelas de 1 mês a 10 anos,
@@ -594,6 +625,11 @@ Magnus-Tetens na formulação de Alduchov & Eskridge (1996).
 próximas 48 horas, com a amplitude entre eles hora a hora. Onde os três
 concordam, a previsão é robusta; onde abrem, é aí que mora a incerteza. Com
 menos de dois modelos disponíveis a dispersão é `null`, não zero.
+
+![A análise completa, com a série histórica e a envoltória de normalidade](docs/Imagens/app-analise.png)
+
+*A faixa atrás da linha é a climatologia — p10 a p90 para aquele dia do ano. É a
+mesma tabela `gold_normal` que o pipeline produz, desenhada.*
 
 A aba de série histórica exporta **CSV** com preâmbulo de proveniência (fonte,
 modelo, ponto, data de extração) e BOM, para abrir direto no Excel sem quebrar
@@ -764,3 +800,35 @@ a simulação de partículas para e o desenho cai para ~8 quadros por segundo.
 O vento tem **disjuntor**: se o GFS falhar três vezes seguidas, o servidor
 desliga aquela fonte por vinte minutos e usa a Open-Meteo, em vez de martelar um
 host que está fora do ar.
+
+## Quando uma fonte cai
+
+Toda fonte externa sai do ar em algum momento. O que o app faz nesse momento é
+uma decisão de projeto, e ela é a mesma em toda parte: **degradar de forma
+declarada, nunca preencher o buraco.**
+
+| Fonte | Quando falha | O que você vê |
+|---|---|---|
+| **NASA GIBS** (imagem) | A rota distingue *não há imagem para esta data* (404) de *o serviço falhou* (502) | A camada não é desenhada. As duas situações não se confundem: uma é o satélite não ter passado, a outra é a NASA estar fora |
+| **NOAA GFS** (vento, campos) | Disjuntor após 3 falhas, 20 min de pausa | O vento continua, vindo da **Open-Meteo**, e a régua muda a procedência. A troca aparece, não é silenciosa |
+| **Mapzen Terrain** | Tile 404 é cobertura ausente de verdade, e acontece nos polos | **Buraco na malha** — o comportamento certo. Um tile ausente não vira nível do mar |
+| **Estações do INMET** | `data/gold/estacoes.json` não foi gerado | **503 com o comando** que gera o arquivo. Serviço de pé, dado ausente — e a mensagem diz o que fazer |
+| **NASA FIRMS** | Sem chave → 503; chave inválida → 401; serviço fora → 502 | Os três casos são distintos. "Você não configurou" e "a NASA caiu" não podem parecer a mesma coisa |
+| **Correntes** (Copernicus) | Lotes parciais → 502 com `medidoPct` | O app sabe **qual fração** foi medida. Metade do oceano medido não é o oceano inteiro |
+| **Comparação de modelos** | Menos de dois modelos disponíveis | A dispersão é **`null`, não zero**. Zero diria "os modelos concordam", que é o oposto de "não sei" |
+| **Avisos do INMET** | Feed vazio → 502 | Nenhum aviso desenhado. **Aviso é a única camada em que estar velho é problema de segurança** — por isso o cache é de 10 minutos e a falha não é mascarada por dado antigo |
+| **Qualquer uma, por orçamento** | O governador nega antes de chamar | Erro com o provedor, a janela e o teto — `orçamento por dia de Open-Meteo atingido (2.500 chamadas = 25% do limite gratuito)` |
+
+### O orçamento é código, não promessa
+
+`server/budget.js` guarda o teto de cada provedor e a fração que este projeto se
+permite usar — `share: 0.25`, um quarto do limite gratuito — por dia, por hora e
+por minuto. A conta é feita **antes** da chamada, e quando estoura a requisição
+é negada com a razão.
+
+Isso importa porque a alternativa usual é uma regra escrita num documento que
+alguém quebra na primeira pressa. Aqui a regra recusa.
+
+Nenhuma das camadas padrão precisa de chave. A única exceção é o FIRMS, e sem
+ela a camada de incêndios responde 503 dizendo exatamente isso — em vez de
+aparecer vazia, que seria indistinguível de um dia sem fogo no mundo.

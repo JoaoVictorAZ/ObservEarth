@@ -16,7 +16,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import { X, Minus, RotateCcw, GripVertical, Box } from "lucide-react";
 import { BlocoCena } from "../../bloco/cena";
-import { caixaEmVolta, recortarCampo, tamanhoKm } from "../../bloco/relevo";
+import {
+  caixaEmVolta, recortarCampo, tamanhoKm, QUALIDADES, type Qualidade,
+} from "../../bloco/relevo";
 import { amostrar } from "../../malha/campo";
 import { useBlocoStore, LADOS } from "../../store/blocoStore";
 import { useMalhaStore } from "../../store/malhaStore";
@@ -46,8 +48,11 @@ const num = (v: number | null | undefined, casas = 0) =>
 export const BlocoPanel: React.FC = () => {
   const {
     aberto, lat, lng, ladoKm, exagero, mostrarCampo, mostrarParedes,
+    curvas, rampaAdaptativa, faixas, campoLocal, agua, regua, percentis, qualidade, multiploCurvas, limiarMar,
     alturaCampo, opacidadeCampo, relevo, carregando, erro,
     fechar, setLadoKm, setExagero, setMostrarCampo, setMostrarParedes,
+    setCurvas, setRampaAdaptativa, setFaixas, setCampoLocal, setAgua, setRegua,
+    setPercentis, setQualidade, setMultiploCurvas, setLimiarMar,
     setAlturaCampo, setOpacidadeCampo, carregar,
   } = useBlocoStore();
 
@@ -58,7 +63,12 @@ export const BlocoPanel: React.FC = () => {
   const campoId = useMalhaStore((m) => m.campoId);
   const fields = useLayerStore((l) => l.fields);
 
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  // Uma CAIXA, e não o canvas. O canvas agora é compartilhado e permanente
+  // (ver src/bloco/renderizador.ts); a cena o pendura aqui dentro ao montar e
+  // o retira ao sair. O React nunca toca nele, o que também elimina a briga
+  // entre o React e o motor pelo mesmo nó — a mesma separação que `.stage` e
+  // `.stage-tela` fazem no globo.
+  const caixaRef = useRef<HTMLDivElement>(null);
   const cenaRef = useRef<BlocoCena | null>(null);
 
   // ---------------------------------------------------------------------------
@@ -90,8 +100,8 @@ export const BlocoPanel: React.FC = () => {
     // sem essa dependência, minimizar e expandir deixava o palco vazio para
     // sempre, porque o efeito nunca mais rodava para recriar a cena.
     if (!aberto || jan.minimizada) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    const caixa = caixaRef.current;
+    if (!caixa) return;
 
     // -------------------------------------------------------------------------
     // FALHA AQUI DENTRO NÃO PODE APAGAR O PAINEL.
@@ -108,7 +118,7 @@ export const BlocoPanel: React.FC = () => {
     // -------------------------------------------------------------------------
     let nova: BlocoCena;
     try {
-      nova = new BlocoCena(canvas);
+      nova = new BlocoCena(caixa);
     } catch (e) {
       setCena(null);
       cenaRef.current = null;
@@ -130,7 +140,7 @@ export const BlocoPanel: React.FC = () => {
     // `ResizeObserver` é a única forma de saber disso — a janela não dispara
     // `resize` quando é um elemento que muda, só quando é a aba.
     const ro = new ResizeObserver(() => cena.redimensionar());
-    ro.observe(canvasRef.current);
+    ro.observe(caixa);
 
     return () => {
       ro.disconnect();
@@ -148,7 +158,7 @@ export const BlocoPanel: React.FC = () => {
   useEffect(() => { if (aberto) jan.trazerParaFrente(); }, [aberto]);
 
   // ---- dado ---------------------------------------------------------------
-  useEffect(() => { void carregar(); }, [aberto, lat, lng, ladoKm, carregar]);
+  useEffect(() => { void carregar(); }, [aberto, lat, lng, ladoKm, qualidade, carregar]);
 
   useEffect(() => {
     if (cena && relevo) cena.definirRelevo(relevo);
@@ -182,6 +192,17 @@ export const BlocoPanel: React.FC = () => {
   useEffect(() => { cena?.definirExagero(exagero); }, [cena, exagero, relevo]);
   useEffect(() => { cena?.definirMostrarCampo(mostrarCampo); }, [cena, mostrarCampo]);
   useEffect(() => { cena?.definirMostrarParedes(mostrarParedes); }, [cena, mostrarParedes]);
+  useEffect(() => { cena?.definirCurvas(curvas); }, [cena, curvas]);
+  // `relevo` na lista: a rampa adaptativa depende da faixa do recorte, então
+  // trocar de lugar precisa reconstruí-la mesmo com o interruptor parado.
+  useEffect(() => { cena?.definirRampaAdaptativa(rampaAdaptativa); }, [cena, rampaAdaptativa, relevo]);
+  useEffect(() => { cena?.definirFaixas(faixas); }, [cena, faixas, relevo]);
+  useEffect(() => { cena?.definirAgua(agua); }, [cena, agua, relevo]);
+  useEffect(() => { cena?.definirRegua(regua); }, [cena, regua, relevo]);
+  useEffect(() => { cena?.definirPercentis(percentis); }, [cena, percentis, relevo]);
+  useEffect(() => { cena?.definirMultiploCurvas(multiploCurvas); }, [cena, multiploCurvas, relevo]);
+  useEffect(() => { cena?.definirLimiarMar(limiarMar); }, [cena, limiarMar, relevo]);
+  useEffect(() => { cena?.definirCampoLocal(campoLocal); }, [cena, campoLocal, campoGlobal]);
   useEffect(() => { cena?.definirAlturaCampo(alturaCampo); }, [cena, alturaCampo, relevo]);
   useEffect(() => { cena?.definirOpacidadeCampo(opacidadeCampo); }, [cena, opacidadeCampo]);
 
@@ -249,7 +270,12 @@ export const BlocoPanel: React.FC = () => {
       {!jan.minimizada && (
         <div className="bloco-corpo">
           <div className="bloco-palco">
-            <canvas ref={canvasRef} className="bloco-canvas" />
+            {/* Caixa vazia: quem põe o canvas aqui dentro é a cena, e quem o
+                tira é ela também. O React não gerencia esse nó — é a mesma
+                separação de `.stage` / `.stage-tela` no globo, e pelo mesmo
+                motivo: dois donos do mesmo nó do DOM brigam, e a briga aparece
+                como `removeChild` em nó que já não é filho de ninguém. */}
+            <div ref={caixaRef} className="bloco-tela" />
             {erroCena && <div className="bloco-aviso bloco-aviso-erro">{erroCena}</div>}
             {!erroCena && carregando && <div className="bloco-aviso">montando o terreno…</div>}
             {!erroCena && erro && <div className="bloco-aviso bloco-aviso-erro">{erro}</div>}
@@ -285,10 +311,41 @@ export const BlocoPanel: React.FC = () => {
                     </span>
                   </div>
                 )}
+                {/* QUANTO DO RECORTE ESTÁ SUBMERSO.
+                    É a leitura que um bloco costeiro existe para dar, e ela sai
+                    de graça do mínimo e do máximo — mas só se alguém a
+                    escrever. Sem isto a pessoa estima olhando, que é
+                    exatamente o que o bloco deveria dispensar. */}
+                {est?.temAgua && relevo.minimo != null && relevo.maximo != null && (
+                  <div className="bloco-num">
+                    <span className="bloco-num-r">Nível do mar</span>
+                    <span className="bloco-num-v">
+                      {relevo.maximo > 0
+                        ? <>−{num(-relevo.minimo)} a +{num(relevo.maximo)} m</>
+                        : <>tudo submerso</>}
+                      <small>
+                        {relevo.maximo > 0
+                          ? `${Math.round(100 * -relevo.minimo / (relevo.maximo - relevo.minimo))}% da amplitude abaixo de zero`
+                          : "nenhuma terra emersa no recorte"}
+                      </small>
+                    </span>
+                  </div>
+                )}
                 {relevo.tilesFalhos > 0 && (
                   <p className="bloco-ressalva">
                     {relevo.tilesFalhos} tile(s) de elevação sem cobertura. A malha fica
                     vazada ali — nada foi preenchido.
+                  </p>
+                )}
+                {/* PICOS REMOVIDOS é informação sobre a FONTE, e por isso sai
+                    para a tela. Um recorte com muitos diz que o DEM daquela
+                    região é ruim — e quem está medindo uma encosta precisa
+                    saber disso antes de confiar no número que leu. */}
+                {relevo.picosRemovidos > 0 && (
+                  <p className="bloco-ressalva">
+                    {relevo.picosRemovidos} célula(s) recusada(s) por serem degraus
+                    impossíveis — defeito do DEM, não relevo. Viraram vazio, não
+                    foram substituídas por estimativa.
                   </p>
                 )}
               </div>
@@ -313,6 +370,58 @@ export const BlocoPanel: React.FC = () => {
                   <span className="bloco-seg-un">km</span>
                 </div>
               </div>
+
+              <div className="bloco-lin">
+                <span className="bloco-rot">Detalhe</span>
+                <div className="bloco-seg" role="radiogroup" aria-label="Nível de detalhe">
+                  {(Object.keys(QUALIDADES) as Qualidade[]).map((q) => (
+                    <button
+                      key={q} role="radio" aria-checked={qualidade === q}
+                      className={`bloco-seg-btn ${qualidade === q ? "bloco-seg-on" : ""}`}
+                      onClick={() => setQualidade(q)}
+                    >
+                      {QUALIDADES[q].rotulo}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* A PERGUNTA QUE O NÚMERO SOZINHO NÃO RESPONDE.
+                  "Amostra de 12 m" parece precisão de 12 m. Num terreno
+                  brasileiro, onde a fonte é SRTM de 30 m, seria falso — e a
+                  malha mais fina não acrescenta dado nenhum, só interpola.
+                  Dizer isso é o que separa mais detalhe de mais pixels. */}
+              {relevo && (
+                <p className="bloco-nota">
+                  {relevo.resolucaoM > relevo.fonteM * 1.2 ? (
+                    <>
+                      Amostra de <strong>{num(relevo.resolucaoM)} m</strong>, contra
+                      ~{num(relevo.fonteM)} m da fonte: ainda há detalhe a ganhar
+                      subindo o nível ou reduzindo o recorte.
+                    </>
+                  ) : relevo.resolucaoM < relevo.fonteM * 0.8 ? (
+                    <>
+                      Amostra de <strong>{num(relevo.resolucaoM)} m</strong>, abaixo dos
+                      ~{num(relevo.fonteM)} m da fonte. <strong>A malha está
+                      interpolando</strong>, não acrescentando dado — a forma fica mais
+                      lisa, e não mais verdadeira.
+                    </>
+                  ) : (
+                    <>
+                      Amostra de <strong>{num(relevo.resolucaoM)} m</strong>, no limite
+                      dos ~{num(relevo.fonteM)} m da fonte. É todo o detalhe que existe
+                      publicado para esta região.
+                    </>
+                  )}
+                </p>
+              )}
+              {relevo?.tetoDeTiles && (
+                <p className="bloco-ressalva">
+                  O recorte pedia mais tiles do que o teto deste nível permite. A malha
+                  fica vazada nas bordas — é escolha nossa de orçamento, não falta de
+                  dado. Reduza o recorte ou baixe o detalhe.
+                </p>
+              )}
 
               <label className="bloco-lin" htmlFor="bl-exag">
                 <span className="bloco-rot">
@@ -341,8 +450,174 @@ export const BlocoPanel: React.FC = () => {
                   type="checkbox" checked={mostrarParedes}
                   onChange={(e) => setMostrarParedes(e.target.checked)}
                 />
-                <span>Paredes do corte (a escala de altitude)</span>
+                <span>Paredes do corte</span>
               </label>
+
+              <label className="bloco-sw">
+                <input
+                  type="checkbox" checked={regua}
+                  onChange={(e) => setRegua(e.target.checked)}
+                />
+                <span>Régua vertical na aresta</span>
+              </label>
+              {/* AS TRÊS LEITURAS SÃO A MESMA MEDIDA, e dizer isso é o que as
+                  transforma de três enfeites em um instrumento. */}
+              {est && (
+                <p className="bloco-nota">
+                  A régua, os estratos da parede e as curvas do terreno caem nas
+                  <strong> mesmas altitudes</strong> — de {num(est.estratoM)} em{" "}
+                  {num(est.estratoM)} m, com o traço longo a cada{" "}
+                  {num(est.estratoM * 5)}. Não é preciso contar: basta ver onde o
+                  morro cruza o traço comprido.
+                </p>
+              )}
+
+              <label className="bloco-sw">
+                <input
+                  type="checkbox" checked={curvas}
+                  onChange={(e) => setCurvas(e.target.checked)}
+                />
+                <span>
+                  Curvas de nível {est && <>a cada {num(est.estratoM)} m</>}
+                  {est && <small> · mestra a cada {num(est.estratoM * 5)} m</small>}
+                </span>
+              </label>
+
+              {curvas && (
+                <div className="bloco-lin">
+                  <span className="bloco-rot">Equidistância</span>
+                  <div className="bloco-seg" role="radiogroup" aria-label="Equidistância das curvas">
+                    {[0.25, 0.5, 1, 2, 4].map((m) => (
+                      <button
+                        key={m} role="radio" aria-checked={multiploCurvas === m}
+                        className={`bloco-seg-btn ${multiploCurvas === m ? "bloco-seg-on" : ""}`}
+                        onClick={() => setMultiploCurvas(m)}
+                        title={est ? `${num((est.estratoM / multiploCurvas) * m)} m` : ""}
+                      >
+                        {m === 1 ? "auto" : m < 1 ? `÷${1 / m}` : `×${m}`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* O controle da água só aparece onde HÁ água. Oferecer "lâmina
+                  do mar" num planalto a 800 m sugeriria que existe mar ali —
+                  e a única coisa que o bloco não pode fazer é inventar
+                  geografia. `temAgua` é sobre o recorte, não sobre gosto. */}
+              {est?.temAgua && (
+                <label className="bloco-sw">
+                  <input
+                    type="checkbox" checked={agua}
+                    onChange={(e) => setAgua(e.target.checked)}
+                  />
+                  <span>Lâmina d'água no nível do mar</span>
+                </label>
+              )}
+              {est?.temAgua && agua && (
+                <>
+                  <label className="bloco-lin" htmlFor="bl-mar">
+                    <span className="bloco-rot">
+                      Mar a partir de
+                      <output htmlFor="bl-mar">−{num(limiarMar)} m</output>
+                    </span>
+                    <input
+                      id="bl-mar" type="range" min={0} max={20} step={1}
+                      value={limiarMar}
+                      onChange={(e) => setLimiarMar(Number(e.target.value))}
+                      aria-label="Profundidade mínima para contar como mar"
+                    />
+                  </label>
+                  {/* O LIMIAR NÃO É GOSTO, É O INSTRUMENTO.
+                      Sem isto, quem baixar o controle a zero vai achar que
+                      descobriu que a cidade está alagada — quando só desligou
+                      a margem de erro do SRTM. */}
+                  <p className="bloco-nota">
+                    {limiarMar === 0 ? (
+                      <>
+                        <strong>Zero é o valor cru, e ele mente em costa baixa.</strong> A
+                        acurácia vertical do SRTM é de metros: −1 m e +1 m são o mesmo
+                        valor para ele. Restinga, baixada e areal aparecem alagados.
+                      </>
+                    ) : (
+                      <>
+                        Só conta como mar o que está abaixo de −{num(limiarMar)} m
+                        <strong> e se comunica com a borda do recorte</strong>. O piso é a
+                        margem de erro do SRTM; a conexão é o que separa mar de
+                        depressão fechada.
+                      </>
+                    )}
+                  </p>
+                </>
+              )}
+
+              <label className="bloco-sw">
+                <input
+                  type="checkbox" checked={faixas}
+                  onChange={(e) => setFaixas(e.target.checked)}
+                />
+                <span>
+                  Cor em faixas de altitude
+                  {est && est.faixas && est.passoFaixaM > 0 && (
+                    <> a cada {num(est.passoFaixaM)} m
+                      {est.niveis > 0 && <small> · {est.niveis} faixas</small>}
+                    </>
+                  )}
+                </span>
+              </label>
+
+              <label className="bloco-sw">
+                <input
+                  type="checkbox" checked={rampaAdaptativa}
+                  onChange={(e) => setRampaAdaptativa(e.target.checked)}
+                />
+                <span>Cor esticada para este recorte</span>
+              </label>
+
+              <label className="bloco-sw">
+                <input
+                  type="checkbox" checked={percentis}
+                  onChange={(e) => setPercentis(e.target.checked)}
+                />
+                <span>Ignorar os 4% extremos</span>
+              </label>
+              {/* A EXPLICAÇÃO IMPORTA MAIS QUE O CONTROLE.
+                  Num recorte grande, o mínimo é uma fossa e o máximo é um pico
+                  isolado — 2% do dado consumindo 80% da escala. Quem não sabe
+                  disso conclui, olhando, que "o relevo é plano". */}
+              {percentis && relevo?.p2 != null && relevo.p98 != null && (
+                <p className="bloco-nota">
+                  A cor rende sobre <strong>{num(relevo.p2)} a {num(relevo.p98)} m</strong>,
+                  onde 96% do recorte vive — e não sobre {num(relevo.minimo)} a{" "}
+                  {num(relevo.maximo)}, que são a fossa e o pico. O que passa disso
+                  satura na cor da ponta, que é a leitura certa para um extremo.
+                  {relevo.mediana != null && <> A mediana é {num(relevo.mediana)} m.</>}
+                </p>
+              )}
+              {/* A RESSALVA É OBRIGATÓRIA, e é o preço da rampa adaptativa.
+                  Com ela a cor deixa de ser comparável entre blocos — o mesmo
+                  azul vale −4.600 m aqui e −80 m num recorte costeiro. Isso
+                  não pode ficar implícito na tela. */}
+              <p className="bloco-nota">
+                {rampaAdaptativa && est?.rampaDe != null && est.rampaAte != null ? (
+                  <>
+                    A rampa cobre {num(est.rampaDe)} a {num(est.rampaAte)} m — a faixa
+                    deste recorte. Ganha contraste e <strong>deixa de ser comparável
+                    com outro bloco</strong>. As paredes e as curvas continuam em
+                    metros absolutos.
+                    {est.temAgua && (
+                      <> A metade submarina e a emersa são esticadas
+                      <strong> separadamente</strong>, para o zero continuar no zero.</>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    Rampa hipsométrica absoluta (−8.000 a 6.000 m): a mesma cor
+                    significa a mesma altitude em qualquer bloco. Num recorte
+                    estreito, quase toda a paleta fica sem uso.
+                  </>
+                )}
+              </p>
             </div>
 
             {/* ---- o CAMPO: valor, não altitude ---- */}
@@ -381,6 +656,34 @@ export const BlocoPanel: React.FC = () => {
 
                   {mostrarCampo && (
                     <>
+                      <label className="bloco-sw">
+                        <input
+                          type="checkbox" checked={campoLocal}
+                          onChange={(e) => setCampoLocal(e.target.checked)}
+                        />
+                        <span>Escala do recorte</span>
+                      </label>
+                      {/* A RESSALVA, de novo, e pelo mesmo motivo da rampa.
+                          Sem ela a pessoa compararia a altura da superfície
+                          entre dois blocos achando que mede a mesma coisa. */}
+                      <p className="bloco-nota">
+                        {campoLocal && est?.campoDe != null && est.campoAte != null ? (
+                          <>
+                            A superfície cobre {num(est.campoDe, 2)} a {num(est.campoAte, 2)}
+                            {unidade ? ` ${unidade}` : ""} — a variação DENTRO deste recorte.
+                            É o que a tira de plana: na escala mundial, meia unidade sobre
+                            60 km ocupa menos de 1% da faixa. <strong>A altura deixa de ser
+                            comparável com outro bloco.</strong>
+                          </>
+                        ) : (
+                          <>
+                            Escala mundial do campo: a altura é comparável entre blocos, e
+                            na maior parte dos recortes a superfície sai plana — porque a
+                            variação local é uma fração ínfima da faixa global.
+                          </>
+                        )}
+                      </p>
+
                       <label className="bloco-lin" htmlFor="bl-alt">
                         <span className="bloco-rot">
                           Afastar do terreno

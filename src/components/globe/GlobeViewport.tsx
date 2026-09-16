@@ -4,6 +4,7 @@
 // -----------------------------------------------------------------------------
 
 import { useEffect, useRef, useState, useImperativeHandle, forwardRef } from "react";
+import { registrarCapturavel } from "../../captura";
 import { useGlobeStore } from "../../store/globeStore";
 import { usePerfStore } from "../../store/perfStore";
 import { useTimelineStore } from "../../store/timelineStore";
@@ -141,8 +142,15 @@ export const GlobeViewport = forwardRef<GlobeViewportRef, {}>((_, ref) => {
     // camada é ligada pelo seu próprio efeito, a partir do seu próprio estado —
     // é a única forma de o que está na tela corresponder ao que está marcado.
 
+    // O botão de capturar vive na barra superior, seis componentes longe daqui.
+    // O registro é o que os liga sem arrastar o motor por toda a árvore — e,
+    // mais importante, garante que quem captura é o motor MONTADO AGORA, e não
+    // o primeiro canvas que o documento tiver. Ver src/captura.ts.
+    const desregistrar = registrarCapturavel(eng);
+
     setGeracao((g) => g + 1);
     return () => {
+      desregistrar();
       eng.dispose();
       engRef.current = null;
       // Container limpo entre motores. Cada um cria a sua própria tela, e o

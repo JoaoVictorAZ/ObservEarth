@@ -379,6 +379,16 @@ button { border: none; background: none; cursor: pointer; }
 .ferramentas-grupo { display: flex; align-items: center; gap: var(--s-1); }
 .ferramentas-fio { width: 1px; height: 18px; background: var(--rule); flex: none; }
 
+/* A recusa da captura. Some sozinha em 4 s — é notícia de um evento, não
+   estado, e um aviso que fica na barra para sempre vira ruído de fundo. */
+.ferramentas-aviso {
+  font-size: 11px;
+  line-height: 1;
+  color: var(--ink-2);
+  white-space: nowrap;
+  padding-inline: var(--s-1);
+}
+
 /* Alvo de 32 px: o mínimo da WCAG 2.5.8 é 24, e abaixo de 32 um clique com
    trackpad em tela grande erra com frequência. */
 .icone-btn {

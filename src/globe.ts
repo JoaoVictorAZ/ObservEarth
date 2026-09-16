@@ -974,6 +974,29 @@ export class GlobeEngine {
     this.g?.pointOfView({ lat, lng, altitude }, 900);
   }
 
+  /**
+   * A vista em PNG. Redesenha antes de ler — ver `src/captura.ts`.
+   *
+   * O `render` explícito é o ponto inteiro do método. Sem ele a leitura pega o
+   * buffer que o compositor já descartou, e o arquivo sai vazio sem erro nenhum.
+   */
+  capturar(): string | null {
+    const r = this.g?.renderer?.();
+    const cena = this.g?.scene?.();
+    const cam = this.g?.camera?.();
+    if (!r || !cena || !cam) return null;
+    try {
+      r.render(cena, cam);
+      return r.domElement.toDataURL("image/png");
+    } catch {
+      // `toDataURL` lança em canvas contaminado por textura de outra origem sem
+      // CORS. As texturas do app são carregadas com `crossOrigin`, então isto
+      // não deveria acontecer — mas se acontecer, devolver null faz o botão
+      // avisar em vez de baixar lixo.
+      return null;
+    }
+  }
+
   // --------------------------------------------------------- dia e noite
   setTime = (d: Date) => { this.time = d; this.applySun(); };
   setDayNight = (on: boolean) => { this.dayNight = on; this.applySun(); };

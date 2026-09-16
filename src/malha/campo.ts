@@ -143,6 +143,97 @@ export function amostrar(c: CampoEscalar, lat: number, lng: number): number | nu
   return a * (1 - ty) + b * ty;
 }
 
+/**
+ * Amostragem NA SUPERFÍCIE QUE ESTÁ DESENHADA, e não na que a matemática
+ * preferiria.
+ *
+ * -----------------------------------------------------------------------------
+ * O PROBLEMA, QUE É PEQUENO E CONSTANTE
+ * -----------------------------------------------------------------------------
+ * `amostrar` faz bilinear. A malha 3D não é bilinear: é feita de TRIÂNGULOS.
+ * Sobre um quadrilátero, a superfície bilinear é um paraboloide hiperbólico —
+ * curva — e dois triângulos formam uma superfície plana por pedaços. As duas
+ * concordam exatamente nos quatro cantos e divergem no meio.
+ *
+ * No centro da célula a diferença é
+ *
+ *     (v(i,j) + v(i+1,j+1) − v(i+1,j) − v(i,j+1)) / 4
+ *
+ * o termo de TORÇÃO do quadrilátero. Ele é zero num campo plano ou linear, e
+ * cresce onde o campo vira — cristas, vales, frentes. Ou seja: é justamente
+ * onde o relevo importa que a conta errada erra mais.
+ *
+ * -----------------------------------------------------------------------------
+ * O SINTOMA, QUE É O PIOR TIPO
+ * -----------------------------------------------------------------------------
+ * Um rótulo, um marcador de sismo ou o cartão ancorado pousado na altura
+ * bilinear FLUTUA um pouco acima da superfície desenhada, ou afunda um pouco
+ * dentro dela — dependendo do sinal da torção. Nunca muito. Nunca o bastante
+ * para alguém dizer "isto está quebrado"; o suficiente para o globo parecer
+ * "meio solto" sem que ninguém saiba nomear por quê.
+ *
+ * -----------------------------------------------------------------------------
+ * A DIVISÃO DO QUADRILÁTERO PRECISA SER A MESMA
+ * -----------------------------------------------------------------------------
+ * `malha3d.ts` monta os índices como `a, c, b` e `a, d, c`, com
+ *
+ *     a = (i, j)   b = (i+1, j)   c = (i+1, j+1)   d = (i, j+1)
+ *
+ * ou seja, a diagonal vai de `a` a `c`. Escolher a outra diagonal aqui daria
+ * uma superfície igualmente plausível e diferente da desenhada — o mesmo
+ * defeito, com outro sinal.
+ *
+ * Por isso `test/malha-geometria.mjs` e o teste desta função amarram as duas
+ * pontas: se alguém trocar o enrolamento lá, o teste daqui reclama.
+ */
+export function amostrarNaMalha(
+  c: CampoEscalar, lat: number, lng: number,
+  /**
+   * O que o VÉRTICE sofre antes de virar altura. Aplicado a cada canto,
+   * **antes** da interpolação — e a ordem é o ponto.
+   *
+   * A malha normaliza e LIMITA cada vértice (`clamp((v−lo)/faixa)`) e só então
+   * os triângulos interpolam. Interpolar primeiro e limitar depois dá outro
+   * número sempre que a célula tem um canto saturado, que é comum: qualquer
+   * região onde o campo passa do topo da escala.
+   */
+  porVertice?: (v: number) => number,
+): number | null {
+  const { nx, ny } = c;
+  if (nx < 1 || ny < 1) return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+  const fx = colunaDaLng(lng, nx);
+  const fy = Math.max(0, Math.min(ny - 1, linhaDaLat(lat, ny)));
+
+  const i0 = Math.floor(fx), j0 = Math.floor(fy);
+  const tx = fx - i0, ty = fy - j0;
+
+  const ka = indice(i0, j0, nx, ny);
+  const kb = indice(i0 + 1, j0, nx, ny);
+  const kc = indice(i0 + 1, j0 + 1, nx, ny);
+  const kd = indice(i0, j0 + 1, nx, ny);
+
+  // A MESMA REGRA DE AUSÊNCIA DA `amostrar`: um vizinho sem dado invalida o
+  // ponto inteiro. Aqui haveria a tentação de usar só os três vértices do
+  // triângulo em que o ponto caiu — mas aí a altura dependeria de qual metade
+  // da célula o ponto calhou de cair, e a malha desenhada também não existe
+  // naquela célula: o índice pula o quadrilátero inteiro quando um canto falta.
+  if (!medido(c, ka) || !medido(c, kb) || !medido(c, kc) || !medido(c, kd)) return null;
+
+  const f = porVertice ?? ((v: number) => v);
+  const va = f(c.valores[ka]);
+  const vb = f(c.valores[kb]);
+  const vc = f(c.valores[kc]);
+  const vd = f(c.valores[kd]);
+
+  // Interpolação baricêntrica dentro do triângulo em que (tx, ty) caiu. A
+  // diagonal a–c é a reta tx = ty; abaixo dela está (a, b, c), acima (a, d, c).
+  return ty <= tx
+    ? va + (vb - va) * tx + (vc - vb) * ty
+    : va + (vd - va) * ty + (vc - vd) * tx;
+}
+
 /** A janela retangular em graus que a análise vai percorrer. */
 export interface Janela {
   latSul: number; latNorte: number;
